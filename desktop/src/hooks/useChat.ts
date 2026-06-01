@@ -7,6 +7,7 @@ import type { AccumulatedToolCall } from '../lib/sse';
 import { getModel } from '../lib/storage';
 import { countAllTokens } from '../lib/tokens';
 import { runAgentLoop, type LoopMessage } from '../lib/agentLoop';
+import type { ChatTurnArtifact } from '../../../shared/contracts/command-turn.ts';
 
 // ── Types ──
 
@@ -25,6 +26,8 @@ export interface Message {
   };
   /** Cost in Light for this message */
   cost_light?: number;
+  /** Structured turn artifacts such as next-step chips or generated interfaces. */
+  artifacts?: ChatTurnArtifact[];
   /** Timestamp */
   created_at: number;
 }

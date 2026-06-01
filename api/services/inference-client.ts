@@ -7,6 +7,7 @@ const DEFAULT_REFERER = "https://ultralight-api.rgn4jz429m.workers.dev";
 export interface InferenceFetchOptions {
   title?: string;
   referer?: string;
+  signal?: AbortSignal;
 }
 
 export function selectInferenceModel(
@@ -83,5 +84,6 @@ export function fetchInferenceChatCompletion(
     method: "POST",
     headers: buildInferenceHeaders(route, options),
     body: JSON.stringify(buildInferenceRequestBody(route, body)),
+    signal: options.signal,
   });
 }

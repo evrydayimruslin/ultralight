@@ -26,6 +26,7 @@ interface DbMessage {
   tool_call_id: string | null;
   usage: string | null;
   cost_light: number | null;
+  artifacts: string | null;
   created_at: number;
   sort_order: number;
 }
@@ -56,6 +57,7 @@ function messageToDb(msg: Message, conversationId: string, sortOrder: number): D
     tool_call_id: msg.tool_call_id ?? null,
     usage: msg.usage ? JSON.stringify(msg.usage) : null,
     cost_light: msg.cost_light ?? null,
+    artifacts: msg.artifacts ? JSON.stringify(msg.artifacts) : null,
     created_at: msg.created_at,
     sort_order: sortOrder,
   };
@@ -70,6 +72,7 @@ function dbToMessage(db: DbMessage): Message {
     tool_call_id: db.tool_call_id ?? undefined,
     usage: db.usage ? JSON.parse(db.usage) : undefined,
     cost_light: db.cost_light ?? undefined,
+    artifacts: db.artifacts ? JSON.parse(db.artifacts) : undefined,
     created_at: db.created_at,
   };
 }

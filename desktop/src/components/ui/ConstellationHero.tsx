@@ -1,10 +1,9 @@
 // ConstellationHero — the "empty chat" hero. Reads as the product
 // constellation: typing wordmark, slow orbit ellipse + center Light spark,
-// three system-agent dot buttons in a triangle.
+// and three internal delegation targets in a triangle.
 //
 // Ported from handoff/mockups/palette-and-empty.jsx (ConstellationHero).
-// Used by MessageList's generic empty state when no system agent is
-// active — picking a dot navigates straight into that agent's chat.
+// Used by MessageList's generic empty state when no system agent is active.
 
 import { useEffect, useState, useMemo } from 'react';
 import Spark from './Spark';
@@ -17,7 +16,7 @@ interface ConstellationHeroProps {
   replayKey?: number;
   /** Subtitle below the wordmark. Defaults to the mockup copy. */
   subtitle?: string;
-  /** Fires when the user picks one of the three agent dots. */
+  /** Optional legacy hook for surfaces that still need clickable agent dots. */
   onPickAgent?: (agent: SystemAgentConfig) => void;
 }
 
@@ -38,7 +37,7 @@ const SLOTS: { left: number; top: number; labelDx: number; labelDy: number; agen
 
 export default function ConstellationHero({
   replayKey = 0,
-  subtitle = 'Three agents are ready. Pick one.',
+  subtitle = 'Ask Command. It will bring the right help forward.',
   onPickAgent,
 }: ConstellationHeroProps) {
   const wordmark = 'Ultralight';
@@ -133,21 +132,37 @@ export default function ConstellationHero({
         {slots.map((slot, i) => {
           if (phase < 3 + i) return null;
           const Icon = AGENT_ICONS[slot.agent.icon as keyof typeof AGENT_ICONS] ?? IconWrench;
+          const dotClassName = `absolute rounded-full bg-white border border-ul-border flex items-center justify-center transition-all duration-base ${
+            onPickAgent ? 'cursor-pointer hover:scale-[1.08]' : 'cursor-default'
+          }`;
+          const dotStyle = {
+            left: slot.left,
+            top: slot.top,
+            width: 56,
+            height: 56,
+            color: slot.agent.accent,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.06)',
+            animation: 'ul-dot-arrive 360ms cubic-bezier(0.2,0.9,0.3,1)',
+          };
+          if (!onPickAgent) {
+            return (
+              <div
+                key={slot.agent.type}
+                className={dotClassName}
+                style={dotStyle}
+                aria-hidden="true"
+              >
+                <Icon size={20} />
+              </div>
+            );
+          }
           return (
             <button
               key={slot.agent.type}
               type="button"
               onClick={() => onPickAgent?.(slot.agent)}
-              className="absolute rounded-full bg-white border border-ul-border flex items-center justify-center cursor-pointer transition-all duration-base hover:scale-[1.08]"
-              style={{
-                left: slot.left,
-                top: slot.top,
-                width: 56,
-                height: 56,
-                color: slot.agent.accent,
-                boxShadow: '0 4px 12px rgba(0,0,0,0.06)',
-                animation: 'ul-dot-arrive 360ms cubic-bezier(0.2,0.9,0.3,1)',
-              }}
+              className={dotClassName}
+              style={dotStyle}
               aria-label={`Start chat with ${slot.agent.name}`}
             >
               <Icon size={20} />

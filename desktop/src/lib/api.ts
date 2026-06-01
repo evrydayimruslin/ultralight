@@ -17,6 +17,11 @@ import type {
   AgenticInterfaceVerificationResult,
   AgenticInterfaceWarning,
 } from "../../../shared/contracts/agentic-interface.ts";
+import type { NextStep } from "../../../shared/contracts/command-turn.ts";
+import type {
+  SuggestionAcceptResult,
+  SuggestionPreviewDescriptor,
+} from "../../../shared/contracts/suggestions.ts";
 import {
   type ActiveBYOKProvider,
   BYOK_PROVIDERS,
@@ -683,7 +688,11 @@ export interface FunctionIndex {
       confirmation?: "none" | "user" | "high_risk";
       args_schema?: Record<string, unknown>;
       mcp?: { function: string; args_template?: Record<string, unknown> };
-      ui?: { command?: string; component_id?: string; args_template?: Record<string, unknown> };
+      ui?: {
+        command?: string;
+        component_id?: string;
+        args_template?: Record<string, unknown>;
+      };
       expected_result?: string;
     }>;
     cards?: Array<{
@@ -715,7 +724,9 @@ export interface FunctionIndex {
     tables?: string[];
     query?: string;
     function?: string;
-    redactions?: Array<{ field?: string; pattern?: string; replacement?: string }>;
+    redactions?: Array<
+      { field?: string; pattern?: string; replacement?: string }
+    >;
   }>;
   routines?: Array<{
     id: string;
@@ -954,15 +965,21 @@ export interface AgenticInterfaceActionExecutionResult {
 
 function parseMcpJsonContent<T>(result: McpToolResult): T {
   if (result.isError) {
-    const message = result.content.find((entry) => entry.text)?.text || "Tool call failed";
+    const message = result.content.find((entry) => entry.text)?.text ||
+      "Tool call failed";
     throw new Error(message);
   }
-  const text = result.content.find((entry) => entry.type === "text" && entry.text)?.text;
+  const text = result.content.find((entry) =>
+    entry.type === "text" && entry.text
+  )?.text;
   if (!text) throw new Error("Tool response did not include JSON content");
   return JSON.parse(text) as T;
 }
 
-async function parseApiJsonOrThrow<T>(res: Response, fallback: string): Promise<T> {
+async function parseApiJsonOrThrow<T>(
+  res: Response,
+  fallback: string,
+): Promise<T> {
   if (res.ok) return await res.json() as T;
   const body = await res.json().catch(() => null) as ApiError | null;
   throw new Error(body?.error || body?.detail || `${fallback} (${res.status})`);
@@ -1032,13 +1049,17 @@ export async function executeAgenticInterfaceAction(input: {
   return parseMcpJsonContent<AgenticInterfaceActionExecutionResult>(result);
 }
 
-export async function fetchAgenticInterfaces(): Promise<AgenticInterfaceSummary[]> {
+export async function fetchAgenticInterfaces(): Promise<
+  AgenticInterfaceSummary[]
+> {
   const token = getToken();
   if (!token) return [];
   const res = await fetchFromApi("/api/user/agentic-interfaces", {
     headers: { "Authorization": `Bearer ${token}` },
   });
-  const data = await parseApiJsonOrThrow<{ interfaces?: AgenticInterfaceSummary[] }>(
+  const data = await parseApiJsonOrThrow<
+    { interfaces?: AgenticInterfaceSummary[] }
+  >(
     res,
     "Failed to load saved interfaces",
   );
@@ -1133,7 +1154,8 @@ export function savedAgenticInterfaceToPlannerResult(
     dropped: saved.dropped,
     planner: {
       version: "saved",
-      policy: "Saved verified specs are re-verified against current installed apps, widgets, context sources, and MCP functions on load.",
+      policy:
+        "Saved verified specs are re-verified against current installed apps, widgets, context sources, and MCP functions on load.",
       context_summary: {
         interface_key: saved.interface_key,
         status: saved.status,
@@ -1425,7 +1447,7 @@ export async function runRoutineNow(
 
 export interface MarketplaceListingSnapshot {
   eligible?: boolean;
-  status?: 'ineligible' | 'unlisted' | 'open_to_offers' | 'listed' | 'sold';
+  status?: "ineligible" | "unlisted" | "open_to_offers" | "listed" | "sold";
   ask_price_light?: number | null;
   floor_price_light?: number | null;
   instant_buy?: boolean;
@@ -1457,7 +1479,7 @@ export interface MarketplaceResult {
   name: string;
   slug?: string;
   description?: string;
-  type?: 'app' | 'page' | 'skill';
+  type?: "app" | "page" | "skill";
   mcp_endpoint?: string;
   url?: string;
   likes?: number;
@@ -1487,67 +1509,79 @@ export interface MarketplaceResult {
 
 export interface MarketplaceSection {
   title: string;
-  type: 'featured' | 'category' | 'skills' | string;
+  type: "featured" | "category" | "skills" | string;
   results: MarketplaceResult[];
 }
 
 export interface MarketplaceBrowseResponse {
-  mode: 'browse';
+  mode: "browse";
   sections: MarketplaceSection[];
   total: number;
 }
 
 export interface MarketplaceSearchResponse {
-  mode: 'search';
+  mode: "search";
   results: MarketplaceResult[];
   total: number;
 }
 
-export type MarketplaceResponse = MarketplaceBrowseResponse | MarketplaceSearchResponse;
+export type MarketplaceResponse =
+  | MarketplaceBrowseResponse
+  | MarketplaceSearchResponse;
 
 export async function fetchMarketplaceBrowse(options?: {
-  type?: 'all' | 'apps' | 'skills';
-  runtime?: 'all' | 'gpu' | 'deno';
+  type?: "all" | "apps" | "skills";
+  runtime?: "all" | "gpu" | "deno";
   limit?: number;
 }): Promise<MarketplaceBrowseResponse | null> {
-  const params = new URLSearchParams({ format: 'sections' });
-  if (options?.type) params.set('type', options.type);
-  if (options?.runtime) params.set('runtime', options.runtime);
-  if (options?.limit) params.set('limit', String(options.limit));
+  const params = new URLSearchParams({ format: "sections" });
+  if (options?.type) params.set("type", options.type);
+  if (options?.runtime) params.set("runtime", options.runtime);
+  if (options?.limit) params.set("limit", String(options.limit));
 
   const token = getToken();
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
 
-  const res = await fetchFromApi(`/api/discover/marketplace?${params.toString()}`, { headers });
+  const res = await fetchFromApi(
+    `/api/discover/marketplace?${params.toString()}`,
+    { headers },
+  );
   if (!res.ok) return null;
   const data = await res.json() as MarketplaceResponse;
-  return data.mode === 'browse' ? data : null;
+  return data.mode === "browse" ? data : null;
 }
 
 export async function searchMarketplace(query: string, options?: {
-  type?: 'all' | 'apps' | 'skills';
-  runtime?: 'all' | 'gpu' | 'deno';
+  type?: "all" | "apps" | "skills";
+  runtime?: "all" | "gpu" | "deno";
   limit?: number;
   /** Cancel in-flight fetches when a newer query supersedes this one. */
   signal?: AbortSignal;
 }): Promise<MarketplaceSearchResponse | null> {
   const params = new URLSearchParams({ q: query });
-  if (options?.type) params.set('type', options.type);
-  if (options?.runtime) params.set('runtime', options.runtime);
-  if (options?.limit) params.set('limit', String(options.limit));
+  if (options?.type) params.set("type", options.type);
+  if (options?.runtime) params.set("runtime", options.runtime);
+  if (options?.limit) params.set("limit", String(options.limit));
 
   const token = getToken();
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
 
-  const res = await fetchFromApi(`/api/discover/marketplace?${params.toString()}`, {
-    headers,
-    signal: options?.signal,
-  });
+  const res = await fetchFromApi(
+    `/api/discover/marketplace?${params.toString()}`,
+    {
+      headers,
+      signal: options?.signal,
+    },
+  );
   if (!res.ok) return null;
   const data = await res.json() as MarketplaceResponse;
-  return data.mode === 'search' ? data : null;
+  return data.mode === "search" ? data : null;
 }
 
 // ── Marketplace listing detail (used by ToolDetailView side rail) ──
@@ -1559,7 +1593,7 @@ export interface MarketplaceBid {
   bidder_display_name?: string;
   amount_light: number;
   message?: string | null;
-  status?: 'active' | 'accepted' | 'rejected' | 'cancelled' | 'expired';
+  status?: "active" | "accepted" | "rejected" | "cancelled" | "expired";
   created_at?: string;
   expires_at?: string | null;
 }
@@ -1567,7 +1601,7 @@ export interface MarketplaceBid {
 export interface MarketplaceOwnerAdminChecklistItem {
   id: string;
   label: string;
-  status: 'ready' | 'action' | 'blocked' | 'optional';
+  status: "ready" | "action" | "blocked" | "optional";
   detail?: string;
   action?: string;
 }
@@ -1584,7 +1618,7 @@ export interface MarketplaceOwnerAdmin {
     publisher_user_id: string;
     slug: string;
     url: string;
-    status: 'active' | 'disabled';
+    status: "active" | "disabled";
     created_at: string;
   } | null;
   checklist?: MarketplaceOwnerAdminChecklistItem[];
@@ -1600,7 +1634,7 @@ export interface MarketplaceListingDetails {
     ask_price_light?: number | null;
     floor_price_light?: number | null;
     instant_buy?: boolean;
-    status?: 'ineligible' | 'unlisted' | 'open_to_offers' | 'listed' | 'sold';
+    status?: "ineligible" | "unlisted" | "open_to_offers" | "listed" | "sold";
     listing_note?: string | null;
     provenance?: unknown[];
     updated_at?: string;
@@ -1622,12 +1656,19 @@ export interface MarketplaceListingDetails {
   };
 }
 
-export async function fetchMarketplaceListing(appId: string): Promise<MarketplaceListingDetails | null> {
+export async function fetchMarketplaceListing(
+  appId: string,
+): Promise<MarketplaceListingDetails | null> {
   const token = getToken();
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
 
-  const res = await fetchFromApi(`/api/marketplace/listing/${encodeURIComponent(appId)}`, { headers });
+  const res = await fetchFromApi(
+    `/api/marketplace/listing/${encodeURIComponent(appId)}`,
+    { headers },
+  );
   if (!res.ok) return null;
   return await res.json() as MarketplaceListingDetails;
 }
@@ -1650,10 +1691,13 @@ export async function placeBid(input: {
   expiresInHours?: number;
 }): Promise<PlaceBidResult> {
   const token = getToken();
-  if (!token) return { ok: false, errorMessage: 'Not signed in' };
-  const res = await fetchFromApi('/api/marketplace/bid', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+  if (!token) return { ok: false, errorMessage: "Not signed in" };
+  const res = await fetchFromApi("/api/marketplace/bid", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify({
       app_id: input.appId,
       amount_light: input.amountLight,
@@ -1662,24 +1706,33 @@ export async function placeBid(input: {
     }),
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    return { ok: false, errorStatus: res.status, errorMessage: text || `Failed (${res.status})` };
+    const text = await res.text().catch(() => "");
+    return {
+      ok: false,
+      errorStatus: res.status,
+      errorMessage: text || `Failed (${res.status})`,
+    };
   }
   const data = await res.json() as { bid_id?: string; amount_light?: number };
   return { ok: true, bid_id: data.bid_id, amount_light: data.amount_light };
 }
 
 /** POST /api/marketplace/cancel — bidder withdraws their own active bid, refunds escrow. */
-export async function cancelBid(bidId: string): Promise<{ ok: boolean; errorMessage?: string }> {
+export async function cancelBid(
+  bidId: string,
+): Promise<{ ok: boolean; errorMessage?: string }> {
   const token = getToken();
-  if (!token) return { ok: false, errorMessage: 'Not signed in' };
-  const res = await fetchFromApi('/api/marketplace/cancel', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+  if (!token) return { ok: false, errorMessage: "Not signed in" };
+  const res = await fetchFromApi("/api/marketplace/cancel", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify({ bid_id: bidId }),
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
+    const text = await res.text().catch(() => "");
     return { ok: false, errorMessage: text || `Failed (${res.status})` };
   }
   return { ok: true };
@@ -1708,10 +1761,13 @@ export async function setAskPrice(input: {
   note?: string;
 }): Promise<SetAskPriceResult> {
   const token = getToken();
-  if (!token) return { ok: false, errorMessage: 'Not signed in' };
-  const res = await fetchFromApi('/api/marketplace/ask', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+  if (!token) return { ok: false, errorMessage: "Not signed in" };
+  const res = await fetchFromApi("/api/marketplace/ask", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify({
       app_id: input.appId,
       price_light: input.priceLight,
@@ -1721,10 +1777,17 @@ export async function setAskPrice(input: {
     }),
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    return { ok: false, errorStatus: res.status, errorMessage: text || `Failed (${res.status})` };
+    const text = await res.text().catch(() => "");
+    return {
+      ok: false,
+      errorStatus: res.status,
+      errorMessage: text || `Failed (${res.status})`,
+    };
   }
-  const data = await res.json() as Omit<SetAskPriceResult, 'ok' | 'errorStatus' | 'errorMessage'>;
+  const data = await res.json() as Omit<
+    SetAskPriceResult,
+    "ok" | "errorStatus" | "errorMessage"
+  >;
   return { ok: true, ...data };
 }
 
@@ -1749,31 +1812,46 @@ export interface AcceptBidResult {
  *  transfer + Light debit (buyer) + credit (seller). */
 export async function acceptBid(bidId: string): Promise<AcceptBidResult> {
   const token = getToken();
-  if (!token) return { ok: false, errorMessage: 'Not signed in' };
-  const res = await fetchFromApi('/api/marketplace/accept', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+  if (!token) return { ok: false, errorMessage: "Not signed in" };
+  const res = await fetchFromApi("/api/marketplace/accept", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify({ bid_id: bidId }),
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    return { ok: false, errorStatus: res.status, errorMessage: text || `Failed (${res.status})` };
+    const text = await res.text().catch(() => "");
+    return {
+      ok: false,
+      errorStatus: res.status,
+      errorMessage: text || `Failed (${res.status})`,
+    };
   }
-  const data = await res.json() as Omit<AcceptBidResult, 'ok' | 'errorStatus' | 'errorMessage'>;
+  const data = await res.json() as Omit<
+    AcceptBidResult,
+    "ok" | "errorStatus" | "errorMessage"
+  >;
   return { ok: true, ...data };
 }
 
 /** POST /api/marketplace/reject — owner declines a bid, refunds escrow. */
-export async function rejectBid(bidId: string): Promise<{ ok: boolean; errorMessage?: string }> {
+export async function rejectBid(
+  bidId: string,
+): Promise<{ ok: boolean; errorMessage?: string }> {
   const token = getToken();
-  if (!token) return { ok: false, errorMessage: 'Not signed in' };
-  const res = await fetchFromApi('/api/marketplace/reject', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+  if (!token) return { ok: false, errorMessage: "Not signed in" };
+  const res = await fetchFromApi("/api/marketplace/reject", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify({ bid_id: bidId }),
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
+    const text = await res.text().catch(() => "");
     return { ok: false, errorMessage: text || `Failed (${res.status})` };
   }
   return { ok: true };
@@ -1791,14 +1869,20 @@ export async function setMetricsVisibility(input: {
   showMetrics: boolean;
 }): Promise<{ ok: boolean; errorMessage?: string }> {
   const token = getToken();
-  if (!token) return { ok: false, errorMessage: 'Not signed in' };
-  const res = await fetchFromApi('/api/marketplace/metrics-visibility', {
-    method: 'PATCH',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ app_id: input.appId, show_metrics: input.showMetrics }),
+  if (!token) return { ok: false, errorMessage: "Not signed in" };
+  const res = await fetchFromApi("/api/marketplace/metrics-visibility", {
+    method: "PATCH",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      app_id: input.appId,
+      show_metrics: input.showMetrics,
+    }),
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
+    const text = await res.text().catch(() => "");
     return { ok: false, errorMessage: text || `Failed (${res.status})` };
   }
   return { ok: true };
@@ -1821,26 +1905,38 @@ export interface InstantAcquireResult {
 
 /** POST /api/marketplace/acquire — atomic instant-buy at the ask price.
  *  Only allowed when listing.instant_buy === true. */
-export async function instantAcquire(appId: string): Promise<InstantAcquireResult> {
+export async function instantAcquire(
+  appId: string,
+): Promise<InstantAcquireResult> {
   const token = getToken();
-  if (!token) return { ok: false, errorMessage: 'Not signed in' };
-  const res = await fetchFromApi('/api/marketplace/acquire', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+  if (!token) return { ok: false, errorMessage: "Not signed in" };
+  const res = await fetchFromApi("/api/marketplace/acquire", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify({ app_id: appId }),
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    return { ok: false, errorStatus: res.status, errorMessage: text || `Failed (${res.status})` };
+    const text = await res.text().catch(() => "");
+    return {
+      ok: false,
+      errorStatus: res.status,
+      errorMessage: text || `Failed (${res.status})`,
+    };
   }
-  const data = await res.json() as Omit<InstantAcquireResult, 'ok' | 'errorStatus' | 'errorMessage'>;
+  const data = await res.json() as Omit<
+    InstantAcquireResult,
+    "ok" | "errorStatus" | "errorMessage"
+  >;
   return { ok: true, ...data };
 }
 
 export interface NewlyAcquiredEntry {
   receipt_id: string;
   sale_id: string;
-  type: 'acquisition';
+  type: "acquisition";
   app_id: string;
   app_name: string;
   app_slug?: string;
@@ -1848,16 +1944,33 @@ export interface NewlyAcquiredEntry {
   sale_price_light: number;
   created_at: string;
   receipt_url?: string;
-  buyer?: { user_id: string; display_name?: string; profile_slug?: string; avatar_url?: string };
-  seller?: { user_id: string; display_name?: string; profile_slug?: string; avatar_url?: string };
+  buyer?: {
+    user_id: string;
+    display_name?: string;
+    profile_slug?: string;
+    avatar_url?: string;
+  };
+  seller?: {
+    user_id: string;
+    display_name?: string;
+    profile_slug?: string;
+    avatar_url?: string;
+  };
 }
 
-export async function fetchNewlyAcquired(limit = 10): Promise<NewlyAcquiredEntry[]> {
-  const res = await fetchFromApi(`/api/discover/newly-acquired?limit=${limit}`, {
-    headers: { 'Content-Type': 'application/json' },
-  });
+export async function fetchNewlyAcquired(
+  limit = 10,
+): Promise<NewlyAcquiredEntry[]> {
+  const res = await fetchFromApi(
+    `/api/discover/newly-acquired?limit=${limit}`,
+    {
+      headers: { "Content-Type": "application/json" },
+    },
+  );
   if (!res.ok) return [];
-  const data = await res.json() as NewlyAcquiredEntry[] | { results?: NewlyAcquiredEntry[] };
+  const data = await res.json() as NewlyAcquiredEntry[] | {
+    results?: NewlyAcquiredEntry[];
+  };
   return Array.isArray(data) ? data : (data.results ?? []);
 }
 
@@ -1880,7 +1993,7 @@ export async function fetchNewlyAcquired(limit = 10): Promise<NewlyAcquiredEntry
 // {range}.") while keeping the range selector usable, so the user
 // can retry once BE rolls out.
 
-export type UsageRange = '7d' | '30d' | '90d' | '1y';
+export type UsageRange = "7d" | "30d" | "90d" | "1y";
 
 export interface UsageBucket {
   /** X-axis label, pre-formatted by the BE to match the range type. */
@@ -1892,8 +2005,8 @@ export interface UsageBucket {
 export interface UsageAppInfo {
   id: string;
   name: string;
-  tone?: string;   // hex — data, not a design token
-  glyph?: string;  // 1-3 char monogram
+  tone?: string; // hex — data, not a design token
+  glyph?: string; // 1-3 char monogram
 }
 
 export interface UsageSeriesResponse {
@@ -1911,14 +2024,14 @@ export interface UsageSeriesResponse {
 
 export async function fetchUsageSeries(
   range: UsageRange,
-  options: { groupBy?: 'app' | 'category' } = {},
+  options: { groupBy?: "app" | "category" } = {},
 ): Promise<UsageSeriesResponse | null> {
   const token = getToken();
   if (!token) return null;
   const params = new URLSearchParams({ range });
-  if (options.groupBy) params.set('groupBy', options.groupBy);
+  if (options.groupBy) params.set("groupBy", options.groupBy);
   const res = await fetchFromApi(`/api/usage?${params.toString()}`, {
-    headers: { 'Authorization': `Bearer ${token}` },
+    headers: { "Authorization": `Bearer ${token}` },
   });
   if (!res.ok) return null;
   return await res.json() as UsageSeriesResponse;
@@ -1942,44 +2055,56 @@ export interface InstallLibraryAppResult {
   errorMessage?: string;
 }
 
-export async function installLibraryApp(appId: string): Promise<InstallLibraryAppResult> {
+export async function installLibraryApp(
+  appId: string,
+): Promise<InstallLibraryAppResult> {
   const token = getToken();
-  if (!token) return { ok: false, errorMessage: 'Not signed in' };
-  const res = await fetchFromApi('/api/user/library/install', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+  if (!token) return { ok: false, errorMessage: "Not signed in" };
+  const res = await fetchFromApi("/api/user/library/install", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify({ app_id: appId }),
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
+    const text = await res.text().catch(() => "");
     return { ok: false, errorMessage: text || `Failed (${res.status})` };
   }
-  const data = await res.json().catch(() => ({})) as Partial<InstallLibraryAppResult>;
+  const data = await res.json().catch(() => ({})) as Partial<
+    InstallLibraryAppResult
+  >;
   return { ok: true, ...data };
 }
 
-export async function uninstallLibraryApp(appId: string): Promise<{ ok: boolean; errorMessage?: string }> {
+export async function uninstallLibraryApp(
+  appId: string,
+): Promise<{ ok: boolean; errorMessage?: string }> {
   const token = getToken();
-  if (!token) return { ok: false, errorMessage: 'Not signed in' };
-  const res = await fetchFromApi('/api/user/library/uninstall', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+  if (!token) return { ok: false, errorMessage: "Not signed in" };
+  const res = await fetchFromApi("/api/user/library/uninstall", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify({ app_id: appId }),
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
+    const text = await res.text().catch(() => "");
     return { ok: false, errorMessage: text || `Failed (${res.status})` };
   }
   return { ok: true };
 }
 
 export type CapabilitySuggestionEventType =
-  | 'viewed'
-  | 'accepted'
-  | 'dismissed'
-  | 'installed'
-  | 'used'
-  | 'failed';
+  | "viewed"
+  | "accepted"
+  | "dismissed"
+  | "installed"
+  | "used"
+  | "failed";
 
 export interface CapabilitySuggestionEventInput {
   eventType: CapabilitySuggestionEventType;
@@ -1996,12 +2121,27 @@ export interface CapabilitySuggestionEventInput {
   metadata?: Record<string, unknown>;
 }
 
+export interface AcceptSuggestionInput {
+  conversationId?: string;
+  messageId?: string;
+  traceId?: string;
+  eventSource?: string;
+  metadata?: Record<string, unknown>;
+}
+
 export async function recordCapabilitySuggestionEvent(
   input: CapabilitySuggestionEventInput,
-): Promise<{ ok: boolean; eventId?: string; libraryInstalled?: boolean; errorMessage?: string }> {
+): Promise<
+  {
+    ok: boolean;
+    eventId?: string;
+    libraryInstalled?: boolean;
+    errorMessage?: string;
+  }
+> {
   try {
-    const res = await fetchFromApi('/chat/capability-suggestion-event', {
-      method: 'POST',
+    const res = await fetchFromApi("/chat/capability-suggestion-event", {
+      method: "POST",
       headers: authHeaders(),
       body: JSON.stringify({
         event_type: input.eventType,
@@ -2013,13 +2153,13 @@ export async function recordCapabilitySuggestionEvent(
         message_id: input.messageId,
         app_id: input.appId,
         app_slug: input.appSlug,
-        event_source: input.eventSource || 'desktop',
+        event_source: input.eventSource || "desktop",
         install_on_accept: input.installOnAccept,
         metadata: input.metadata,
       }),
     });
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
+      const text = await res.text().catch(() => "");
       return { ok: false, errorMessage: text || `Failed (${res.status})` };
     }
     const data = await res.json().catch(() => ({})) as {
@@ -2034,10 +2174,83 @@ export async function recordCapabilitySuggestionEvent(
   } catch (err) {
     return {
       ok: false,
-      errorMessage: err instanceof Error ? err.message : 'Suggestion telemetry failed',
+      errorMessage: err instanceof Error
+        ? err.message
+        : "Suggestion telemetry failed",
     };
   }
 }
+
+export async function fetchSuggestionPreview(
+  suggestionId: string,
+): Promise<SuggestionPreviewDescriptor> {
+  const res = await fetchFromApi(
+    `/chat/suggestions/${encodeURIComponent(suggestionId)}/preview`,
+    {
+      method: "GET",
+      headers: authHeaders(),
+    },
+  );
+
+  if (!res.ok) {
+    throw await buildExecutionPlanRequestError(res);
+  }
+
+  return await res.json() as SuggestionPreviewDescriptor;
+}
+
+export async function fetchSuggestionPreviewBatch(
+  input: { suggestionSetId?: string; suggestionIds?: string[] },
+): Promise<{ previews: SuggestionPreviewDescriptor[] }> {
+  const res = await fetchFromApi("/chat/suggestions/preview", {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({
+      suggestion_set_id: input.suggestionSetId,
+      suggestion_ids: input.suggestionIds,
+    }),
+  });
+
+  if (!res.ok) {
+    throw await buildExecutionPlanRequestError(res);
+  }
+
+  return await res.json() as { previews: SuggestionPreviewDescriptor[] };
+}
+
+export async function acceptSuggestion(
+  suggestionId: string,
+  input: AcceptSuggestionInput = {},
+): Promise<SuggestionAcceptResult> {
+  const res = await fetchFromApi(
+    `/chat/suggestions/${encodeURIComponent(suggestionId)}/accept`,
+    {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({
+        conversation_id: input.conversationId,
+        message_id: input.messageId,
+        trace_id: input.traceId,
+        event_source: input.eventSource,
+        metadata: input.metadata,
+      }),
+    },
+  );
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    return {
+      ok: false,
+      kind: "error",
+      suggestionId,
+      error: text || `Failed (${res.status})`,
+    };
+  }
+
+  return await res.json() as SuggestionAcceptResult;
+}
+
+export const acceptSuggestionById = acceptSuggestion;
 
 // ── Author profile (B7) ──
 //
@@ -2097,9 +2310,9 @@ export interface AuthorProfileResponse {
   display_name?: string | null;
   bio?: string | null;
   location?: string | null;
-  joined?: string | null;            // ISO timestamp
+  joined?: string | null; // ISO timestamp
   links?: AuthorProfileLink[];
-  glyph_tone?: string | null;        // hex
+  glyph_tone?: string | null; // hex
   verified?: boolean;
   stats?: {
     published: number;
@@ -2113,13 +2326,19 @@ export interface AuthorProfileResponse {
   activity?: AuthorProfileActivityEvent[];
 }
 
-export async function fetchAuthorProfile(handle: string): Promise<AuthorProfileResponse | null> {
+export async function fetchAuthorProfile(
+  handle: string,
+): Promise<AuthorProfileResponse | null> {
   const token = getToken();
   // Strip the leading @ if present — endpoint expects the raw handle.
-  const clean = handle.startsWith('@') ? handle.slice(1) : handle;
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-  const res = await fetchFromApi(`/api/author/${encodeURIComponent(clean)}`, { headers });
+  const clean = handle.startsWith("@") ? handle.slice(1) : handle;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetchFromApi(`/api/author/${encodeURIComponent(clean)}`, {
+    headers,
+  });
   if (!res.ok) return null;
   return await res.json() as AuthorProfileResponse;
 }
@@ -2150,44 +2369,51 @@ export interface HandoffBannerItem {
    *  when present, falls back to sold_at. */
   acquired_at?: string;
   sold_at?: string;
-  path: 'accepted' | 'instant';
+  path: "accepted" | "instant";
 }
 
 export async function fetchRecentlySold(): Promise<HandoffBannerItem[]> {
   const token = getToken();
   if (!token) return [];
-  const res = await fetchFromApi('/api/marketplace/recently-sold', {
-    headers: { 'Authorization': `Bearer ${token}` },
+  const res = await fetchFromApi("/api/marketplace/recently-sold", {
+    headers: { "Authorization": `Bearer ${token}` },
   });
   if (!res.ok) return [];
-  const data = await res.json() as { items?: HandoffBannerItem[] } | HandoffBannerItem[];
+  const data = await res.json() as
+    | { items?: HandoffBannerItem[] }
+    | HandoffBannerItem[];
   return Array.isArray(data) ? data : (data.items ?? []);
 }
 
 export async function fetchRecentlyAcquired(): Promise<HandoffBannerItem[]> {
   const token = getToken();
   if (!token) return [];
-  const res = await fetchFromApi('/api/marketplace/recently-acquired', {
-    headers: { 'Authorization': `Bearer ${token}` },
+  const res = await fetchFromApi("/api/marketplace/recently-acquired", {
+    headers: { "Authorization": `Bearer ${token}` },
   });
   if (!res.ok) return [];
-  const data = await res.json() as { items?: HandoffBannerItem[] } | HandoffBannerItem[];
+  const data = await res.json() as
+    | { items?: HandoffBannerItem[] }
+    | HandoffBannerItem[];
   return Array.isArray(data) ? data : (data.items ?? []);
 }
 
 export async function dismissHandoffBanner(input: {
   saleId: string;
-  side: 'seller' | 'buyer';
+  side: "seller" | "buyer";
 }): Promise<{ ok: boolean; errorMessage?: string }> {
   const token = getToken();
-  if (!token) return { ok: false, errorMessage: 'Not signed in' };
-  const res = await fetchFromApi('/api/marketplace/handoff-banner-dismiss', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+  if (!token) return { ok: false, errorMessage: "Not signed in" };
+  const res = await fetchFromApi("/api/marketplace/handoff-banner-dismiss", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify({ sale_id: input.saleId, side: input.side }),
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
+    const text = await res.text().catch(() => "");
     return { ok: false, errorMessage: text || `Failed (${res.status})` };
   }
   return { ok: true };
@@ -2222,8 +2448,8 @@ export interface UserProfile {
 export async function fetchUserProfile(): Promise<UserProfile | null> {
   const token = getToken();
   if (!token) return null;
-  const res = await fetchFromApi('/api/user', {
-    headers: { 'Authorization': `Bearer ${token}` },
+  const res = await fetchFromApi("/api/user", {
+    headers: { "Authorization": `Bearer ${token}` },
   });
   if (!res.ok) return null;
   return await res.json() as UserProfile;
@@ -2244,8 +2470,8 @@ export interface UserHosting {
 export async function fetchUserHosting(): Promise<UserHosting | null> {
   const token = getToken();
   if (!token) return null;
-  const res = await fetchFromApi('/api/user/hosting', {
-    headers: { 'Authorization': `Bearer ${token}` },
+  const res = await fetchFromApi("/api/user/hosting", {
+    headers: { "Authorization": `Bearer ${token}` },
   });
   if (!res.ok) return null;
   return await res.json() as UserHosting;
@@ -2254,7 +2480,7 @@ export async function fetchUserHosting(): Promise<UserHosting | null> {
 export interface BillingTransaction {
   id?: string;
   user_id?: string;
-  type?: 'charge' | 'credit' | 'deposit' | 'refund' | 'transfer' | string;
+  type?: "charge" | "credit" | "deposit" | "refund" | "transfer" | string;
   category?: string;
   description?: string | null;
   amount_cents?: number;
@@ -2280,13 +2506,13 @@ export async function fetchUserTransactions(options?: {
   const token = getToken();
   if (!token) return null;
   const params = new URLSearchParams();
-  if (options?.limit) params.set('limit', String(options.limit));
-  if (options?.offset) params.set('offset', String(options.offset));
-  if (options?.category) params.set('category', options.category);
+  if (options?.limit) params.set("limit", String(options.limit));
+  if (options?.offset) params.set("offset", String(options.offset));
+  if (options?.category) params.set("category", options.category);
   const qs = params.toString();
   const res = await fetchFromApi(
-    `/api/user/transactions${qs ? `?${qs}` : ''}`,
-    { headers: { 'Authorization': `Bearer ${token}` } },
+    `/api/user/transactions${qs ? `?${qs}` : ""}`,
+    { headers: { "Authorization": `Bearer ${token}` } },
   );
   if (!res.ok) return null;
   return await res.json() as UserTransactionsResponse;
@@ -2313,11 +2539,13 @@ export interface UserEarnings {
   }>;
 }
 
-export async function fetchUserEarnings(period: '7d' | '30d' | '90d' | 'all' = '30d'): Promise<UserEarnings | null> {
+export async function fetchUserEarnings(
+  period: "7d" | "30d" | "90d" | "all" = "30d",
+): Promise<UserEarnings | null> {
   const token = getToken();
   if (!token) return null;
   const res = await fetchFromApi(`/api/user/earnings?period=${period}`, {
-    headers: { 'Authorization': `Bearer ${token}` },
+    headers: { "Authorization": `Bearer ${token}` },
   });
   if (!res.ok) return null;
   return await res.json() as UserEarnings;
@@ -2336,8 +2564,8 @@ export interface ConnectStatus {
 export async function fetchConnectStatus(): Promise<ConnectStatus | null> {
   const token = getToken();
   if (!token) return null;
-  const res = await fetchFromApi('/api/user/connect/status', {
-    headers: { 'Authorization': `Bearer ${token}` },
+  const res = await fetchFromApi("/api/user/connect/status", {
+    headers: { "Authorization": `Bearer ${token}` },
   });
   if (!res.ok) return null;
   return await res.json() as ConnectStatus;
@@ -2364,25 +2592,35 @@ export interface WalletExpressIntentResult {
  *  then completes the payment via Stripe.js (loaded separately). */
 export async function createWalletExpressIntent(input: {
   amountCents: number;
-  source?: 'web' | 'desktop';
+  source?: "web" | "desktop";
   termsAccepted: boolean;
 }): Promise<WalletExpressIntentResult> {
   const token = getToken();
-  if (!token) return { ok: false, errorMessage: 'Not signed in' };
-  const res = await fetchFromApi('/api/user/wallet/express-checkout-intent', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+  if (!token) return { ok: false, errorMessage: "Not signed in" };
+  const res = await fetchFromApi("/api/user/wallet/express-checkout-intent", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify({
       amount_cents: input.amountCents,
-      source: input.source ?? 'desktop',
+      source: input.source ?? "desktop",
       terms_accepted: input.termsAccepted,
     }),
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    return { ok: false, errorStatus: res.status, errorMessage: text || `Failed (${res.status})` };
+    const text = await res.text().catch(() => "");
+    return {
+      ok: false,
+      errorStatus: res.status,
+      errorMessage: text || `Failed (${res.status})`,
+    };
   }
-  const data = await res.json() as Omit<WalletExpressIntentResult, 'ok' | 'errorStatus' | 'errorMessage'>;
+  const data = await res.json() as Omit<
+    WalletExpressIntentResult,
+    "ok" | "errorStatus" | "errorMessage"
+  >;
   return { ok: true, ...data };
 }
 
@@ -2410,25 +2648,35 @@ export interface WireTransferIntentResult {
  *  the FE displays for the user to complete from their bank. */
 export async function createWireTransferIntent(input: {
   amountCents: number;
-  source?: 'web' | 'desktop';
+  source?: "web" | "desktop";
   termsAccepted: boolean;
 }): Promise<WireTransferIntentResult> {
   const token = getToken();
-  if (!token) return { ok: false, errorMessage: 'Not signed in' };
-  const res = await fetchFromApi('/api/user/wallet/wire-transfer-intent', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+  if (!token) return { ok: false, errorMessage: "Not signed in" };
+  const res = await fetchFromApi("/api/user/wallet/wire-transfer-intent", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify({
       amount_cents: input.amountCents,
-      source: input.source ?? 'desktop',
+      source: input.source ?? "desktop",
       terms_accepted: input.termsAccepted,
     }),
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    return { ok: false, errorStatus: res.status, errorMessage: text || `Failed (${res.status})` };
+    const text = await res.text().catch(() => "");
+    return {
+      ok: false,
+      errorStatus: res.status,
+      errorMessage: text || `Failed (${res.status})`,
+    };
   }
-  const data = await res.json() as Omit<WireTransferIntentResult, 'ok' | 'errorStatus' | 'errorMessage'>;
+  const data = await res.json() as Omit<
+    WireTransferIntentResult,
+    "ok" | "errorStatus" | "errorMessage"
+  >;
   return { ok: true, ...data };
 }
 
@@ -2453,10 +2701,13 @@ export async function convertEarningsToBalance(input: {
   termsAccepted: boolean;
 }): Promise<ConvertEarningsResult> {
   const token = getToken();
-  if (!token) return { ok: false, errorMessage: 'Not signed in' };
-  const res = await fetchFromApi('/api/user/earnings/convert-to-balance', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+  if (!token) return { ok: false, errorMessage: "Not signed in" };
+  const res = await fetchFromApi("/api/user/earnings/convert-to-balance", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify({
       amount_light: input.amountLight,
       convert_all: input.convertAll,
@@ -2464,10 +2715,17 @@ export async function convertEarningsToBalance(input: {
     }),
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    return { ok: false, errorStatus: res.status, errorMessage: text || `Failed (${res.status})` };
+    const text = await res.text().catch(() => "");
+    return {
+      ok: false,
+      errorStatus: res.status,
+      errorMessage: text || `Failed (${res.status})`,
+    };
   }
-  const data = await res.json() as Omit<ConvertEarningsResult, 'ok' | 'errorStatus' | 'errorMessage'>;
+  const data = await res.json() as Omit<
+    ConvertEarningsResult,
+    "ok" | "errorStatus" | "errorMessage"
+  >;
   return { ok: true, ...data };
 }
 
@@ -2483,19 +2741,27 @@ export interface ConnectOnboardResult {
 /** POST /api/user/connect/onboard — creates / resumes Stripe Connect
  *  Express onboarding. The FE opens onboarding_url in the user's
  *  browser; Stripe redirects back to the platform after completion. */
-export async function startConnectOnboard(input: { country?: string }): Promise<ConnectOnboardResult> {
+export async function startConnectOnboard(
+  input: { country?: string },
+): Promise<ConnectOnboardResult> {
   const token = getToken();
-  if (!token) return { ok: false, errorMessage: 'Not signed in' };
-  const res = await fetchFromApi('/api/user/connect/onboard', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+  if (!token) return { ok: false, errorMessage: "Not signed in" };
+  const res = await fetchFromApi("/api/user/connect/onboard", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify({ country: input.country }),
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
+    const text = await res.text().catch(() => "");
     return { ok: false, errorMessage: text || `Failed (${res.status})` };
   }
-  const data = await res.json() as Omit<ConnectOnboardResult, 'ok' | 'errorMessage'>;
+  const data = await res.json() as Omit<
+    ConnectOnboardResult,
+    "ok" | "errorMessage"
+  >;
   return { ok: true, ...data };
 }
 
@@ -2517,27 +2783,33 @@ export async function requestPayoutWithdrawal(input: {
   termsAccepted: boolean;
 }): Promise<PayoutWithdrawResult> {
   const token = getToken();
-  if (!token) return { ok: false, errorMessage: 'Not signed in' };
-  const res = await fetchFromApi('/api/user/connect/withdraw', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+  if (!token) return { ok: false, errorMessage: "Not signed in" };
+  const res = await fetchFromApi("/api/user/connect/withdraw", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify({
       amount_light: input.amountLight,
       terms_accepted: input.termsAccepted,
     }),
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
+    const text = await res.text().catch(() => "");
     return { ok: false, errorMessage: text || `Failed (${res.status})` };
   }
-  const data = await res.json() as Omit<PayoutWithdrawResult, 'ok' | 'errorMessage'>;
+  const data = await res.json() as Omit<
+    PayoutWithdrawResult,
+    "ok" | "errorMessage"
+  >;
   return { ok: true, ...data };
 }
 
 export interface PayoutRow {
   id: string;
   amount_light: number;
-  status: 'held' | 'releasing' | 'paid' | 'failed' | 'cancelled' | string;
+  status: "held" | "releasing" | "paid" | "failed" | "cancelled" | string;
   created_at: string;
   release_at?: string | null;
   stripe_transfer_id?: string | null;
@@ -2551,7 +2823,7 @@ export async function fetchPayoutHistory(limit = 20): Promise<PayoutRow[]> {
   const token = getToken();
   if (!token) return [];
   const res = await fetchFromApi(`/api/user/connect/payouts?limit=${limit}`, {
-    headers: { 'Authorization': `Bearer ${token}` },
+    headers: { "Authorization": `Bearer ${token}` },
   });
   if (!res.ok) return [];
   const data = await res.json() as { payouts?: PayoutRow[] } | PayoutRow[];
@@ -2561,16 +2833,21 @@ export async function fetchPayoutHistory(limit = 20): Promise<PayoutRow[]> {
 
 /** PATCH /api/user/earnings/auto-add — toggle auto-conversion of future
  *  earnings into spendable balance. */
-export async function toggleAutoAddEarnings(enabled: boolean): Promise<{ ok: boolean; errorMessage?: string }> {
+export async function toggleAutoAddEarnings(
+  enabled: boolean,
+): Promise<{ ok: boolean; errorMessage?: string }> {
   const token = getToken();
-  if (!token) return { ok: false, errorMessage: 'Not signed in' };
-  const res = await fetchFromApi('/api/user/earnings/auto-add', {
-    method: 'PATCH',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+  if (!token) return { ok: false, errorMessage: "Not signed in" };
+  const res = await fetchFromApi("/api/user/earnings/auto-add", {
+    method: "PATCH",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify({ enabled }),
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
+    const text = await res.text().catch(() => "");
     return { ok: false, errorMessage: text || `Failed (${res.status})` };
   }
   return { ok: true };
@@ -2585,16 +2862,21 @@ export interface UpdateUserProfileInput {
 }
 
 /** PATCH /api/user — update display name / country / featured app. */
-export async function updateUserProfile(input: UpdateUserProfileInput): Promise<{ ok: boolean; profile?: UserProfile; errorMessage?: string }> {
+export async function updateUserProfile(
+  input: UpdateUserProfileInput,
+): Promise<{ ok: boolean; profile?: UserProfile; errorMessage?: string }> {
   const token = getToken();
-  if (!token) return { ok: false, errorMessage: 'Not signed in' };
-  const res = await fetchFromApi('/api/user', {
-    method: 'PATCH',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+  if (!token) return { ok: false, errorMessage: "Not signed in" };
+  const res = await fetchFromApi("/api/user", {
+    method: "PATCH",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify(input),
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
+    const text = await res.text().catch(() => "");
     return { ok: false, errorMessage: text || `Failed (${res.status})` };
   }
   const data = await res.json() as UserProfile;
@@ -2616,24 +2898,34 @@ export interface BillingAddress {
 export async function fetchBillingAddress(): Promise<BillingAddress | null> {
   const token = getToken();
   if (!token) return null;
-  const res = await fetchFromApi('/api/user/billing-address', {
-    headers: { 'Authorization': `Bearer ${token}` },
+  const res = await fetchFromApi("/api/user/billing-address", {
+    headers: { "Authorization": `Bearer ${token}` },
   });
   if (!res.ok) return null;
-  const data = await res.json() as { billing_address?: BillingAddress } | BillingAddress;
-  if (data && typeof data === 'object' && 'billing_address' in data && data.billing_address) {
+  const data = await res.json() as
+    | { billing_address?: BillingAddress }
+    | BillingAddress;
+  if (
+    data && typeof data === "object" && "billing_address" in data &&
+    data.billing_address
+  ) {
     return data.billing_address;
   }
   return data as BillingAddress;
 }
 
-export async function updateBillingAddress(input: BillingAddress): Promise<{ ok: boolean; errorMessage?: string }> {
+export async function updateBillingAddress(
+  input: BillingAddress,
+): Promise<{ ok: boolean; errorMessage?: string }> {
   const token = getToken();
-  if (!token) return { ok: false, errorMessage: 'Not signed in' };
+  if (!token) return { ok: false, errorMessage: "Not signed in" };
   // BE expects camelCase per the audit (name, line1, line2, city, state, postalCode, country).
-  const res = await fetchFromApi('/api/user/billing-address', {
-    method: 'PUT',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+  const res = await fetchFromApi("/api/user/billing-address", {
+    method: "PUT",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify({
       name: input.name,
       line1: input.line1,
@@ -2645,7 +2937,7 @@ export async function updateBillingAddress(input: BillingAddress): Promise<{ ok:
     }),
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
+    const text = await res.text().catch(() => "");
     return { ok: false, errorMessage: text || `Failed (${res.status})` };
   }
   return { ok: true };
@@ -2884,10 +3176,13 @@ export interface OrchestrateEvent {
     | "plan_cancelled"
     | "exec_start"
     | "exec_result"
+    | "interface"
+    | "next_steps"
     // System agent delegation
     | "system_agent_spawn"
     // Meta
     | "usage"
+    | "cancelled"
     | "done"
     | "error"
     // Legacy compat
@@ -2934,6 +3229,9 @@ export interface OrchestrateEvent {
   };
   planId?: string;
   reason?: string;
+  cancelled_at?: number;
+  spec?: AgenticInterfaceSpec;
+  steps?: NextStep[];
 }
 
 /**
@@ -2980,15 +3278,24 @@ export async function* streamOrchestrate(opts: {
   files?: Array<
     { name: string; size: number; mimeType: string; content: string }
   >;
+  /** Local abort signal for generation-phase cancel. Not sent in the JSON body. */
+  signal?: AbortSignal;
 }): AsyncGenerator<OrchestrateEvent> {
   let res: Response;
+  const { signal, ...bodyOpts } = opts;
   try {
     res = await fetchFromApi("/chat/orchestrate", {
       method: "POST",
       headers: authHeaders(),
-      body: JSON.stringify(opts),
+      body: JSON.stringify(bodyOpts),
+      signal,
     });
   } catch (err) {
+    if (signal?.aborted) {
+      yield { type: "cancelled", reason: "aborted", cancelled_at: Date.now() };
+      yield { type: "done" };
+      return;
+    }
     yield {
       type: "error",
       message: `Network error: ${
@@ -3031,7 +3338,22 @@ export async function* streamOrchestrate(opts: {
   let buffer = "";
 
   while (true) {
-    const { done, value } = await reader.read();
+    let chunk: ReadableStreamReadResult<Uint8Array>;
+    try {
+      chunk = await reader.read();
+    } catch (err) {
+      if (signal?.aborted) {
+        yield {
+          type: "cancelled",
+          reason: "aborted",
+          cancelled_at: Date.now(),
+        };
+        yield { type: "done" };
+        return;
+      }
+      throw err;
+    }
+    const { done, value } = chunk;
     if (done) break;
 
     buffer += decoder.decode(value, { stream: true });
@@ -3068,6 +3390,17 @@ export async function confirmExecutionPlan(planId: string): Promise<void> {
 
 export async function cancelExecutionPlan(planId: string): Promise<void> {
   const res = await fetchFromApi(`/chat/plan/${planId}/cancel`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+
+  if (!res.ok) {
+    throw await buildExecutionPlanRequestError(res);
+  }
+}
+
+export async function cancelGenerationTurn(turnId: string): Promise<void> {
+  const res = await fetchFromApi(`/chat/turn/${turnId}/cancel`, {
     method: "POST",
     headers: authHeaders(),
   });

@@ -34,6 +34,7 @@ pub struct DbMessage {
     pub tool_call_id: Option<String>,
     pub usage: Option<String>,          // JSON serialized
     pub cost_cents: Option<f64>,
+    pub artifacts: Option<String>,      // JSON serialized turn artifacts
     pub created_at: i64,
     pub sort_order: i64,
 }
@@ -170,6 +171,7 @@ CREATE TABLE IF NOT EXISTS messages (
     tool_call_id TEXT,
     usage TEXT,
     cost_cents REAL,
+    artifacts TEXT,
     created_at INTEGER NOT NULL,
     sort_order INTEGER NOT NULL
 );
@@ -304,6 +306,10 @@ fn apply_column_migrations(conn: &Connection) {
     );
     let _ = conn.execute(
         "ALTER TABLE agents ADD COLUMN execute_window_seconds INTEGER NOT NULL DEFAULT 8",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE messages ADD COLUMN artifacts TEXT",
         [],
     );
 }
@@ -539,7 +545,7 @@ pub fn db_load_messages(
     let conn = db.0.lock().map_err(|e| format!("DB lock error: {}", e))?;
 
     let mut stmt = conn.prepare(
-        "SELECT id, conversation_id, role, content, tool_calls, tool_call_id, usage, cost_cents, created_at, sort_order
+        "SELECT id, conversation_id, role, content, tool_calls, tool_call_id, usage, cost_cents, artifacts, created_at, sort_order
          FROM messages WHERE conversation_id = ?1 ORDER BY sort_order ASC"
     ).map_err(|e| format!("Query error: {}", e))?;
 
@@ -553,8 +559,9 @@ pub fn db_load_messages(
             tool_call_id: row.get(5)?,
             usage: row.get(6)?,
             cost_cents: row.get(7)?,
-            created_at: row.get(8)?,
-            sort_order: row.get(9)?,
+            artifacts: row.get(8)?,
+            created_at: row.get(9)?,
+            sort_order: row.get(10)?,
         })
     }).map_err(|e| format!("Query error: {}", e))?;
 
@@ -573,8 +580,8 @@ pub fn db_save_message(
     let conn = db.0.lock().map_err(|e| format!("DB lock error: {}", e))?;
 
     conn.execute(
-        "INSERT OR REPLACE INTO messages (id, conversation_id, role, content, tool_calls, tool_call_id, usage, cost_cents, created_at, sort_order)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        "INSERT OR REPLACE INTO messages (id, conversation_id, role, content, tool_calls, tool_call_id, usage, cost_cents, artifacts, created_at, sort_order)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             message.id,
             message.conversation_id,
@@ -584,6 +591,7 @@ pub fn db_save_message(
             message.tool_call_id,
             message.usage,
             message.cost_cents,
+            message.artifacts,
             message.created_at,
             message.sort_order,
         ],
@@ -611,8 +619,8 @@ pub fn db_save_messages_batch(
 
     {
         let mut stmt = tx.prepare(
-            "INSERT OR REPLACE INTO messages (id, conversation_id, role, content, tool_calls, tool_call_id, usage, cost_cents, created_at, sort_order)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
+            "INSERT OR REPLACE INTO messages (id, conversation_id, role, content, tool_calls, tool_call_id, usage, cost_cents, artifacts, created_at, sort_order)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
         ).map_err(|e| format!("Prepare error: {}", e))?;
 
         let mut conversation_id: Option<String> = None;
@@ -620,7 +628,7 @@ pub fn db_save_messages_batch(
         for msg in &messages {
             stmt.execute(params![
                 msg.id, msg.conversation_id, msg.role, msg.content,
-                msg.tool_calls, msg.tool_call_id, msg.usage, msg.cost_cents,
+                msg.tool_calls, msg.tool_call_id, msg.usage, msg.cost_cents, msg.artifacts,
                 msg.created_at, msg.sort_order,
             ]).map_err(|e| format!("Insert error: {}", e))?;
 

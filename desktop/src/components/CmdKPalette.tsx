@@ -20,25 +20,20 @@ import {
   IconWallet,
   IconSettings as IconSettingsRaw,
   IconUser,
-  IconWrench,
-  IconStore,
 } from './ui/icons';
-import type { SystemAgentConfig } from '../lib/systemAgents';
 
 export interface PaletteAction {
   id: string;
-  group: 'Agents' | 'Commands' | 'Wallet' | 'Settings';
+  group: 'Commands' | 'Wallet' | 'Settings';
   label: string;
   shortcut?: string;
-  iconName: 'wrench' | 'store' | 'settings' | 'user' | 'bolt' | 'plus' | 'wallet';
+  iconName: 'settings' | 'user' | 'bolt' | 'plus' | 'wallet';
   /** Per-agent tint; otherwise default mute. */
   color?: string;
   onSelect: () => void;
 }
 
 const ICON_MAP: Record<PaletteAction['iconName'], ComponentType<{ size?: number }>> = {
-  wrench: IconWrench,
-  store: IconStore,
   settings: IconSettingsRaw,
   user: IconUser,
   bolt: IconBolt,
@@ -46,7 +41,7 @@ const ICON_MAP: Record<PaletteAction['iconName'], ComponentType<{ size?: number 
   wallet: IconWallet,
 };
 
-const GROUP_ORDER: PaletteAction['group'][] = ['Agents', 'Commands', 'Wallet', 'Settings'];
+const GROUP_ORDER: PaletteAction['group'][] = ['Commands', 'Wallet', 'Settings'];
 
 interface CmdKPaletteProps {
   open: boolean;
@@ -197,37 +192,26 @@ export default function CmdKPalette({ open, onClose, actions }: CmdKPaletteProps
   );
 }
 
-// Build the canonical action list from current navigation helpers + system
-// agents. Caller passes only callbacks they actually have; we filter out
-// unwired ones so the palette never advertises a no-op.
+// Build the canonical action list from current navigation helpers.
+// System agents are intentionally not listed here as standalone chats:
+// Command delegates to them internally via suggestions and orchestration.
 export interface BuildPaletteActionsArgs {
-  systemAgents: SystemAgentConfig[];
-  onPickSystemAgent: (agent: SystemAgentConfig) => void;
+  onCommandHome: () => void;
   onNewChat: () => void;
   onTopUp: () => void;
   onSettings: () => void;
   onProfile: () => void;
 }
 
-const AGENT_TYPE_TO_ICON: Record<string, PaletteAction['iconName']> = {
-  tool_builder: 'wrench',
-  tool_marketer: 'store',
-  platform_manager: 'settings',
-};
-
 export function buildPaletteActions(args: BuildPaletteActionsArgs): PaletteAction[] {
   const items: PaletteAction[] = [];
 
-  args.systemAgents.forEach((agent, i) => {
-    items.push({
-      id: `agent-${agent.type}`,
-      group: 'Agents',
-      label: agent.name,
-      shortcut: `⌘${i + 1}`,
-      iconName: AGENT_TYPE_TO_ICON[agent.type] ?? 'wrench',
-      color: agent.accent,
-      onSelect: () => args.onPickSystemAgent(agent),
-    });
+  items.push({
+    id: 'cmd-command-home',
+    group: 'Commands',
+    label: 'Open Command',
+    iconName: 'bolt',
+    onSelect: args.onCommandHome,
   });
 
   items.push({

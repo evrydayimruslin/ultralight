@@ -6,6 +6,7 @@ export {
   validateAgenticInterfaceSpec,
 } from "../contracts/agentic-interface.ts";
 export type * from "../contracts/agentic-interface.ts";
+export type * from "../contracts/command-turn.ts";
 
 // ============================================
 // USER & AUTH

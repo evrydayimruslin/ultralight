@@ -201,9 +201,12 @@ function eventMessageId(
   if (
     type === 'heavy_text' ||
     type === 'flash_direct' ||
+    type === 'interface' ||
     type === 'text' ||
     type === 'result' ||
+    type === 'next_steps' ||
     type === 'usage' ||
+    type === 'cancelled' ||
     type === 'done' ||
     type === 'error'
   ) {
@@ -337,6 +340,11 @@ export class OrchestrateCaptureSession {
       }
     } else if (type === 'error' && typeof event.message === 'string') {
       this.assistantContent += `\n\n**Error:** ${event.message}`;
+    } else if (type === 'cancelled') {
+      const timestamp = typeof event.cancelled_at === 'number'
+        ? new Date(event.cancelled_at).toLocaleTimeString()
+        : new Date().toLocaleTimeString();
+      this.assistantContent += `\n\n_Canceled at ${timestamp}._`;
     } else if (type === 'usage') {
       this.usage = { flash: event.flash || {}, heavy: event.heavy || {} };
     }

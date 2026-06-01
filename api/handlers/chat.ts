@@ -43,6 +43,11 @@ import {
 } from "../services/invocation-telemetry.ts";
 import { recordCapabilitySuggestionEvent } from "../services/capability-suggestion-telemetry.ts";
 import { validateCapabilitySuggestionEventRequest } from "../services/capability-suggestion-validation.ts";
+import {
+  buildSuggestionPreviewBatch,
+  buildSuggestionPreviewDescriptor,
+} from "../services/suggestion-preview.ts";
+import { acceptSuggestion } from "../services/suggestion-acceptance.ts";
 import { RequestValidationError } from "../services/request-validation.ts";
 
 const chatLogger = createServerLogger("CHAT");
@@ -961,7 +966,9 @@ export async function handleCapabilitySuggestionEventTelemetry(
     return json({ error: "Telemetry requires a full account." }, 403);
   }
 
-  let body: Awaited<ReturnType<typeof validateCapabilitySuggestionEventRequest>>;
+  let body: Awaited<
+    ReturnType<typeof validateCapabilitySuggestionEventRequest>
+  >;
   try {
     body = await validateCapabilitySuggestionEventRequest(request);
   } catch (err) {
@@ -992,6 +999,165 @@ export async function handleCapabilitySuggestionEventTelemetry(
     event_id: result.eventId,
     library_installed: result.libraryInstalled,
   });
+}
+
+// ============================================
+// GET /chat/suggestions/:suggestionId/preview — typed suggestion preview
+// ============================================
+
+export async function handleSuggestionPreview(
+  request: Request,
+  suggestionId: string,
+): Promise<Response> {
+  let user: { id: string; email: string; tier: string; provisional?: boolean };
+  try {
+    user = await authenticate(request);
+  } catch (err) {
+    return json({
+      error: "Unauthorized",
+      detail: err instanceof Error ? err.message : "Auth failed",
+    }, 401);
+  }
+
+  if (user.provisional) {
+    return json({ error: "Suggestion previews require a full account." }, 403);
+  }
+
+  try {
+    const descriptor = await buildSuggestionPreviewDescriptor({
+      userId: user.id,
+      suggestionId,
+    });
+    return json(descriptor);
+  } catch (err) {
+    chatLogger.warn("Suggestion preview failed", {
+      user_id: user.id,
+      suggestion_id: suggestionId,
+      error: err,
+    });
+    return json({
+      error: err instanceof Error ? err.message : "Suggestion preview failed",
+    }, 404);
+  }
+}
+
+// ============================================
+// POST /chat/suggestions/preview — batch suggestion preview
+// ============================================
+
+export async function handleSuggestionPreviewBatch(
+  request: Request,
+): Promise<Response> {
+  let user: { id: string; email: string; tier: string; provisional?: boolean };
+  try {
+    user = await authenticate(request);
+  } catch (err) {
+    return json({
+      error: "Unauthorized",
+      detail: err instanceof Error ? err.message : "Auth failed",
+    }, 401);
+  }
+
+  if (user.provisional) {
+    return json({ error: "Suggestion previews require a full account." }, 403);
+  }
+
+  let body: { suggestion_set_id?: unknown; suggestion_ids?: unknown };
+  try {
+    body = await request.json() as typeof body;
+  } catch {
+    return error("Invalid JSON body", 400);
+  }
+
+  const suggestionSetId = typeof body.suggestion_set_id === "string"
+    ? body.suggestion_set_id
+    : undefined;
+  const suggestionIds = Array.isArray(body.suggestion_ids)
+    ? body.suggestion_ids.filter((value): value is string =>
+      typeof value === "string"
+    )
+    : undefined;
+  if (!suggestionSetId && (!suggestionIds || suggestionIds.length === 0)) {
+    return error("suggestion_set_id or suggestion_ids is required", 400);
+  }
+
+  try {
+    const result = await buildSuggestionPreviewBatch({
+      userId: user.id,
+      suggestionSetId,
+      suggestionIds,
+    });
+    return json(result);
+  } catch (err) {
+    chatLogger.warn("Suggestion preview batch failed", {
+      user_id: user.id,
+      suggestion_set_id: suggestionSetId,
+      suggestion_ids: suggestionIds,
+      error: err,
+    });
+    return json({
+      error: err instanceof Error
+        ? err.message
+        : "Suggestion preview batch failed",
+    }, 404);
+  }
+}
+
+// ============================================
+// POST /chat/suggestions/:suggestionId/accept — route accepted suggestions
+// ============================================
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function optionalMetadata(
+  value: unknown,
+): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+export async function handleSuggestionAccept(
+  request: Request,
+  suggestionId: string,
+): Promise<Response> {
+  let user: { id: string; email: string; tier: string; provisional?: boolean };
+  try {
+    user = await authenticate(request);
+  } catch (err) {
+    return json({
+      error: "Unauthorized",
+      detail: err instanceof Error ? err.message : "Auth failed",
+    }, 401);
+  }
+
+  if (user.provisional) {
+    return json({ error: "Suggestion accept requires a full account." }, 403);
+  }
+
+  let body: Record<string, unknown> = {};
+  try {
+    const parsed = await request.json();
+    body = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    body = {};
+  }
+
+  const result = await acceptSuggestion({
+    userId: user.id,
+    suggestionId,
+    conversationId: optionalString(body.conversation_id),
+    messageId: optionalString(body.message_id),
+    traceId: optionalString(body.trace_id),
+    eventSource: optionalString(body.event_source) || "client",
+    metadata: optionalMetadata(body.metadata),
+  });
+
+  return json(result, result.ok ? 200 : 400);
 }
 
 // ============================================
@@ -1156,7 +1322,8 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
   const captureConversationId = body.conversationId || crypto.randomUUID();
   const captureTraceId = crypto.randomUUID();
   const captureUserMessageId = body.userMessageId || crypto.randomUUID();
-  const captureAssistantMessageId = body.assistantMessageId || crypto.randomUUID();
+  const captureAssistantMessageId = body.assistantMessageId ||
+    crypto.randomUUID();
   const captureSession = createOrchestrateCaptureSession({
     userId: user.id,
     userEmail: user.email,
@@ -1178,8 +1345,27 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
   captureSession?.start();
 
   const encoder = new TextEncoder();
+  const turnAbortController = new AbortController();
+  const turnId = captureAssistantMessageId;
+  const {
+    registerGenerationTurn,
+    unregisterGenerationTurn,
+  } = await import("../services/turn-cancel.ts");
+  registerGenerationTurn(turnId, user.id, turnAbortController);
+  let streamCancelled = false;
   const stream = new ReadableStream({
     async start(controller) {
+      const enqueueEvent = (event: unknown) => {
+        if (streamCancelled) return false;
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify(event)}\n\n`),
+        );
+        return true;
+      };
+      const closeStream = () => {
+        if (streamCancelled) return;
+        controller.close();
+      };
       try {
         for await (
           const event of orchestrate(
@@ -1205,50 +1391,55 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
                 conversationId: captureConversationId,
                 source: "orchestrate",
               },
+              signal: turnAbortController.signal,
             },
           )
         ) {
+          if (streamCancelled) return;
           captureSession?.observeEvent(event);
-          const sseData = `data: ${JSON.stringify(event)}\n\n`;
-          controller.enqueue(encoder.encode(sseData));
+          enqueueEvent(event);
 
           // Close stream on done or error
           if (event.type === "done") {
             if (captureSession) {
               scheduleCaptureTask(captureSession.finish("done"));
             }
-            controller.close();
+            closeStream();
             return;
           }
         }
         // Safety close if generator ends without 'done'
         const doneEvent = { type: "done" as const };
         captureSession?.observeEvent(doneEvent);
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify(doneEvent)}\n\n`),
-        );
+        enqueueEvent(doneEvent);
         if (captureSession) {
           scheduleCaptureTask(captureSession.finish("generator_end"));
         }
-        controller.close();
+        closeStream();
       } catch (err) {
         const errEvent = {
           type: "error",
           message: err instanceof Error ? err.message : String(err),
         };
         captureSession?.observeEvent(errEvent);
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify(errEvent)}\n\n`),
-        );
+        enqueueEvent(errEvent);
         const doneEvent = { type: "done" as const };
         captureSession?.observeEvent(doneEvent);
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify(doneEvent)}\n\n`),
-        );
+        enqueueEvent(doneEvent);
         if (captureSession) {
           scheduleCaptureTask(captureSession.finish("handler_error"));
         }
-        controller.close();
+        closeStream();
+      } finally {
+        unregisterGenerationTurn(turnId);
+      }
+    },
+    cancel() {
+      streamCancelled = true;
+      turnAbortController.abort("client_disconnected");
+      unregisterGenerationTurn(turnId);
+      if (captureSession) {
+        scheduleCaptureTask(captureSession.finish("client_disconnected"));
       }
     },
   });
@@ -1262,6 +1453,33 @@ export async function handleOrchestrate(request: Request): Promise<Response> {
       "X-Accel-Buffering": "no",
     },
   });
+}
+
+// ============================================
+// POST /chat/turn/:id/cancel — cancel in-flight generation
+// ============================================
+
+export async function handleTurnCancel(
+  request: Request,
+  turnId: string,
+): Promise<Response> {
+  let user: { id: string; email: string; tier: string; provisional?: boolean };
+  try {
+    user = await authenticate(request);
+  } catch (err) {
+    return json({
+      error: "Unauthorized",
+      detail: err instanceof Error ? err.message : "Auth failed",
+    }, 401);
+  }
+
+  const { cancelGenerationTurn } = await import("../services/turn-cancel.ts");
+  const result = cancelGenerationTurn(turnId, user.id);
+  if (!result.ok) {
+    return json({ error: result.message }, result.status);
+  }
+
+  return json({ ok: true, status: result.message, turnId });
 }
 
 // ============================================

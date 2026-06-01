@@ -1,6 +1,6 @@
 # Agentic Interface Generation PR Roadmap
 
-Last reviewed: `2026-05-27`
+Last reviewed: `2026-05-30`
 
 This roadmap is the follow-on layer after the Agentic Widgets PR stack. The
 first stack made widgets visible to the agent loop: active state, visible
@@ -31,8 +31,9 @@ be navigated or operated by the agent.
 - The planner has a verifier/normalizer pass before any interface is shown.
 - Generated interfaces become active context surfaces so future agent turns know
   what is visible, selected, stale, actionable, or recently changed.
-- Start as `ul.command({ action: "interface", ... })`. Split into `ul.interface`
-  later only if the surface grows beyond Command.
+- `orchestrate()` is the primary path for Command interface replies. The
+  standalone `ul.command({ action: "interface", ... })` path remains as
+  backcompat, dev utility, and deterministic fallback.
 
 Simple explanation:
 
@@ -764,6 +765,116 @@ Verification:
 - `cd api && npm run test -- agentic-interface`
 - `cd desktop && npm test -- GeneratedInterface widgetSurfaceRegistry`
 - Manual smoke checklist.
+
+## Command Chat Unification Follow-On
+
+These follow-on PRs make Command chat the canonical place where generated
+interfaces appear, persist, and become actionable.
+
+### PR N-1: Structured Turn Artifacts
+
+Status: implemented in this session.
+
+- Adds a shared turn artifact model for `next_steps`.
+- Streams next-step artifacts from `orchestrate()`.
+- Persists artifacts on local chat messages.
+- Renders suggested prompts and action chips inside assistant turns.
+
+Key files:
+
+- `shared/contracts/command-turn.ts`
+- `api/services/command-next-steps.ts`
+- `api/services/orchestrator.ts`
+- `api/services/chat-capture.ts`
+- `desktop/src/components/ChatView.tsx`
+- `desktop/src/components/MessageBubble.tsx`
+- `desktop/src/hooks/useConversations.ts`
+- `desktop/src-tauri/src/db.rs`
+
+### PR N-2: Interface Turn Replies
+
+Status: implemented in this session.
+
+- Lets `orchestrate()` emit verified generated-interface specs as assistant
+  turn artifacts.
+- Uses the existing generated-interface renderer inside normal chat messages.
+- Keeps standalone `ul.command({ action: "interface" })` as a compatibility
+  and fallback path.
+
+Key files:
+
+- `api/services/command-interface-reply.ts`
+- `api/services/orchestrator.ts`
+- `api/services/chat-capture.ts`
+- `desktop/src/components/ChatView.tsx`
+- `desktop/src/components/MessageBubble.tsx`
+- `desktop/src/lib/api.ts`
+- `shared/contracts/command-turn.ts`
+
+### PR N-3: Command Session Shell
+
+Status: implemented in this session.
+
+- Converts the Command homescreen composer into a canonical orchestrated chat
+  entry point.
+- Creates local `Command` conversations on first prompt.
+- Streams Command turns through `orchestrate()`.
+- Renders assistant text, interface artifacts, execution widgets, and next-step
+  chips in a functional Command session shell.
+- Persists and reopens recent Command sessions without adding a new table.
+- Keeps the existing clickable dashboard, widgets, routines, and saved-interface
+  library available from Command Home.
+
+Key files:
+
+- `desktop/src/components/CommandHomescreen.tsx`
+- `desktop/src/components/command/CommandComposer.tsx`
+- `desktop/src/hooks/useConversations.ts`
+- `desktop/src/lib/api.ts`
+- `shared/contracts/command-turn.ts`
+
+Deferred polish:
+
+- Raw Command sessions are reopenable from the Command homescreen recent list;
+  full left-sidebar routing can land in a later navigation PR.
+- Pixel-perfect Command chat styling is intentionally deferred until the
+  consolidated polish pass.
+
+### PR N-4: Generation Cancel And Descriptor Cache
+
+Status: implemented in this session.
+
+- Adds a generation-turn cancel registry and `POST /chat/turn/:id/cancel`.
+- Threads `AbortSignal` through `orchestrate()`, Flash calls, and Heavy model
+  fetches so pre-`plan_ready` generation can stop promptly.
+- Lets Command's live running chip cancel the active generation turn.
+- Persists canceled turns as muted assistant content such as
+  `_Canceled at 2:34:22 PM._`.
+- Adds an in-memory interface descriptor cache keyed by user, tool-set version,
+  and prompt shape.
+- Reuses verified descriptors on cache hit and auto-pins hot entries after
+  repeated hits.
+
+Key files:
+
+- `api/services/turn-cancel.ts`
+- `api/services/orchestrator.ts`
+- `api/services/flash-broker.ts`
+- `api/services/inference-client.ts`
+- `api/handlers/chat.ts`
+- `api/handlers/app.ts`
+- `api/services/command-interface-reply.ts`
+- `desktop/src/lib/api.ts`
+- `desktop/src/components/CommandHomescreen.tsx`
+- `desktop/src/components/ChatView.tsx`
+
+Deferred polish:
+
+- Descriptor cache is worker-memory scoped for this first latency slice; a
+  durable per-user pinned descriptor table can land once the interaction proves
+  valuable.
+- The turn-header `...` unpin affordance is deferred with the pixel polish
+  pass, since N-3 intentionally shipped a functional shell first.
 
 ## Cross-PR File Impact Map
 

@@ -66,6 +66,114 @@ Deno.test("capability suggestion validation: accepted events require app_id by d
   );
 });
 
+Deno.test("capability suggestion validation: accepts non-app target accepts without app_id", async () => {
+  const systemAgentPayload = await validateCapabilitySuggestionEventRequest(
+    new Request("https://example.com/chat/capability-suggestion-event", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event_type: "accepted",
+        suggestion_id: SUGGESTION_ID,
+        metadata: {
+          target: {
+            kind: "system_agent",
+            agentType: "tool_marketer",
+            task: "Find tools for live FX rates",
+          },
+        },
+      }),
+    }),
+  );
+
+  assertEquals(systemAgentPayload.appId, undefined);
+  assertEquals(systemAgentPayload.metadata, {
+    target: {
+      kind: "system_agent",
+      agentType: "tool_marketer",
+      task: "Find tools for live FX rates",
+    },
+  });
+
+  const functionPayload = await validateCapabilitySuggestionEventRequest(
+    new Request("https://example.com/chat/capability-suggestion-event", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event_type: "accepted",
+        suggestion_id: SUGGESTION_ID,
+        metadata: {
+          target: {
+            kind: "function",
+            appId: "app-email",
+            appSlug: "email-ops",
+            fnName: "send_draft",
+            args: { draft_id: "draft-1" },
+          },
+        },
+      }),
+    }),
+  );
+
+  assertEquals(functionPayload.appId, undefined);
+  assertEquals(functionPayload.metadata?.target, {
+    kind: "function",
+    appId: "app-email",
+    appSlug: "email-ops",
+    fnName: "send_draft",
+    args: { draft_id: "draft-1" },
+  });
+
+  const promptPayload = await validateCapabilitySuggestionEventRequest(
+    new Request("https://example.com/chat/capability-suggestion-event", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event_type: "accepted",
+        suggestion_id: SUGGESTION_ID,
+        install_on_accept: false,
+        metadata: {
+          target: {
+            kind: "prompt",
+            text: "Summarize these drafts instead.",
+          },
+        },
+      }),
+    }),
+  );
+
+  assertEquals(promptPayload.installOnAccept, false);
+  assertEquals(promptPayload.metadata?.target, {
+    kind: "prompt",
+    text: "Summarize these drafts instead.",
+  });
+});
+
+Deno.test("capability suggestion validation: rejects malformed suggestion target metadata", async () => {
+  await assertRejects(
+    async () => {
+      await validateCapabilitySuggestionEventRequest(
+        new Request("https://example.com/chat/capability-suggestion-event", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            event_type: "accepted",
+            suggestion_id: SUGGESTION_ID,
+            metadata: {
+              target: {
+                kind: "system_agent",
+                agentType: "unknown_agent",
+                task: "Do something",
+              },
+            },
+          }),
+        }),
+      );
+    },
+    RequestValidationError,
+    "metadata.target must be a valid suggestion target",
+  );
+});
+
 Deno.test("capability suggestion validation: rejects unknown events and fields", async () => {
   await assertRejects(
     async () => {

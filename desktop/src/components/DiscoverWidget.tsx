@@ -51,6 +51,11 @@ function formatLightAmount(amount: number): string {
   return `${sign}${abs.toFixed(2)} Light`;
 }
 
+function suggestionAppSlug(result: DiscoverResult): string {
+  if (result.target?.kind === 'app' && result.target.appSlug) return result.target.appSlug;
+  return result.app_slug || result.slug || result.id;
+}
+
 async function searchDiscoverResults(query: string): Promise<DiscoverResult[]> {
   const token = getToken();
   const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
@@ -200,7 +205,7 @@ export default function DiscoverWidget({
   const handleAdd = () => {
     const apps = results
       .filter((result) => selected.has(result.id) && result.type === 'app')
-      .map((result) => ({ id: result.id, slug: result.slug, name: result.name, access: 'all' }));
+      .map((result) => ({ id: result.id, slug: suggestionAppSlug(result), name: result.name, access: 'all' }));
     if (apps.length === 0) return;
 
     if (mode.kind === 'ambient') {

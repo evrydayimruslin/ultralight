@@ -5,13 +5,24 @@
 import { useState, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { CornerDownRight, Play, ShieldCheck } from 'lucide-react';
 import type { Message } from '../hooks/useChat';
 import type { PermissionRequest } from '../hooks/usePermissions';
+import type { InterfaceTurnArtifact, NextStep } from '../../../shared/contracts/command-turn.ts';
+import { validateAgenticInterfaceSpec } from '../../../shared/contracts/agentic-interface.ts';
+import type { AgenticInterfaceAction } from '../../../shared/contracts/agentic-interface.ts';
 import ToolCallCard from './ToolCallCard';
 import InChatWidget from './InChatWidget';
 import DiscoverWidget from './DiscoverWidget';
 import ExecutionWidget from './ExecutionWidget';
+import GeneratedInterface from './agentic/GeneratedInterface';
 import { createDesktopLogger } from '../lib/logging';
+import {
+  executeAgenticInterfaceAction,
+  type AgenticInterfaceActionExecutionContext,
+  type AgenticInterfacePlannerResult,
+} from '../lib/api';
+import { openWidgetWindow } from '../lib/multiWindow';
 import { loadWidgetHtml } from '../lib/widgetRuntime';
 
 interface MessageBubbleProps {
@@ -30,6 +41,7 @@ interface MessageBubbleProps {
   onAllowPermission?: () => void;
   onAlwaysAllowPermission?: () => void;
   onDenyPermission?: () => void;
+  onNextStepClick?: (step: NextStep, message: Message) => void;
 }
 
 const inlineWidgetLogger = createDesktopLogger('InlineWidget');
@@ -181,6 +193,145 @@ function InlineWidget({ widgetName, appId }: InlineWidgetProps) {
   );
 }
 
+function stepTone(step: NextStep): string {
+  if (step.kind === 'suggest_prompt') {
+    return 'border-dashed text-ul-text-secondary hover:text-ul-text hover:border-ul-border-strong';
+  }
+  return step.preview
+    ? 'bg-white text-ul-text hover:border-ul-border-strong'
+    : 'bg-ul-bg text-ul-text hover:border-ul-border-strong';
+}
+
+function stepIcon(step: NextStep) {
+  if (step.kind === 'suggest_prompt') {
+    return <CornerDownRight className="h-3.5 w-3.5" strokeWidth={1.7} />;
+  }
+  if (step.preview) {
+    return <ShieldCheck className="h-3.5 w-3.5" strokeWidth={1.7} />;
+  }
+  return <Play className="h-3.5 w-3.5" strokeWidth={1.7} />;
+}
+
+function NextStepsRow({
+  steps,
+  message,
+  onNextStepClick,
+}: {
+  steps: NextStep[];
+  message: Message;
+  onNextStepClick?: (step: NextStep, message: Message) => void;
+}) {
+  if (steps.length === 0) return null;
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2">
+      {steps.map((step) => (
+        <button
+          key={step.id}
+          type="button"
+          onClick={() => onNextStepClick?.(step, message)}
+          className={`inline-flex min-h-8 max-w-full items-center gap-2 rounded-full border border-ul-border px-3 py-1.5 text-caption transition-colors ${stepTone(step)}`}
+          title={step.kind === 'suggest_prompt'
+            ? 'Prefill composer'
+            : step.preview
+            ? 'Preview and confirm'
+            : 'Run next step'}
+        >
+          <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
+            {stepIcon(step)}
+          </span>
+          <span className="truncate">{step.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function interfaceArtifactToPlannerResult(
+  artifact: InterfaceTurnArtifact,
+): AgenticInterfacePlannerResult {
+  const validation = validateAgenticInterfaceSpec(artifact.spec);
+  return {
+    draft_spec: artifact.spec,
+    normalized_spec: artifact.spec,
+    validation,
+    verification: {
+      verified: validation.valid,
+      spec: artifact.spec,
+      validation,
+      warnings: validation.warnings,
+      dropped: [],
+    },
+    rationale: ['Rendered as an orchestrated interface reply.'],
+    warnings: validation.warnings,
+    dropped: [],
+    planner: {
+      version: 'orchestrate-interface-reply',
+      policy: 'Interface replies are emitted by the orchestrator and validated server-side before rendering.',
+      context_summary: {
+        artifact_id: artifact.id,
+        source: artifact.source,
+      },
+    },
+    inventory: {
+      surfaces_considered: 0,
+      functions_considered: 0,
+      context_sources_considered: 0,
+      saved_dashboards_considered: 0,
+    },
+    persisted: false,
+  };
+}
+
+function InterfaceArtifactView({ artifact }: { artifact: InterfaceTurnArtifact }) {
+  const result = interfaceArtifactToPlannerResult(artifact);
+
+  const handleAction = useCallback(async (
+    action: AgenticInterfaceAction,
+    args: Record<string, unknown> | undefined,
+    context: AgenticInterfaceActionExecutionContext,
+  ) => {
+    const response = await executeAgenticInterfaceAction({
+      spec: artifact.spec,
+      action_id: action.id,
+      args,
+      confirmed: context.confirmed,
+      surface_id: context.surfaceId,
+      turn_id: context.turnId,
+      component_id: context.componentId,
+    });
+    if (response.status !== 'ok') {
+      throw new Error(response.error || `${action.label} could not run.`);
+    }
+    return response.result ?? response.open_widget ?? response.refreshed_binding_ids ?? response.selected_entity ?? response;
+  }, [artifact.spec]);
+
+  const handleOpenWidget = useCallback((request: {
+    appId: string;
+    appSlug?: string;
+    widgetId: string;
+    context?: Record<string, string>;
+  }) => {
+    void openWidgetWindow({
+      appUuid: request.appId,
+      appSlug: request.appSlug || '',
+      appName: request.appSlug || 'Widget',
+      widgetName: request.widgetId,
+      uiFunction: `widget_${request.widgetId}_ui`,
+      dataFunction: `widget_${request.widgetId}_data`,
+    }, request.context);
+  }, []);
+
+  return (
+    <div className="my-3 -mx-1">
+      <GeneratedInterface
+        result={result}
+        onAction={handleAction}
+        onOpenWidget={handleOpenWidget}
+      />
+    </div>
+  );
+}
+
 // ── MessageBubble ──
 
 export default function MessageBubble({
@@ -192,6 +343,7 @@ export default function MessageBubble({
   onAllowPermission,
   onAlwaysAllowPermission,
   onDenyPermission,
+  onNextStepClick,
 }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const isTool = message.role === 'tool';
@@ -205,6 +357,11 @@ export default function MessageBubble({
     ? parseWidgetTokens(message.content)
     : [];
   const hasWidgets = segments.some(s => s.type === 'widget' || s.type === 'discover' || s.type === 'exec');
+  const interfaceArtifacts = message.artifacts
+    ?.filter((artifact): artifact is InterfaceTurnArtifact => artifact.kind === 'interface') || [];
+  const nextSteps = message.artifacts
+    ?.filter((artifact) => artifact.kind === 'next_steps')
+    .flatMap((artifact) => artifact.steps) || [];
 
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4 ${isNew ? 'animate-msg-rise' : ''}`}>
@@ -296,8 +453,12 @@ export default function MessageBubble({
               </div>
             ) : null}
 
+            {interfaceArtifacts.map((artifact) => (
+              <InterfaceArtifactView key={artifact.id} artifact={artifact} />
+            ))}
+
             {/* Empty state — placeholder for streaming message that hasn't started yet */}
-            {!message.content && !message.tool_calls?.length && (
+            {!message.content && !message.tool_calls?.length && interfaceArtifacts.length === 0 && nextSteps.length === 0 && (
               <div className="h-4" />
             )}
 
@@ -315,6 +476,12 @@ export default function MessageBubble({
                 )}
               </p>
             )}
+
+            <NextStepsRow
+              steps={nextSteps}
+              message={message}
+              onNextStepClick={onNextStepClick}
+            />
           </div>
         )}
       </div>

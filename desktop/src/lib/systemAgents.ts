@@ -1,7 +1,7 @@
-// System Agent definitions — 3 persistent singleton agents that form
-// the platform's always-available infrastructure layer.
-// Each routes through the Flash orchestrate pipeline with per-agent
-// persona injection and Skills.md from R2.
+// System Agent definitions — internal delegation targets retained for
+// Command orchestration, legacy system-agent conversations, and suggestible
+// desktop descriptors. Canonical records are provisioned for context/state,
+// but they are no longer presented as top-level navigation destinations.
 
 export const SYSTEM_AGENT_TYPES = [
   'tool_builder',
@@ -44,7 +44,7 @@ export interface SystemAgentState {
   status: string;
 }
 
-/** Fixed display order in NavSidebar */
+/** Fixed presentation order for surfaces that summarize internal delegates. */
 export const SYSTEM_AGENT_ORDER: SystemAgentType[] = [
   'tool_marketer',
   'tool_builder',
@@ -113,6 +113,26 @@ export const SYSTEM_AGENTS: SystemAgentConfig[] = [
     },
   },
 ];
+
+export interface SuggestibleSystemAgentDescriptor {
+  type: SystemAgentType;
+  name: string;
+  role: string;
+  description: string;
+  persona: string;
+  skillsPath: string;
+  accent: string;
+}
+
+export const SUGGESTIBLE_SYSTEM_AGENTS: SuggestibleSystemAgentDescriptor[] = SYSTEM_AGENTS.map((agent) => ({
+  type: agent.type,
+  name: agent.name,
+  role: agent.role,
+  description: agent.description,
+  persona: agent.persona,
+  skillsPath: agent.skillsPath,
+  accent: agent.accent,
+}));
 
 /**
  * Generate a deterministic ID for a system agent.

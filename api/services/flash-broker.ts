@@ -13,29 +13,37 @@
 //
 // Cost: ~$0.002 per call (two Flash rounds + D1 queries), ~1-2s total.
 
-import { getEnv } from '../lib/env.ts';
-import { getFunctionIndex, rebuildFunctionIndex, type FunctionIndex } from './function-index.ts';
-import { flattenCommandSurfaceInventory } from './command-surfaces.ts';
-import { createR2Service } from './storage.ts';
-import { getD1DatabaseId } from './d1-provisioning.ts';
-import { createAppsService } from './apps.ts';
-import { createEmbeddingService } from './embedding.ts';
-import { fetchInferenceChatCompletion, selectInferenceModel } from './inference-client.ts';
+import { getEnv } from "../lib/env.ts";
+import {
+  type FunctionIndex,
+  getFunctionIndex,
+  rebuildFunctionIndex,
+} from "./function-index.ts";
+import { flattenCommandSurfaceInventory } from "./command-surfaces.ts";
+import { createR2Service } from "./storage.ts";
+import { getD1DatabaseId } from "./d1-provisioning.ts";
+import { createAppsService } from "./apps.ts";
+import { createEmbeddingService } from "./embedding.ts";
+import {
+  fetchInferenceChatCompletion,
+  selectInferenceModel,
+} from "./inference-client.ts";
 import {
   ULTRALIGHT_DEEPSEEK_V4_FLASH_MODEL,
   ULTRALIGHT_DEEPSEEK_V4_PRO_MODEL,
-} from './platform-inference-models.ts';
-import { resolveInferenceRoute, type ResolvedInferenceRoute } from './inference-route.ts';
-import type { App } from '../../shared/types/index.ts';
-import { buildJsonSchemaDescriptors, type AppForCodemode } from './codemode-tools.ts';
-import { buildAppTrustCard, type TrustCard } from './trust.ts';
-import { createLlmInvocationTelemetrySession } from './invocation-telemetry.ts';
-import { magnifyContextSources } from './app-context-magnifier.ts';
+} from "./platform-inference-models.ts";
 import {
-  recordCapabilityGapShortcoming,
-  recordCapabilitySuggestionSet,
-  type CapabilitySuggestionSetRecord,
-} from './capability-suggestion-telemetry.ts';
+  type ResolvedInferenceRoute,
+  resolveInferenceRoute,
+} from "./inference-route.ts";
+import type { App } from "../../shared/types/index.ts";
+import {
+  type AppForCodemode,
+  buildJsonSchemaDescriptors,
+} from "./codemode-tools.ts";
+import { createLlmInvocationTelemetrySession } from "./invocation-telemetry.ts";
+import { magnifyContextSources } from "./app-context-magnifier.ts";
+import type { CommandSuggestion } from "../../shared/contracts/suggestions.ts";
 import {
   buildAnalyzeOutputLabels,
   buildExecutionConfirmationOutputLabels,
@@ -47,14 +55,14 @@ import {
   type FlashInputFeatureInput,
   type FlashSchemaId,
   type FlashTaskId,
-} from './flash-finetune-metadata.ts';
+} from "./flash-finetune-metadata.ts";
 import type {
   ActiveWidgetContext,
   WidgetDataRef,
   WidgetPendingEdit,
   WidgetSurfaceEvent,
   WidgetVisibleComponent,
-} from '../../shared/contracts/widget.ts';
+} from "../../shared/contracts/widget.ts";
 
 // ── Types ──
 
@@ -86,6 +94,33 @@ export interface FlashCallOptions {
   capabilities?: readonly FlashCapability[];
   inputFeatures?: FlashInputFeatureInput | Record<string, unknown>;
   metadata?: Record<string, unknown>;
+  signal?: AbortSignal;
+}
+
+export interface SystemAgentDelegation {
+  agentType: string;
+  task: string;
+  originalPrompt: string;
+}
+
+export interface AmbientSuggestionContext {
+  intentSummary: string;
+  queryText: string;
+  retrievalSource: string;
+  candidateCount: number;
+  topSimilarity: number | null;
+  weakMatch: boolean;
+  noMatch: boolean;
+  weakMatchThreshold: number;
+  conversationSummaryPresent: boolean;
+  orchestrationSource?: string | null;
+}
+
+export interface CapabilityGapShortcomingContext {
+  reason: "no_match" | "weak_match";
+  summary: string;
+  delegationTask?: string;
+  topSimilarity?: number | null;
 }
 
 export interface FlashBrokerResult {
@@ -104,29 +139,65 @@ export interface FlashBrokerResult {
   }>;
   conventions: Array<{ appName: string; key: string; value: string }>;
   involvedAppIds: string[];
-  toolMap: Record<string, { appId: string; appName: string; fnName: string; appSlug: string; origin: 'library' | 'marketplace' }>;
-  usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+  toolMap: Record<
+    string,
+    {
+      appId: string;
+      appName: string;
+      fnName: string;
+      appSlug: string;
+      origin: "library" | "marketplace";
+    }
+  >;
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
   /** System agent delegations recommended by Flash analysis */
-  systemAgentDelegations?: Array<{ agentType: string; task: string; originalPrompt: string }>;
+  systemAgentDelegations?: SystemAgentDelegation[];
+  /** Marketplace candidates retrieved for the unified suggestions assembler */
+  marketplaceCandidates?: MarketplaceCandidate[];
+  /** Query and match metadata for the unified suggestions assembler */
+  ambientSuggestionContext?: AmbientSuggestionContext;
+  /** Capability gap metadata to attach after the suggestion set is persisted */
+  capabilityGapShortcoming?: CapabilityGapShortcomingContext;
   /** Cross-session conversation search query (triggers semantic retrieval in Stage 2) */
   conversationSearch?: string;
 }
 
 /** Rolling conversation summary persisted in KV */
 interface ConversationSummary {
-  summary: string;           // Rolling summary, 200-500 tokens
-  lastMessageIndex: number;  // How many messages are covered
+  summary: string; // Rolling summary, 200-500 tokens
+  lastMessageIndex: number; // How many messages are covered
   updatedAt: number;
 }
 
-interface MarketplaceCandidate {
-  app: Pick<App, 'id' | 'name' | 'slug' | 'description' | 'icon_url' | 'runtime' | 'manifest' | 'exports' | 'owner_id' | 'app_type' | 'current_version' | 'version_metadata' | 'visibility' | 'download_access' | 'env_schema'>;
+export interface MarketplaceCandidate {
+  app: Pick<
+    App,
+    | "id"
+    | "name"
+    | "slug"
+    | "description"
+    | "icon_url"
+    | "runtime"
+    | "manifest"
+    | "exports"
+    | "owner_id"
+    | "app_type"
+    | "current_version"
+    | "version_metadata"
+    | "visibility"
+    | "download_access"
+    | "env_schema"
+  >;
   similarity: number;
   keyFunctions: string[];
 }
 
-type FunctionEntry = FunctionIndex['functions'][string];
-type ContextSourceEntry = NonNullable<FunctionIndex['contextSources']>[number];
+type FunctionEntry = FunctionIndex["functions"][string];
+type ContextSourceEntry = NonNullable<FunctionIndex["contextSources"]>[number];
 
 export function buildFlashCallTelemetryContext(
   telemetry: FlashBrokerTelemetryContext | undefined,
@@ -138,45 +209,32 @@ export function buildFlashCallTelemetryContext(
     userEmail: input.userEmail,
     traceId: telemetry.traceId,
     conversationId: telemetry.conversationId || input.conversationId,
-    source: telemetry.source || 'orchestrate',
+    source: telemetry.source || "orchestrate",
   };
 }
 
 export type FlashEvent =
-  | { type: 'analyzing'; text: string }
+  | { type: "analyzing"; text: string }
   | {
-    type: 'ambient_suggestions';
+    type: "ambient_suggestions";
     intent_id?: string;
     suggestion_set_id?: string;
-    suggestions: Array<{
-      id: string;
-      slug: string;
-      name: string;
-      description: string;
-      icon_url: string | null;
-      similarity: number;
-      intent_id?: string;
-      suggestion_set_id?: string;
-      suggestion_id?: string;
-      rank?: number;
-      source: 'marketplace';
-      type: 'app';
-      connected: false;
-      runtime?: string;
-      trust_card?: TrustCard;
-    }>;
+    suggestions: CommandSuggestion[];
   }
-  | { type: 'searching'; query: string; apps: string[] }
-  | { type: 'magnifying'; text: string; apps: string[] }
-  | { type: 'magnified'; app: string; tables: number; rows: number }
-  | { type: 'constructing'; functions: string[]; conventionCount: number }
-  | { type: 'prompt_ready'; prompt: string; model: string }
-  | { type: 'direct_response'; content: string }
-  | { type: 'done'; result: FlashBrokerResult }
-  | { type: 'error'; message: string }
+  | { type: "searching"; query: string; apps: string[] }
+  | { type: "magnifying"; text: string; apps: string[] }
+  | { type: "magnified"; app: string; tables: number; rows: number }
+  | { type: "constructing"; functions: string[]; conventionCount: number }
+  | { type: "prompt_ready"; prompt: string; model: string }
+  | { type: "direct_response"; content: string }
+  | { type: "done"; result: FlashBrokerResult }
+  | { type: "error"; message: string }
   // Legacy compat
-  | { type: 'prefetch_start'; text: string; queries: string[] }
-  | { type: 'prefetch_result'; entities: Array<{ name: string; type: string; context: string }> };
+  | { type: "prefetch_start"; text: string; queries: string[] }
+  | {
+    type: "prefetch_result";
+    entities: Array<{ name: string; type: string; context: string }>;
+  };
 
 // ── Models ──
 
@@ -188,7 +246,8 @@ const AMBIENT_WEAK_MATCH_THRESHOLD = 0.72;
 
 // ── Flash System Prompts ──
 
-const FLASH_ANALYZE_SYSTEM = `You are a task router for an AI agent platform. Given a user's message and a catalog of available functions, output structured JSON.
+const FLASH_ANALYZE_SYSTEM =
+  `You are a task router for an AI agent platform. Given a user's message and a catalog of available functions, output structured JSON.
 
 Your job:
 1. Decide the response mode:
@@ -231,7 +290,8 @@ Rules:
 - When selecting apps for relevantApps, prefer [saved] candidates over [marketplace] candidates when both match the user's intent. Only elevate [marketplace] when it clearly fills a gap not covered by [saved] options.
 - Always return valid JSON, nothing else`;
 
-const FLASH_READ_RESPONSE_SYSTEM = `You are a helpful AI assistant responding to a user's question using live data from their apps. Write a clear, well-formatted response using markdown.
+const FLASH_READ_RESPONSE_SYSTEM =
+  `You are a helpful AI assistant responding to a user's question using live data from their apps. Write a clear, well-formatted response using markdown.
 
 Rules:
 - Use the provided app data to answer the user's question completely
@@ -244,7 +304,8 @@ Rules:
 - If Local Project Context is provided, use it to answer questions about the user's codebase. Reference specific file names, line numbers, and code snippets when helpful.
 - NAMES OVER IDs: Always refer to entities by their human-readable names. Never show UUIDs or internal IDs to the user unless they specifically ask for them.`;
 
-const FLASH_WRITE_CONFIRM_SYSTEM = `You are confirming the result of an action that was just executed. Given the user's original request and the execution result, write a brief, clear confirmation message.
+const FLASH_WRITE_CONFIRM_SYSTEM =
+  `You are confirming the result of an action that was just executed. Given the user's original request and the execution result, write a brief, clear confirmation message.
 
 Rules:
 - Be concise — 1-3 sentences
@@ -253,7 +314,8 @@ Rules:
 - If there was an error, explain it clearly
 - Use markdown formatting as appropriate`;
 
-const FLASH_PROMPT_SYSTEM = `You are constructing a prompt for a code-writing AI model. Given:
+const FLASH_PROMPT_SYSTEM =
+  `You are constructing a prompt for a code-writing AI model. Given:
 1. The user's original message
 2. Live data from the user's apps (magnified database contents)
 3. Available functions with their signatures
@@ -297,8 +359,17 @@ Output ONLY valid JSON:
 
 /** Tables to skip during magnification (internal/system tables) */
 const SKIP_TABLES = new Set([
-  '_cf_KV', '_migrations', '_usage', '_analytics', '_cache', '_sessions',
-  '_jobs', '_queue', '_locks', '_schema_version', 'sqlite_sequence',
+  "_cf_KV",
+  "_migrations",
+  "_usage",
+  "_analytics",
+  "_cache",
+  "_sessions",
+  "_jobs",
+  "_queue",
+  "_locks",
+  "_schema_version",
+  "sqlite_sequence",
 ]);
 
 /** Max rows per table */
@@ -311,14 +382,14 @@ const MAX_CHARS_PER_APP = 8000;
 
 /** System agent context — injected into Flash prompts for persona + skills */
 export interface SystemAgentContext {
-  type: 'tool_builder' | 'tool_marketer' | 'platform_manager';
+  type: "tool_builder" | "tool_marketer" | "platform_manager";
   persona: string;
   skillsPath: string;
 }
 
 /** Scope config passed from the client — restricts which apps/functions/data are available */
 export type ScopeConfig = Record<string, {
-  access: 'all' | 'functions' | 'data';
+  access: "all" | "functions" | "data";
   functions?: string[];
 }>;
 
@@ -337,8 +408,10 @@ function formatFileSize(bytes: number): string {
 }
 
 function buildFileContext(files: ChatFileAttachment[]): string {
-  if (!files.length) return '';
-  const items = files.map(f => `- ${f.name} (${formatFileSize(f.size)}, ${f.mimeType})`).join('\n');
+  if (!files.length) return "";
+  const items = files.map((f) =>
+    `- ${f.name} (${formatFileSize(f.size)}, ${f.mimeType})`
+  ).join("\n");
   return `## Attached Files\nThe user attached ${files.length} file(s) with their message:\n${items}\nThe file contents are available as base64 data URLs and should be passed to the relevant app's functions (e.g. quick_start with file_content + file_name args, or ultralight.ai with multimodal content parts).\n\n`;
 }
 
@@ -351,18 +424,22 @@ const MAX_WIDGET_CONTEXT_BLOCK_CHARS = 12000;
 function compactJson(value: unknown, maxChars = 1000): string {
   try {
     const json = JSON.stringify(value);
-    if (!json) return '';
+    if (!json) return "";
     return json.length > maxChars ? `${json.slice(0, maxChars)}...` : json;
   } catch {
     const fallback = String(value);
-    return fallback.length > maxChars ? `${fallback.slice(0, maxChars)}...` : fallback;
+    return fallback.length > maxChars
+      ? `${fallback.slice(0, maxChars)}...`
+      : fallback;
   }
 }
 
 function oneLine(value: unknown, maxChars = 240): string {
-  const text = typeof value === 'string' ? value : compactJson(value, maxChars);
-  const normalized = text.replace(/\s+/g, ' ').trim();
-  return normalized.length > maxChars ? `${normalized.slice(0, maxChars)}...` : normalized;
+  const text = typeof value === "string" ? value : compactJson(value, maxChars);
+  const normalized = text.replace(/\s+/g, " ").trim();
+  return normalized.length > maxChars
+    ? `${normalized.slice(0, maxChars)}...`
+    : normalized;
 }
 
 function hasEntries(value: Record<string, unknown> | undefined): boolean {
@@ -376,35 +453,52 @@ function formatWidgetTimestamp(value: number | undefined): string | null {
 }
 
 function formatWidgetDataRef(ref: WidgetDataRef): string {
-  const label = oneLine(ref.label || ref.id || ref.type || ref.table || 'data', 100);
+  const label = oneLine(
+    ref.label || ref.id || ref.type || ref.table || "data",
+    100,
+  );
   const details: string[] = [];
   if (ref.type) details.push(`type=${oneLine(ref.type, 60)}`);
   if (ref.id) details.push(`id=${oneLine(ref.id, 80)}`);
   if (ref.table) details.push(`table=${oneLine(ref.table, 60)}`);
   if (ref.field) details.push(`field=${oneLine(ref.field, 60)}`);
   if (ref.value !== undefined) details.push(`value=${oneLine(ref.value, 120)}`);
-  return details.length > 0 ? `${label} (${details.join(', ')})` : label;
+  return details.length > 0 ? `${label} (${details.join(", ")})` : label;
 }
 
 function formatWidgetComponent(component: WidgetVisibleComponent): string {
-  const type = component.type ? ` (${oneLine(component.type, 50)})` : '';
-  const purpose = component.purpose ? `: ${oneLine(component.purpose, 180)}` : '';
+  const type = component.type ? ` (${oneLine(component.type, 50)})` : "";
+  const purpose = component.purpose
+    ? `: ${oneLine(component.purpose, 180)}`
+    : "";
   const dataRefs = component.data_refs?.length
-    ? ` data=[${component.data_refs.slice(0, 4).map(formatWidgetDataRef).join('; ')}]`
-    : '';
+    ? ` data=[${
+      component.data_refs.slice(0, 4).map(formatWidgetDataRef).join("; ")
+    }]`
+    : "";
   const actions = component.actions?.length
-    ? ` actions=[${component.actions.slice(0, 6).map((id) => oneLine(id, 60)).join(', ')}]`
-    : '';
+    ? ` actions=[${
+      component.actions.slice(0, 6).map((id) => oneLine(id, 60)).join(", ")
+    }]`
+    : "";
   const state = hasEntries(component.state)
     ? ` state=${compactJson(component.state, 260)}`
-    : '';
-  return `${oneLine(component.label || component.id, 100)}${type}${purpose}${dataRefs}${actions}${state}`;
+    : "";
+  return `${
+    oneLine(component.label || component.id, 100)
+  }${type}${purpose}${dataRefs}${actions}${state}`;
 }
 
 function formatWidgetPendingEdit(edit: WidgetPendingEdit): string {
-  const entity = edit.entity ? ` entity=${formatWidgetDataRef(edit.entity)}` : '';
-  const value = edit.value !== undefined ? ` value=${oneLine(edit.value, 120)}` : '';
-  return `${oneLine(edit.label || edit.field, 100)}${value}${edit.dirty ? ' dirty=true' : ''}${entity}`;
+  const entity = edit.entity
+    ? ` entity=${formatWidgetDataRef(edit.entity)}`
+    : "";
+  const value = edit.value !== undefined
+    ? ` value=${oneLine(edit.value, 120)}`
+    : "";
+  return `${oneLine(edit.label || edit.field, 100)}${value}${
+    edit.dirty ? " dirty=true" : ""
+  }${entity}`;
 }
 
 function formatWidgetEvent(event: WidgetSurfaceEvent): string {
@@ -413,146 +507,273 @@ function formatWidgetEvent(event: WidgetSurfaceEvent): string {
   if (event.turn_id) parts.push(`turn=${oneLine(event.turn_id, 80)}`);
   if (event.label) parts.push(oneLine(event.label, 140));
   if (event.error) parts.push(`error=${oneLine(event.error, 140)}`);
-  if (event.result !== undefined) parts.push(`result=${oneLine(event.result, 180)}`);
-  return parts.join(' - ');
+  if (event.result !== undefined) {
+    parts.push(`result=${oneLine(event.result, 180)}`);
+  }
+  return parts.join(" - ");
 }
 
-function getActiveSurfaceType(context: ActiveWidgetContext): "widget" | "generated_interface" {
+function getActiveSurfaceType(
+  context: ActiveWidgetContext,
+): "widget" | "generated_interface" {
   return context.surfaceType === "generated_interface" ||
       context.kind === "generated_interface"
     ? "generated_interface"
     : "widget";
 }
 
-export function buildActiveWidgetContextBlock(activeWidgetContexts?: ActiveWidgetContext[]): string {
+export function buildActiveWidgetContextBlock(
+  activeWidgetContexts?: ActiveWidgetContext[],
+): string {
   const contexts = Array.isArray(activeWidgetContexts)
-    ? activeWidgetContexts.filter((context) => context && typeof context.surfaceId === 'string')
+    ? activeWidgetContexts.filter((context) =>
+      context && typeof context.surfaceId === "string"
+    )
     : [];
-  if (contexts.length === 0) return '';
+  if (contexts.length === 0) return "";
 
   const lines: string[] = [
-    '## Active Agentic Surface Context',
-    'The user is composing with the active UI surface(s) below. Treat this as current visible UI state. It can guide reads, navigation, selected-entity reasoning, and declared action choices. Use declared action ids/labels for action-oriented guidance; do not invent raw DOM selectors.',
+    "## Active Agentic Surface Context",
+    "The user is composing with the active UI surface(s) below. Treat this as current visible UI state. It can guide reads, navigation, selected-entity reasoning, and declared action choices. Use declared action ids/labels for action-oriented guidance; do not invent raw DOM selectors.",
   ];
 
   for (const context of contexts.slice(0, MAX_ACTIVE_WIDGET_CONTEXTS)) {
     const surfaceType = getActiveSurfaceType(context);
     const snapshot = context.snapshot || undefined;
-    const title = snapshot?.title || context.title || context.interfaceTitle || context.widgetName || context.appName || context.appSlug || context.surfaceId;
+    const title = snapshot?.title || context.title || context.interfaceTitle ||
+      context.widgetName || context.appName || context.appSlug ||
+      context.surfaceId;
     lines.push(`### ${oneLine(title, 120)}`);
     if (surfaceType === "generated_interface") {
-      lines.push(`- Surface: generated_interface; interface=${oneLine(context.interfaceTitle || context.widgetName || context.widgetId, 100)}; id=${oneLine(context.interfaceId || context.widgetId, 100)}; surface=${oneLine(context.surfaceId, 120)}`);
-      if (context.interfaceMode) lines.push(`- Interface mode: ${context.interfaceMode}`);
+      lines.push(
+        `- Surface: generated_interface; interface=${
+          oneLine(
+            context.interfaceTitle || context.widgetName || context.widgetId,
+            100,
+          )
+        }; id=${
+          oneLine(context.interfaceId || context.widgetId, 100)
+        }; surface=${oneLine(context.surfaceId, 120)}`,
+      );
+      if (context.interfaceMode) {
+        lines.push(`- Interface mode: ${context.interfaceMode}`);
+      }
     } else {
-      lines.push(`- App: ${oneLine(context.appName, 100)} (${oneLine(context.appSlug, 80)})`);
-      lines.push(`- Widget: ${oneLine(context.widgetName || context.widgetId, 100)}; surface=${oneLine(context.surfaceId, 120)}${context.kind ? `; kind=${context.kind}` : ''}`);
+      lines.push(
+        `- App: ${oneLine(context.appName, 100)} (${
+          oneLine(context.appSlug, 80)
+        })`,
+      );
+      lines.push(
+        `- Widget: ${
+          oneLine(context.widgetName || context.widgetId, 100)
+        }; surface=${oneLine(context.surfaceId, 120)}${
+          context.kind ? `; kind=${context.kind}` : ""
+        }`,
+      );
     }
     if (context.status) lines.push(`- Status: ${context.status}`);
     const updatedAt = formatWidgetTimestamp(context.updatedAt);
     if (updatedAt) lines.push(`- Updated: ${updatedAt}`);
-    if (hasEntries(context.context)) lines.push(`- Launch context: ${compactJson(context.context, 700)}`);
-    if (snapshot?.current_view) lines.push(`- Current view: ${oneLine(snapshot.current_view, 120)}`);
-    if (snapshot?.summary) lines.push(`- Summary: ${oneLine(snapshot.summary, 500)}`);
-    if (snapshot?.errors?.length) lines.push(`- Errors: ${snapshot.errors.slice(0, 4).map((entry) => oneLine(entry, 160)).join('; ')}`);
+    if (hasEntries(context.context)) {
+      lines.push(`- Launch context: ${compactJson(context.context, 700)}`);
+    }
+    if (snapshot?.current_view) {
+      lines.push(`- Current view: ${oneLine(snapshot.current_view, 120)}`);
+    }
+    if (snapshot?.summary) {
+      lines.push(`- Summary: ${oneLine(snapshot.summary, 500)}`);
+    }
+    if (snapshot?.errors?.length) {
+      lines.push(
+        `- Errors: ${
+          snapshot.errors.slice(0, 4).map((entry) => oneLine(entry, 160)).join(
+            "; ",
+          )
+        }`,
+      );
+    }
 
     if (snapshot?.selected_entities?.length) {
-      lines.push(`- Selected entities: ${snapshot.selected_entities.slice(0, 8).map(formatWidgetDataRef).join('; ')}`);
+      lines.push(
+        `- Selected entities: ${
+          snapshot.selected_entities.slice(0, 8).map(formatWidgetDataRef).join(
+            "; ",
+          )
+        }`,
+      );
     }
     if (snapshot?.visible_data_refs?.length) {
-      lines.push(`- Visible data refs: ${snapshot.visible_data_refs.slice(0, 10).map(formatWidgetDataRef).join('; ')}`);
+      lines.push(
+        `- Visible data refs: ${
+          snapshot.visible_data_refs.slice(0, 10).map(formatWidgetDataRef).join(
+            "; ",
+          )
+        }`,
+      );
     }
     if (snapshot?.pending_edits?.length) {
-      lines.push('- Pending edits:');
+      lines.push("- Pending edits:");
       for (const edit of snapshot.pending_edits.slice(0, 8)) {
         lines.push(`  - ${formatWidgetPendingEdit(edit)}`);
       }
     }
     if (snapshot?.visible_components?.length) {
-      lines.push('- Visible components:');
-      for (const component of snapshot.visible_components.slice(0, MAX_WIDGET_COMPONENTS)) {
+      lines.push("- Visible components:");
+      for (
+        const component of snapshot.visible_components.slice(
+          0,
+          MAX_WIDGET_COMPONENTS,
+        )
+      ) {
         lines.push(`  - ${formatWidgetComponent(component)}`);
       }
     }
     if (snapshot?.enabled_actions?.length) {
-      lines.push(`- Enabled action ids: ${snapshot.enabled_actions.slice(0, MAX_WIDGET_ACTIONS).map((id) => oneLine(id, 80)).join(', ')}`);
+      lines.push(
+        `- Enabled action ids: ${
+          snapshot.enabled_actions.slice(0, MAX_WIDGET_ACTIONS).map((id) =>
+            oneLine(id, 80)
+          ).join(", ")
+        }`,
+      );
     }
     if (context.recentEventSummary) {
-      const count = typeof context.recentEventCount === 'number'
+      const count = typeof context.recentEventCount === "number"
         ? ` (${context.recentEventCount} recorded)`
-        : '';
-      lines.push(`- Recent event summary${count}: ${oneLine(context.recentEventSummary, 700)}`);
+        : "";
+      lines.push(
+        `- Recent event summary${count}: ${
+          oneLine(context.recentEventSummary, 700)
+        }`,
+      );
     }
     if (context.actions?.length) {
-      lines.push(surfaceType === "generated_interface" ? '- Declared interface actions:' : '- Declared widget actions:');
+      lines.push(
+        surfaceType === "generated_interface"
+          ? "- Declared interface actions:"
+          : "- Declared widget actions:",
+      );
       for (const action of context.actions.slice(0, MAX_WIDGET_ACTIONS)) {
-        const mode = action.mode ? ` [${action.mode}${action.confirmation ? `, confirm=${action.confirmation}` : ''}]` : '';
-        const mcp = action.mcp?.function ? ` -> ${oneLine(action.mcp.function, 120)}` : '';
+        const mode = action.mode
+          ? ` [${action.mode}${
+            action.confirmation ? `, confirm=${action.confirmation}` : ""
+          }]`
+          : "";
+        const mcp = action.mcp?.function
+          ? ` -> ${oneLine(action.mcp.function, 120)}`
+          : "";
         const ui = action.ui?.command
-          ? ` -> ui:${oneLine(action.ui.command, 80)}${action.ui.component_id ? `(${oneLine(action.ui.component_id, 80)})` : ''}`
-          : '';
-        const description = action.description ? ` - ${oneLine(action.description, 220)}` : '';
-        lines.push(`  - ${oneLine(action.id, 80)}: ${oneLine(action.label, 120)}${mode}${mcp}${ui}${description}`);
+          ? ` -> ui:${oneLine(action.ui.command, 80)}${
+            action.ui.component_id
+              ? `(${oneLine(action.ui.component_id, 80)})`
+              : ""
+          }`
+          : "";
+        const description = action.description
+          ? ` - ${oneLine(action.description, 220)}`
+          : "";
+        lines.push(
+          `  - ${oneLine(action.id, 80)}: ${
+            oneLine(action.label, 120)
+          }${mode}${mcp}${ui}${description}`,
+        );
       }
     }
     if (context.recentEvents?.length) {
-      lines.push(surfaceType === "generated_interface" ? '- Recent interface events:' : '- Recent widget events:');
+      lines.push(
+        surfaceType === "generated_interface"
+          ? "- Recent interface events:"
+          : "- Recent widget events:",
+      );
       for (const event of context.recentEvents.slice(-MAX_WIDGET_EVENTS)) {
         lines.push(`  - ${formatWidgetEvent(event)}`);
       }
     }
     if (hasEntries(context.latestDataPayload || undefined)) {
-      lines.push(`- Latest data payload preview: ${compactJson(context.latestDataPayload, 1200)}`);
+      lines.push(
+        `- Latest data payload preview: ${
+          compactJson(context.latestDataPayload, 1200)
+        }`,
+      );
     }
   }
 
   if (contexts.length > MAX_ACTIVE_WIDGET_CONTEXTS) {
-    lines.push(`- ${contexts.length - MAX_ACTIVE_WIDGET_CONTEXTS} additional active surface context(s) omitted.`);
+    lines.push(
+      `- ${
+        contexts.length - MAX_ACTIVE_WIDGET_CONTEXTS
+      } additional active surface context(s) omitted.`,
+    );
   }
 
-  const block = lines.join('\n');
+  const block = lines.join("\n");
   return block.length > MAX_WIDGET_CONTEXT_BLOCK_CHARS
-    ? `${block.slice(0, MAX_WIDGET_CONTEXT_BLOCK_CHARS)}\n...[active surface context truncated]`
+    ? `${
+      block.slice(0, MAX_WIDGET_CONTEXT_BLOCK_CHARS)
+    }\n...[active surface context truncated]`
     : block;
 }
 
-const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp']);
+const IMAGE_MIMES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/gif",
+  "image/webp",
+]);
 
 /**
  * Build multimodal content array: text prompt + image files as vision content parts.
  * Non-image files stay as metadata text (they flow to MCPs via __files).
  */
-function buildMultimodalContent(textContent: string, files?: ChatFileAttachment[]): string | unknown[] {
+function buildMultimodalContent(
+  textContent: string,
+  files?: ChatFileAttachment[],
+): string | unknown[] {
   if (!files?.length) return textContent;
 
-  const imageFiles = files.filter(f => IMAGE_MIMES.has(f.mimeType));
+  const imageFiles = files.filter((f) => IMAGE_MIMES.has(f.mimeType));
   if (imageFiles.length === 0) return textContent; // No images — keep as plain text
 
-  const parts: unknown[] = [{ type: 'text', text: textContent }];
+  const parts: unknown[] = [{ type: "text", text: textContent }];
   for (const f of imageFiles) {
-    const url = f.content.startsWith('data:') ? f.content : `data:${f.mimeType};base64,${f.content}`;
-    parts.push({ type: 'image_url', image_url: { url } });
+    const url = f.content.startsWith("data:")
+      ? f.content
+      : `data:${f.mimeType};base64,${f.content}`;
+    parts.push({ type: "image_url", image_url: { url } });
   }
   return parts;
 }
 
-function countFunctionConventions(functions: FunctionIndex['functions']): number {
-  return Object.values(functions).reduce((total, fn) => total + (fn.conventions?.length || 0), 0);
+function countFunctionConventions(
+  functions: FunctionIndex["functions"],
+): number {
+  return Object.values(functions).reduce(
+    (total, fn) => total + (fn.conventions?.length || 0),
+    0,
+  );
 }
 
 function buildAmbientSuggestionQueryText(
   message: string,
   conversationSummary: string,
 ): string {
-  return [message, conversationSummary].filter(Boolean).join('\n\n').slice(0, 4000);
+  return [message, conversationSummary].filter(Boolean).join("\n\n").slice(
+    0,
+    4000,
+  );
 }
 
 function summarizeAmbientIntent(message: string, fallback?: string): string {
-  const raw = (fallback || message || '').replace(/\s+/g, ' ').trim();
-  if (!raw) return 'Ambient capability suggestion';
+  const raw = (fallback || message || "").replace(/\s+/g, " ").trim();
+  if (!raw) return "Ambient capability suggestion";
   return raw.length > 500 ? raw.slice(0, 500) : raw;
 }
 
-function topCandidateSimilarity(candidates: MarketplaceCandidate[]): number | null {
+function topCandidateSimilarity(
+  candidates: MarketplaceCandidate[],
+): number | null {
   const values = candidates
     .map((candidate) => candidate.similarity)
     .filter((value) => Number.isFinite(value));
@@ -560,22 +781,26 @@ function topCandidateSimilarity(candidates: MarketplaceCandidate[]): number | nu
 }
 
 function hasToolMarketerDelegation(
-  delegations: Array<{ agentType: string; task: string; originalPrompt: string }>,
+  delegations: SystemAgentDelegation[],
 ): boolean {
-  return delegations.some((delegation) => delegation.agentType === 'tool_marketer');
+  return delegations.some((delegation) =>
+    delegation.agentType === "tool_marketer"
+  );
 }
 
 function firstToolMarketerTask(
-  delegations: Array<{ agentType: string; task: string; originalPrompt: string }>,
+  delegations: SystemAgentDelegation[],
 ): string | undefined {
-  return delegations.find((delegation) => delegation.agentType === 'tool_marketer')?.task;
+  return delegations.find((delegation) =>
+    delegation.agentType === "tool_marketer"
+  )?.task;
 }
 
 function buildCapabilityGapSummary(message: string, task?: string): string {
   const taskText = task
-    ?.replace(/^User needs?\s*/i, '')
-    .replace(/\.\s*Search marketplace.*$/i, '')
-    .replace(/\.\s*Help them.*$/i, '')
+    ?.replace(/^User needs?\s*/i, "")
+    .replace(/\.\s*Search marketplace.*$/i, "")
+    .replace(/\.\s*Help them.*$/i, "")
     .trim();
   return summarizeAmbientIntent(message, taskText || task);
 }
@@ -590,17 +815,20 @@ export interface PureSystemAgentDelegationInput {
 }
 
 const PURE_SYSTEM_AGENT_TYPES = new Set([
-  'tool_builder',
-  'tool_marketer',
-  'platform_manager',
+  "tool_builder",
+  "tool_marketer",
+  "platform_manager",
 ]);
 
 export function shouldSkipHeavyPromptForPureSystemAgentDelegation(
   input: PureSystemAgentDelegationInput,
 ): boolean {
-  const mode = typeof input.mode === 'string' ? input.mode : 'write';
-  if (mode === 'direct') return false;
-  if (nonEmptyString(input.conversationSearch) || nonEmptyString(input.contextQuery)) return false;
+  const mode = typeof input.mode === "string" ? input.mode : "write";
+  if (mode === "direct") return false;
+  if (
+    nonEmptyString(input.conversationSearch) ||
+    nonEmptyString(input.contextQuery)
+  ) return false;
   if (hasRelevantAppSelections(input.relevantApps)) return false;
   if (hasStringSelections(input.actionFunctions)) return false;
   return hasPureSystemAgentDelegations(input.systemAgentDelegations);
@@ -610,12 +838,12 @@ function hasPureSystemAgentDelegations(value: unknown): boolean {
   if (!Array.isArray(value)) return false;
   let count = 0;
   for (const entry of value) {
-    if (!entry || typeof entry !== 'object') return false;
+    if (!entry || typeof entry !== "object") return false;
     const record = entry as Record<string, unknown>;
     if (
-      typeof record.task !== 'string' ||
+      typeof record.task !== "string" ||
       record.task.trim().length === 0 ||
-      typeof record.agentType !== 'string' ||
+      typeof record.agentType !== "string" ||
       !PURE_SYSTEM_AGENT_TYPES.has(record.agentType)
     ) {
       return false;
@@ -628,20 +856,22 @@ function hasPureSystemAgentDelegations(value: unknown): boolean {
 function hasRelevantAppSelections(value: unknown): boolean {
   if (!Array.isArray(value)) return false;
   return value.some((entry) => {
-    if (typeof entry === 'string') return entry.trim().length > 0;
-    if (!entry || typeof entry !== 'object') return false;
+    if (typeof entry === "string") return entry.trim().length > 0;
+    if (!entry || typeof entry !== "object") return false;
     const slug = (entry as Record<string, unknown>).slug;
-    return typeof slug === 'string' && slug.trim().length > 0;
+    return typeof slug === "string" && slug.trim().length > 0;
   });
 }
 
 function hasStringSelections(value: unknown): boolean {
   if (!Array.isArray(value)) return false;
-  return value.some((entry) => typeof entry === 'string' && entry.trim().length > 0);
+  return value.some((entry) =>
+    typeof entry === "string" && entry.trim().length > 0
+  );
 }
 
 function nonEmptyString(value: unknown): boolean {
-  return typeof value === 'string' && value.trim().length > 0;
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 function declaredContextSourcesForApp(
@@ -657,8 +887,12 @@ function declaredContextSourcesForApp(
 
   const activeWidgetIds = new Set(
     (activeWidgetContexts || [])
-      .filter((context) => context.appId === appId || context.appSlug === appSlug)
-      .flatMap((context) => [context.widgetId, context.widgetName].filter(Boolean) as string[]),
+      .filter((context) =>
+        context.appId === appId || context.appSlug === appSlug
+      )
+      .flatMap((context) =>
+        [context.widgetId, context.widgetName].filter(Boolean) as string[]
+      ),
   );
   if (activeWidgetIds.size === 0) return sources;
 
@@ -685,33 +919,53 @@ export async function* runFlashBroker(
   inferenceRoute?: ResolvedInferenceRoute,
   telemetry?: FlashBrokerTelemetryContext,
   activeWidgetContexts?: ActiveWidgetContext[],
+  signal?: AbortSignal,
 ): AsyncGenerator<FlashEvent> {
   let route: ResolvedInferenceRoute;
   try {
-    route = inferenceRoute ?? await resolveInferenceRoute({ userId, userEmail });
+    route = inferenceRoute ??
+      await resolveInferenceRoute({ userId, userEmail });
   } catch (err) {
     yield {
-      type: 'error',
-      message: `Inference route unavailable: ${err instanceof Error ? err.message : String(err)}`,
+      type: "error",
+      message: `Inference route unavailable: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
     };
     return;
   }
 
-  const flashModel = selectInferenceModel(route, interpreterModel || DEFAULT_FLASH_MODEL);
-  const defaultHeavyModel = selectInferenceModel(route, heavyModel || DEFAULT_HEAVY_MODEL);
+  const flashModel = selectInferenceModel(
+    route,
+    interpreterModel || DEFAULT_FLASH_MODEL,
+  );
+  const defaultHeavyModel = selectInferenceModel(
+    route,
+    heavyModel || DEFAULT_HEAVY_MODEL,
+  );
   const flashTelemetry = buildFlashCallTelemetryContext(telemetry, {
     userId,
     userEmail,
     conversationId,
   });
 
-  yield { type: 'analyzing', text: 'Analyzing your request...' };
+  yield { type: "analyzing", text: "Analyzing your request..." };
 
   // Load function index + system agent states + agent skills + conversation topics concurrently
-  let [fnIndex, loadedSystemAgentStates, agentSkills, conversationTopics, loadedSummary] = await Promise.all([
+  let [
+    fnIndex,
+    loadedSystemAgentStates,
+    agentSkills,
+    conversationTopics,
+    loadedSummary,
+  ] = await Promise.all([
     getFunctionIndex(userId),
-    systemAgentStates ? Promise.resolve(systemAgentStates) : loadSystemAgentStates(userId),
-    systemAgentContext ? loadSystemAgentSkills(systemAgentContext.type) : Promise.resolve(''),
+    systemAgentStates
+      ? Promise.resolve(systemAgentStates)
+      : loadSystemAgentStates(userId),
+    systemAgentContext
+      ? loadSystemAgentSkills(systemAgentContext.type)
+      : Promise.resolve(""),
     loadConversationTopics(userId),
     loadConversationSummary(conversationId),
   ]);
@@ -721,20 +975,25 @@ export async function* runFlashBroker(
     try {
       fnIndex = await rebuildFunctionIndex(userId);
     } catch (err) {
-      console.error('[FLASH-BROKER] Failed to rebuild function index:', err);
+      console.error("[FLASH-BROKER] Failed to rebuild function index:", err);
     }
   }
 
   if (!fnIndex || Object.keys(fnIndex.functions).length === 0) {
     const result: FlashBrokerResult = {
       needsTool: false,
-      directResponse: "I don't have any apps or functions set up yet. Install an app to get started.",
+      directResponse:
+        "I don't have any apps or functions set up yet. Install an app to get started.",
       model: defaultHeavyModel,
-      prompt: '', functions: '', entities: [], conventions: [],
-      involvedAppIds: [], toolMap: {},
+      prompt: "",
+      functions: "",
+      entities: [],
+      conventions: [],
+      involvedAppIds: [],
+      toolMap: {},
     };
-    yield { type: 'direct_response', content: result.directResponse };
-    yield { type: 'done', result };
+    yield { type: "direct_response", content: result.directResponse };
+    yield { type: "done", result };
     return;
   }
 
@@ -760,7 +1019,9 @@ export async function* runFlashBroker(
     const normalizedScope: typeof scope = {};
     for (const [key, cfg] of Object.entries(scope)) {
       // Try direct match (already a DB slug)
-      const directMatch = Object.values(fnIndex.functions).some(fn => fn.appSlug === key);
+      const directMatch = Object.values(fnIndex.functions).some((fn) =>
+        fn.appSlug === key
+      );
       if (directMatch) {
         normalizedScope[key] = cfg;
       } else {
@@ -769,7 +1030,9 @@ export async function* runFlashBroker(
         if (dbSlug) {
           normalizedScope[dbSlug] = cfg;
         } else {
-          console.log(`[FLASH-BROKER] Scope key "${key}" not found in function index — skipping`);
+          console.log(
+            `[FLASH-BROKER] Scope key "${key}" not found in function index — skipping`,
+          );
         }
       }
     }
@@ -779,20 +1042,29 @@ export async function* runFlashBroker(
     for (const [name, fn] of Object.entries(fnIndex.functions)) {
       const appScope = normalizedScope[fn.appSlug];
       if (!appScope) continue; // App not in scope — exclude entirely
-      if (appScope.access === 'data') continue; // Data-only — no functions in catalog
+      if (appScope.access === "data") continue; // Data-only — no functions in catalog
       // Check function-level filter
-      if (appScope.functions && appScope.functions.length > 0 && !appScope.functions.includes(fn.fnName)) continue;
+      if (
+        appScope.functions && appScope.functions.length > 0 &&
+        !appScope.functions.includes(fn.fnName)
+      ) continue;
       filtered[name] = fn;
     }
     fnIndex = { ...fnIndex, functions: filtered };
     // Replace scope with normalized version for downstream use
-    scope = Object.keys(normalizedScope).length > 0 ? normalizedScope : undefined;
-    console.log(`[FLASH-BROKER] Scope applied: ${Object.keys(normalizedScope).length} apps, ${Object.keys(filtered).length}/${originalCount} functions`);
+    scope = Object.keys(normalizedScope).length > 0
+      ? normalizedScope
+      : undefined;
+    console.log(
+      `[FLASH-BROKER] Scope applied: ${
+        Object.keys(normalizedScope).length
+      } apps, ${Object.keys(filtered).length}/${originalCount} functions`,
+    );
   }
 
   // Build conversation context from rolling summary + unsummarized exchanges
-  let summaryStr = '';
-  let lastExchangeStr = '';
+  let summaryStr = "";
+  let lastExchangeStr = "";
 
   if (loadedSummary?.summary) {
     summaryStr = loadedSummary.summary;
@@ -801,18 +1073,24 @@ export async function* runFlashBroker(
       ? conversationHistory.slice(loadedSummary.lastMessageIndex)
       : [];
     if (unsummarized.length > 0) {
-      lastExchangeStr = unsummarized.map(m => `${m.role}: ${m.content}`).join('\n');
+      lastExchangeStr = unsummarized.map((m) => `${m.role}: ${m.content}`).join(
+        "\n",
+      );
     }
   } else if (conversationHistory && conversationHistory.length > 0) {
     // Bootstrap: no summary yet, send recent messages for initial summary creation
-    lastExchangeStr = conversationHistory.slice(-6).map(m => `${m.role}: ${m.content}`).join('\n');
+    lastExchangeStr = conversationHistory.slice(-6).map((m) =>
+      `${m.role}: ${m.content}`
+    ).join("\n");
   }
 
   const conversationSummary = [summaryStr, lastExchangeStr]
     .filter(Boolean)
-    .join('\n\n')
+    .join("\n\n")
     .slice(0, 2000);
-  const activeWidgetContextBlock = buildActiveWidgetContextBlock(activeWidgetContexts);
+  const activeWidgetContextBlock = buildActiveWidgetContextBlock(
+    activeWidgetContexts,
+  );
   const activeWidgetContextCount = activeWidgetContexts?.length || 0;
   const hasActiveScope = !!scope && Object.keys(scope).length > 0;
   const marketplaceCandidates = hasActiveScope
@@ -823,260 +1101,237 @@ export async function* runFlashBroker(
       userId,
       fnIndex,
     );
-  const ambientQueryText = buildAmbientSuggestionQueryText(message, conversationSummary);
+  const ambientQueryText = buildAmbientSuggestionQueryText(
+    message,
+    conversationSummary,
+  );
   const ambientTopSimilarity = topCandidateSimilarity(marketplaceCandidates);
-  const ambientWeakMatch =
-    ambientTopSimilarity !== null && ambientTopSimilarity < AMBIENT_WEAK_MATCH_THRESHOLD;
-  let ambientSuggestionTelemetry: CapabilitySuggestionSetRecord | null = null;
-
-  if (marketplaceCandidates.length > 0) {
-    ambientSuggestionTelemetry = await recordCapabilitySuggestionSet({
-      userId,
-      conversationId,
-      traceId: flashTelemetry?.traceId,
-      messageId: userMessageId,
-      source: 'flash_broker',
-      intentSummary: summarizeAmbientIntent(message),
-      queryText: ambientQueryText,
-      retrievalSource: 'ambient_marketplace_embedding',
-      candidateCount: marketplaceCandidates.length,
-      weakMatch: ambientWeakMatch,
-      suggestions: marketplaceCandidates.map((candidate, index) => ({
-        appId: candidate.app.id,
-        appSlug: candidate.app.slug,
-        appName: candidate.app.name,
-        appType: candidate.app.app_type || 'app',
-        suggestionSource: 'marketplace',
-        rank: index + 1,
-        similarity: candidate.similarity,
-        keyFunctions: candidate.keyFunctions,
-        metadata: {
-          runtime: candidate.app.runtime || null,
-          visibility: candidate.app.visibility || null,
-          current_version: candidate.app.current_version || null,
-          download_access: candidate.app.download_access || null,
-        },
-      })),
-      metadata: {
-        top_similarity: ambientTopSimilarity,
-        weak_match_threshold: AMBIENT_WEAK_MATCH_THRESHOLD,
-        orchestration_source: flashTelemetry?.source || null,
-        conversation_summary_present: !!conversationSummary,
-      },
-    });
-  }
-
-  if (marketplaceCandidates.length > 0) {
-    yield {
-      type: 'ambient_suggestions',
-      intent_id: ambientSuggestionTelemetry?.intentId,
-      suggestion_set_id: ambientSuggestionTelemetry?.suggestionSetId,
-      suggestions: marketplaceCandidates.map((candidate, index) => ({
-        id: candidate.app.id,
-        slug: candidate.app.slug,
-        name: candidate.app.name,
-        description: candidate.app.description || '',
-        icon_url: candidate.app.icon_url,
-        similarity: candidate.similarity,
-        intent_id: ambientSuggestionTelemetry?.intentId,
-        suggestion_set_id: ambientSuggestionTelemetry?.suggestionSetId,
-        suggestion_id: ambientSuggestionTelemetry?.suggestions[index]?.suggestionId,
-        rank: index + 1,
-        source: 'marketplace' as const,
-        type: 'app' as const,
-        connected: false as const,
-        ...(candidate.app.runtime ? { runtime: candidate.app.runtime } : {}),
-        trust_card: buildAppTrustCard(candidate.app),
-      })),
-    };
-  }
+  const ambientWeakMatch = ambientTopSimilarity !== null &&
+    ambientTopSimilarity < AMBIENT_WEAK_MATCH_THRESHOLD;
+  const ambientSuggestionContext: AmbientSuggestionContext = {
+    intentSummary: summarizeAmbientIntent(message),
+    queryText: ambientQueryText,
+    retrievalSource: "ambient_marketplace_embedding",
+    candidateCount: marketplaceCandidates.length,
+    topSimilarity: ambientTopSimilarity,
+    weakMatch: ambientWeakMatch,
+    noMatch: false,
+    weakMatchThreshold: AMBIENT_WEAK_MATCH_THRESHOLD,
+    conversationSummaryPresent: !!conversationSummary,
+    orchestrationSource: flashTelemetry?.source || null,
+  };
+  let capabilityGapShortcoming: CapabilityGapShortcomingContext | undefined;
 
   // Build compact catalog for Flash (function signatures + conventions only, no data)
-  const catalog = buildCatalog(fnIndex, loadedSystemAgentStates, marketplaceCandidates);
+  const catalog = buildCatalog(
+    fnIndex,
+    loadedSystemAgentStates,
+    marketplaceCandidates,
+  );
 
   // Build persona-aware system prompt
   const analyzeSystem = systemAgentContext
     ? `You are acting as "${systemAgentContext.persona}" — a specialized system agent on the Ultralight platform.\n\n${FLASH_ANALYZE_SYSTEM}`
     : FLASH_ANALYZE_SYSTEM;
 
-  let analyzeContent = '';
+  let analyzeContent = "";
   if (scope && Object.keys(scope).length > 0) {
     const scopedNames = Object.keys(scope);
-    analyzeContent += `## SESSION SCOPE\nThis session is scoped to ONLY these apps: ${scopedNames.join(', ')}. Do not reference or suggest other apps.\n\n`;
+    analyzeContent +=
+      `## SESSION SCOPE\nThis session is scoped to ONLY these apps: ${
+        scopedNames.join(", ")
+      }. Do not reference or suggest other apps.\n\n`;
   }
   if (files?.length) analyzeContent += buildFileContext(files);
-  if (activeWidgetContextBlock) analyzeContent += `${activeWidgetContextBlock}\n\n`;
-  if (projectContext) analyzeContent += `## Local Project Files\n${projectContext}\n\n`;
-  if (agentSkills) analyzeContent += `## Agent Skills Reference\n${agentSkills}\n\n`;
-  if (conversationTopics) analyzeContent += `## Past Conversation Topics\n${conversationTopics}\n\n`;
-  if (summaryStr) analyzeContent += `## Conversation Summary\n${summaryStr}\n\n`;
-  if (lastExchangeStr) analyzeContent += `## Last Exchange\n${lastExchangeStr}\n\n`;
-  analyzeContent += `## Current Message\n${message}\n\n## Available Functions\n${catalog}`;
+  if (activeWidgetContextBlock) {
+    analyzeContent += `${activeWidgetContextBlock}\n\n`;
+  }
+  if (projectContext) {
+    analyzeContent += `## Local Project Files\n${projectContext}\n\n`;
+  }
+  if (agentSkills) {
+    analyzeContent += `## Agent Skills Reference\n${agentSkills}\n\n`;
+  }
+  if (conversationTopics) {
+    analyzeContent += `## Past Conversation Topics\n${conversationTopics}\n\n`;
+  }
+  if (summaryStr) {
+    analyzeContent += `## Conversation Summary\n${summaryStr}\n\n`;
+  }
+  if (lastExchangeStr) {
+    analyzeContent += `## Last Exchange\n${lastExchangeStr}\n\n`;
+  }
+  analyzeContent +=
+    `## Current Message\n${message}\n\n## Available Functions\n${catalog}`;
 
-  const analyzeResult = await callFlash(flashModel, analyzeSystem, buildMultimodalContent(analyzeContent, files), route, {
-    telemetry: flashTelemetry,
-    taskId: 'flash_broker.analyze',
-    schemaId: FLASH_SCHEMA_IDS.analyze,
-    inputFeatures: {
-      files,
-      projectContext,
-      conversationHistory,
-      availableFunctionCount: Object.keys(fnIndex.functions).length,
-      conventionCount: countFunctionConventions(fnIndex.functions),
-      scope,
-      systemAgentContext,
-      activeWidgetContexts,
-      activeWidgetContextBlock,
+  const analyzeResult = await callFlash(
+    flashModel,
+    analyzeSystem,
+    buildMultimodalContent(analyzeContent, files),
+    route,
+    {
+      telemetry: flashTelemetry,
+      taskId: "flash_broker.analyze",
+      schemaId: FLASH_SCHEMA_IDS.analyze,
+      inputFeatures: {
+        files,
+        projectContext,
+        conversationHistory,
+        availableFunctionCount: Object.keys(fnIndex.functions).length,
+        conventionCount: countFunctionConventions(fnIndex.functions),
+        scope,
+        systemAgentContext,
+        activeWidgetContexts,
+        activeWidgetContextBlock,
+      },
+      metadata: {
+        marketplace_candidate_count: marketplaceCandidates.length,
+        has_agent_skills: !!agentSkills,
+        has_conversation_topics: !!conversationTopics,
+        has_conversation_summary: !!summaryStr,
+        has_last_exchange: !!lastExchangeStr,
+        active_widget_context_count: activeWidgetContextCount,
+      },
+      signal,
     },
-    metadata: {
-      marketplace_candidate_count: marketplaceCandidates.length,
-      has_agent_skills: !!agentSkills,
-      has_conversation_topics: !!conversationTopics,
-      has_conversation_summary: !!summaryStr,
-      has_last_exchange: !!lastExchangeStr,
-      active_widget_context_count: activeWidgetContextCount,
-    },
-  });
+  );
   if (!analyzeResult) {
-    const result = heuristicFallback(message, fnIndex, defaultHeavyModel);
-    yield { type: 'done', result };
+    const result: FlashBrokerResult = {
+      ...heuristicFallback(message, fnIndex, defaultHeavyModel),
+      marketplaceCandidates,
+      ambientSuggestionContext,
+    };
+    yield { type: "done", result };
     return;
   }
 
   // Determine mode (support both old needsTool and new mode field)
-  const mode = analyzeResult.mode || (analyzeResult.needsTool === false ? 'direct' : 'write');
+  const mode = analyzeResult.mode ||
+    (analyzeResult.needsTool === false ? "direct" : "write");
   const rawRelevantApps = analyzeResult.relevantApps || [];
   const actionFunctions = analyzeResult.actionFunctions || [];
 
   // Capture system agent delegations from Flash analysis
-  const systemAgentDelegations: Array<{ agentType: string; task: string; originalPrompt: string }> =
+  const systemAgentDelegations: SystemAgentDelegation[] =
     (analyzeResult.systemAgentDelegations || [])
       .filter((d: any) => d.agentType && d.task)
-      .map((d: any) => ({ agentType: d.agentType, task: d.task, originalPrompt: message }));
+      .map((d: any) => ({
+        agentType: d.agentType,
+        task: d.task,
+        originalPrompt: message,
+      }));
 
   if (!hasActiveScope && hasToolMarketerDelegation(systemAgentDelegations)) {
     const gapTask = firstToolMarketerTask(systemAgentDelegations);
     if (marketplaceCandidates.length === 0) {
-      const gapTelemetry = await recordCapabilitySuggestionSet({
-        userId,
-        conversationId,
-        traceId: flashTelemetry?.traceId,
-        messageId: userMessageId,
-        source: 'flash_broker',
-        intentSummary: buildCapabilityGapSummary(message, gapTask),
-        queryText: ambientQueryText,
-        retrievalSource: 'ambient_marketplace_embedding',
-        candidateCount: 0,
-        noMatch: true,
-        suggestions: [],
-        metadata: {
-          delegation_task: gapTask || null,
-          mode,
-          reason: 'tool_marketer_delegation_no_marketplace_match',
-          orchestration_source: flashTelemetry?.source || null,
-          conversation_summary_present: !!conversationSummary,
-        },
-      });
-      await recordCapabilityGapShortcoming({
-        userId,
-        sessionId: conversationId,
+      ambientSuggestionContext.noMatch = true;
+      ambientSuggestionContext.intentSummary = buildCapabilityGapSummary(
+        message,
+        gapTask,
+      );
+      capabilityGapShortcoming = {
+        reason: "no_match",
         summary: buildCapabilityGapSummary(message, gapTask),
-        context: {
-          reason: 'no_match',
-          conversation_id: conversationId || null,
-          trace_id: flashTelemetry?.traceId || null,
-          message_id: userMessageId || null,
-          intent_id: gapTelemetry.intentId,
-          suggestion_set_id: gapTelemetry.suggestionSetId,
-          delegation_task: gapTask || null,
-        },
-      });
-    } else if (ambientWeakMatch && ambientSuggestionTelemetry) {
-      await recordCapabilityGapShortcoming({
-        userId,
-        sessionId: conversationId,
+        delegationTask: gapTask,
+      };
+    } else if (ambientWeakMatch) {
+      capabilityGapShortcoming = {
+        reason: "weak_match",
         summary: buildCapabilityGapSummary(message, gapTask),
-        context: {
-          reason: 'weak_match',
-          conversation_id: conversationId || null,
-          trace_id: flashTelemetry?.traceId || null,
-          message_id: userMessageId || null,
-          intent_id: ambientSuggestionTelemetry.intentId,
-          suggestion_set_id: ambientSuggestionTelemetry.suggestionSetId,
-          delegation_task: gapTask || null,
-          top_similarity: ambientTopSimilarity,
-          weak_match_threshold: AMBIENT_WEAK_MATCH_THRESHOLD,
-        },
-      });
+        delegationTask: gapTask,
+        topSimilarity: ambientTopSimilarity,
+      };
     }
   }
 
   // Capture conversation search query (for cross-session context retrieval)
-  const conversationSearch: string | undefined = analyzeResult.conversationSearch || undefined;
+  const conversationSearch: string | undefined =
+    analyzeResult.conversationSearch || undefined;
 
   // Capture intra-conversation context query (for raw history magnification in Stage 2)
-  const contextQuery: string | undefined = analyzeResult.contextQuery || undefined;
+  const contextQuery: string | undefined = analyzeResult.contextQuery ||
+    undefined;
 
   // Persist updated rolling summary (fire-and-forget)
-  const updatedSummary: string | undefined = analyzeResult.updatedSummary || undefined;
+  const updatedSummary: string | undefined = analyzeResult.updatedSummary ||
+    undefined;
   if (loadedSummary) {
-    console.log(`[FLASH-BROKER] Loaded conversation summary (${loadedSummary.summary.length} chars, covers ${loadedSummary.lastMessageIndex} messages)`);
+    console.log(
+      `[FLASH-BROKER] Loaded conversation summary (${loadedSummary.summary.length} chars, covers ${loadedSummary.lastMessageIndex} messages)`,
+    );
   }
   if (updatedSummary && conversationId) {
     const env = getEnv();
     const kv = env.FN_INDEX;
     if (kv) {
-      kv.put(`convo-summary:${conversationId}`, JSON.stringify({
-        summary: updatedSummary,
-        lastMessageIndex: conversationHistory?.length || 0,
-        updatedAt: Date.now(),
-      } as ConversationSummary)).catch((err: unknown) =>
-        console.warn('[FLASH-BROKER] Summary KV write failed:', err)
+      kv.put(
+        `convo-summary:${conversationId}`,
+        JSON.stringify({
+          summary: updatedSummary,
+          lastMessageIndex: conversationHistory?.length || 0,
+          updatedAt: Date.now(),
+        } as ConversationSummary),
+      ).catch((err: unknown) =>
+        console.warn("[FLASH-BROKER] Summary KV write failed:", err)
       );
     }
   }
 
   // Direct response — no data needed
-  if (mode === 'direct') {
+  if (mode === "direct") {
     const result: FlashBrokerResult = {
       needsTool: false,
-      directResponse: analyzeResult.directResponse || 'I can help with that!',
+      directResponse: analyzeResult.directResponse || "I can help with that!",
       model: defaultHeavyModel,
-      prompt: '', functions: '', entities: [], conventions: [],
-      involvedAppIds: [], toolMap: {},
+      prompt: "",
+      functions: "",
+      entities: [],
+      conventions: [],
+      involvedAppIds: [],
+      toolMap: {},
       usage: analyzeResult._usage,
-      systemAgentDelegations: systemAgentDelegations.length > 0 ? systemAgentDelegations : undefined,
+      systemAgentDelegations: systemAgentDelegations.length > 0
+        ? systemAgentDelegations
+        : undefined,
+      marketplaceCandidates,
+      ambientSuggestionContext,
+      capabilityGapShortcoming,
       conversationSearch,
     };
-    yield { type: 'direct_response', content: result.directResponse };
-    yield { type: 'done', result };
+    yield { type: "direct_response", content: result.directResponse };
+    yield { type: "done", result };
     return;
   }
 
   // Pure system-agent routes do not need data magnification or Heavy prompt construction.
   // Mixed cases with selected apps/functions still fall through to the normal write/read path.
-  if (shouldSkipHeavyPromptForPureSystemAgentDelegation({
-    mode,
-    relevantApps: rawRelevantApps,
-    actionFunctions,
-    systemAgentDelegations,
-    conversationSearch,
-    contextQuery,
-  })) {
+  if (
+    shouldSkipHeavyPromptForPureSystemAgentDelegation({
+      mode,
+      relevantApps: rawRelevantApps,
+      actionFunctions,
+      systemAgentDelegations,
+      conversationSearch,
+      contextQuery,
+    })
+  ) {
     const result: FlashBrokerResult = {
       needsTool: false,
-      directResponse: '',
+      directResponse: "",
       model: defaultHeavyModel,
-      prompt: '',
-      functions: '',
+      prompt: "",
+      functions: "",
       entities: [],
       conventions: [],
       involvedAppIds: [],
       toolMap: {},
       usage: analyzeResult._usage,
       systemAgentDelegations,
+      marketplaceCandidates,
+      ambientSuggestionContext,
+      capabilityGapShortcoming,
     };
-    yield { type: 'done', result };
+    yield { type: "done", result };
     return;
   }
 
@@ -1086,25 +1341,29 @@ export async function* runFlashBroker(
   const relevantAppSlugs: string[] = [];
   const appScopeHints: Record<string, string> = {};
   for (const entry of rawRelevantApps) {
-    if (typeof entry === 'string') {
+    if (typeof entry === "string") {
       relevantAppSlugs.push(entry);
-    } else if (entry && typeof entry === 'object') {
+    } else if (entry && typeof entry === "object") {
       relevantAppSlugs.push(entry.slug);
       if (entry.scope) appScopeHints[entry.slug] = entry.scope;
     }
   }
-  const provisionalFunctions = buildProvisionalFunctionEntries(marketplaceCandidates);
-  const combinedFunctions: FunctionIndex['functions'] = {
+  const provisionalFunctions = buildProvisionalFunctionEntries(
+    marketplaceCandidates,
+  );
+  const combinedFunctions: FunctionIndex["functions"] = {
     ...fnIndex.functions,
     ...provisionalFunctions,
   };
   const marketplaceCandidateBySlug = new Map(
-    marketplaceCandidates.map((candidate) => [candidate.app.slug, candidate] as const)
+    marketplaceCandidates.map((candidate) =>
+      [candidate.app.slug, candidate] as const
+    ),
   );
 
   // Resolve app slugs to app IDs
   const involvedAppIds = new Set<string>();
-  const toolMap: FlashBrokerResult['toolMap'] = {};
+  const toolMap: FlashBrokerResult["toolMap"] = {};
   const appSlugToId: Record<string, string> = {};
 
   // First, map from action functions
@@ -1116,7 +1375,7 @@ export async function* runFlashBroker(
         appName: extractAppNameFromDescription(fn.description, fn.appSlug),
         fnName: fn.fnName,
         appSlug: fn.appSlug,
-        origin: provisionalFunctions[fnName] ? 'marketplace' : 'library',
+        origin: provisionalFunctions[fnName] ? "marketplace" : "library",
       };
       involvedAppIds.add(fn.appId);
       appSlugToId[fn.appSlug] = fn.appId;
@@ -1127,7 +1386,9 @@ export async function* runFlashBroker(
   for (const slug of relevantAppSlugs) {
     if (!appSlugToId[slug]) {
       // Find any function with this app slug to get the appId
-      const fn = Object.values(combinedFunctions).find(f => f.appSlug === slug);
+      const fn = Object.values(combinedFunctions).find((f) =>
+        f.appSlug === slug
+      );
       if (fn) {
         involvedAppIds.add(fn.appId);
         appSlugToId[slug] = fn.appId;
@@ -1149,7 +1410,7 @@ export async function* runFlashBroker(
         appName: extractAppNameFromDescription(fn.description, fn.appSlug),
         fnName: fn.fnName,
         appSlug: fn.appSlug,
-        origin: provisionalFunctions[fnName] ? 'marketplace' : 'library',
+        origin: provisionalFunctions[fnName] ? "marketplace" : "library",
       };
     }
   }
@@ -1158,9 +1419,11 @@ export async function* runFlashBroker(
   // Data-only apps were filtered out of fnIndex, so use fullFnIndex to find their appIds
   if (scope) {
     for (const [slug, cfg] of Object.entries(scope)) {
-      if (cfg.access === 'data' || cfg.access === 'all') {
+      if (cfg.access === "data" || cfg.access === "all") {
         if (!appSlugToId[slug]) {
-          const fn = Object.values(fullFnIndex.functions).find(f => f.appSlug === slug);
+          const fn = Object.values(fullFnIndex.functions).find((f) =>
+            f.appSlug === slug
+          );
           if (fn) {
             involvedAppIds.add(fn.appId);
             appSlugToId[slug] = fn.appId;
@@ -1173,11 +1436,14 @@ export async function* runFlashBroker(
   // ── Scope: filter out apps that shouldn't be magnified ──
   if (scope && Object.keys(scope).length > 0) {
     const slugsAllowingData = new Set(
-      Object.entries(scope).filter(([, cfg]) => cfg.access === 'all' || cfg.access === 'data').map(([slug]) => slug)
+      Object.entries(scope).filter(([, cfg]) =>
+        cfg.access === "all" || cfg.access === "data"
+      ).map(([slug]) => slug),
     );
     // Remove apps whose scope is 'functions' only (no magnification)
     for (const appId of [...involvedAppIds]) {
-      const slug = Object.entries(appSlugToId).find(([, id]) => id === appId)?.[0];
+      const slug = Object.entries(appSlugToId).find(([, id]) => id === appId)
+        ?.[0];
       if (slug && !slugsAllowingData.has(slug)) {
         involvedAppIds.delete(appId);
       }
@@ -1192,9 +1458,11 @@ export async function* runFlashBroker(
   const appNames: Record<string, string> = {};
   const appSlugs: string[] = [];
   for (const id of appIds) {
-    const fn = Object.values(combinedFunctions).find(f => f.appId === id)
-      || Object.values(fullFnIndex.functions).find(f => f.appId === id);
-    const candidate = marketplaceCandidates.find(entry => entry.app.id === id);
+    const fn = Object.values(combinedFunctions).find((f) => f.appId === id) ||
+      Object.values(fullFnIndex.functions).find((f) => f.appId === id);
+    const candidate = marketplaceCandidates.find((entry) =>
+      entry.app.id === id
+    );
     const slug = fn?.appSlug || candidate?.app.slug || id.slice(0, 8);
     appSlugs.push(slug);
     const match = fn?.description.match(/^\[([^\]]+)\]/);
@@ -1202,8 +1470,8 @@ export async function* runFlashBroker(
   }
 
   yield {
-    type: 'magnifying',
-    text: `Loading data from ${Object.values(appNames).join(', ')}...`,
+    type: "magnifying",
+    text: `Loading data from ${Object.values(appNames).join(", ")}...`,
     apps: Object.values(appNames),
   };
 
@@ -1221,7 +1489,7 @@ export async function* runFlashBroker(
     try {
       if (declaredSources.length > 0) {
         const executableSources = declaredSources.filter((source) =>
-          source.type === 'd1_table' || source.type === 'd1_query'
+          source.type === "d1_table" || source.type === "d1_query"
         );
         declaredContextSourceCount += declaredSources.length;
         const contextResult = await magnifyContextSources(executableSources, {
@@ -1229,7 +1497,7 @@ export async function* runFlashBroker(
           query: appScopeHints[slug] || message,
         });
         magnifiedData[slug] = contextResult.context ||
-          '(No rows matched declared context sources)';
+          "(No rows matched declared context sources)";
         return {
           slug,
           tables: contextResult.sourceCount,
@@ -1242,41 +1510,55 @@ export async function* runFlashBroker(
       return { slug, tables: data.tableCount, rows: data.rowCount };
     } catch (err) {
       console.error(`[FLASH-BROKER] Magnification failed for ${slug}:`, err);
-      magnifiedData[slug] = '(Data unavailable)';
+      magnifiedData[slug] = "(Data unavailable)";
       return { slug, tables: 0, rows: 0 };
     }
   });
 
   const magnifyResults = await Promise.all(magnifyPromises);
   for (const mr of magnifyResults) {
-    yield { type: 'magnified', app: appNames[mr.slug] || mr.slug, tables: mr.tables, rows: mr.rows };
+    yield {
+      type: "magnified",
+      app: appNames[mr.slug] || mr.slug,
+      tables: mr.tables,
+      rows: mr.rows,
+    };
   }
 
   // ── Collect conventions for involved apps ──
-  const allConventions: Array<{ appName: string; key: string; value: string }> = [];
+  const allConventions: Array<{ appName: string; key: string; value: string }> =
+    [];
   const seenConv = new Set<string>();
   for (const fn of Object.values(combinedFunctions)) {
     if (!involvedAppIds.has(fn.appId)) continue;
     for (const conv of fn.conventions || []) {
       if (seenConv.has(conv)) continue;
       seenConv.add(conv);
-      const colonIdx = conv.indexOf(':');
+      const colonIdx = conv.indexOf(":");
       allConventions.push({
         appName: fn.appSlug,
         key: colonIdx > 0 ? conv.substring(0, colonIdx).trim() : conv,
-        value: colonIdx > 0 ? conv.substring(colonIdx + 1).trim() : '',
+        value: colonIdx > 0 ? conv.substring(colonIdx + 1).trim() : "",
       });
     }
   }
 
   // ── MODE: READ — Flash responds directly using magnified data ──
-  if (mode === 'read') {
-    yield { type: 'constructing', functions: [], conventionCount: allConventions.length };
+  if (mode === "read") {
+    yield {
+      type: "constructing",
+      functions: [],
+      conventionCount: allConventions.length,
+    };
 
     let readInput = `## User's Question\n${message}\n\n`;
     if (files?.length) readInput += buildFileContext(files);
-    if (projectContext) readInput += `## Local Project Context\n${projectContext}\n\n`;
-    if (activeWidgetContextBlock) readInput += `${activeWidgetContextBlock}\n\n`;
+    if (projectContext) {
+      readInput += `## Local Project Context\n${projectContext}\n\n`;
+    }
+    if (activeWidgetContextBlock) {
+      readInput += `${activeWidgetContextBlock}\n\n`;
+    }
     readInput += `## Live App Data\n`;
     for (const [slug, data] of Object.entries(magnifiedData)) {
       readInput += `### ${appNames[slug] || slug}\n${data}\n\n`;
@@ -1290,26 +1572,36 @@ export async function* runFlashBroker(
 
     // Inject conversation context for read mode continuity
     if (summaryStr) readInput += `\n## Conversation Summary\n${summaryStr}\n`;
-    if (lastExchangeStr) readInput += `\n## Last Exchange\n${lastExchangeStr}\n`;
+    if (lastExchangeStr) {
+      readInput += `\n## Last Exchange\n${lastExchangeStr}\n`;
+    }
 
     // Intra-conversation raw history magnification
     if (contextQuery && conversationHistory && conversationHistory.length > 0) {
       const rawContext = searchRawHistory(contextQuery, conversationHistory);
-      if (rawContext) readInput += `\n## Relevant Earlier Conversation\n${rawContext}\n`;
+      if (rawContext) {
+        readInput += `\n## Relevant Earlier Conversation\n${rawContext}\n`;
+      }
     }
 
     // Cross-session context retrieval for read mode
     if (conversationSearch) {
       try {
-        const { createEmbeddingService, searchConversationEmbeddings } = await import('./embedding.ts');
+        const { createEmbeddingService, searchConversationEmbeddings } =
+          await import("./embedding.ts");
         const svc = createEmbeddingService();
-        if (!svc) throw new Error('Embedding service unavailable');
+        if (!svc) throw new Error("Embedding service unavailable");
         const { embedding } = await svc.embed(conversationSearch);
-        const matches = await searchConversationEmbeddings(embedding, userId, { limit: 3, threshold: 0.55 });
+        const matches = await searchConversationEmbeddings(embedding, userId, {
+          limit: 3,
+          threshold: 0.55,
+        });
         if (matches.length > 0) {
-          readInput += '\n## Relevant Past Conversations\n';
+          readInput += "\n## Relevant Past Conversations\n";
           for (const m of matches) {
-            readInput += `### ${m.conversation_name} (${new Date(m.created_at).toLocaleDateString()})\n${m.summary}\n\n`;
+            readInput += `### ${m.conversation_name} (${
+              new Date(m.created_at).toLocaleDateString()
+            })\n${m.summary}\n\n`;
           }
         }
       } catch { /* ignore retrieval failures */ }
@@ -1319,46 +1611,64 @@ export async function* runFlashBroker(
     const readSystem = systemAgentContext
       ? `You are "${systemAgentContext.persona}". ${FLASH_READ_RESPONSE_SYSTEM}`
       : FLASH_READ_RESPONSE_SYSTEM;
-    const responseText = await callFlashText(flashModel, readSystem, buildMultimodalContent(readInput, files), route, {
-      telemetry: flashTelemetry,
-      taskId: 'flash_broker.read_response',
-      schemaId: FLASH_SCHEMA_IDS.readResponse,
-      inputFeatures: {
-        files,
-        projectContext,
-        conversationHistory,
-        conventionCount: allConventions.length,
-        magnifiedData,
-        conversationSearch,
-        contextQuery,
-        activeWidgetContexts,
-        activeWidgetContextBlock,
+    const responseText = await callFlashText(
+      flashModel,
+      readSystem,
+      buildMultimodalContent(readInput, files),
+      route,
+      {
+        telemetry: flashTelemetry,
+        taskId: "flash_broker.read_response",
+        schemaId: FLASH_SCHEMA_IDS.readResponse,
+        inputFeatures: {
+          files,
+          projectContext,
+          conversationHistory,
+          conventionCount: allConventions.length,
+          magnifiedData,
+          conversationSearch,
+          contextQuery,
+          activeWidgetContexts,
+          activeWidgetContextBlock,
+        },
+        metadata: {
+          mode: "read",
+          involved_app_count: appIds.length,
+          active_widget_context_count: activeWidgetContextCount,
+          declared_context_source_count: declaredContextSourceCount,
+        },
+        signal,
       },
-      metadata: {
-        mode: 'read',
-      involved_app_count: appIds.length,
-      active_widget_context_count: activeWidgetContextCount,
-      declared_context_source_count: declaredContextSourceCount,
-    },
-  })
-      || "I found the data but had trouble formatting the response. Could you try rephrasing your question?";
+    ) ||
+      "I found the data but had trouble formatting the response. Could you try rephrasing your question?";
 
     const result: FlashBrokerResult = {
       needsTool: false,
       directResponse: responseText,
       model: flashModel,
-      prompt: '', functions: '', entities: [], conventions: allConventions.slice(0, 5),
-      involvedAppIds: appIds, toolMap: {},
+      prompt: "",
+      functions: "",
+      entities: [],
+      conventions: allConventions.slice(0, 5),
+      involvedAppIds: appIds,
+      toolMap: {},
       usage: analyzeResult._usage,
+      systemAgentDelegations: systemAgentDelegations.length > 0
+        ? systemAgentDelegations
+        : undefined,
+      marketplaceCandidates,
+      ambientSuggestionContext,
+      capabilityGapShortcoming,
+      conversationSearch,
     };
-    yield { type: 'direct_response', content: responseText };
-    yield { type: 'done', result };
+    yield { type: "direct_response", content: responseText };
+    yield { type: "done", result };
     return;
   }
 
   // ── MODE: WRITE — construct prompt for Heavy model ──
   yield {
-    type: 'constructing',
+    type: "constructing",
     functions: actionFunctions,
     conventionCount: allConventions.length,
   };
@@ -1368,23 +1678,33 @@ export async function* runFlashBroker(
   for (const [fnName] of Object.entries(toolMap)) {
     const fn = combinedFunctions[fnName];
     if (!fn) continue;
-    const originLabel = toolMap[fnName]?.origin === 'marketplace' ? 'from marketplace' : 'from your library';
+    const originLabel = toolMap[fnName]?.origin === "marketplace"
+      ? "from marketplace"
+      : "from your library";
     const params = Object.entries(fn.params || {})
-      .map(([p, info]) => `${p}${info.required ? '' : '?'}: ${info.type}`)
-      .join(', ');
-    const returns = fn.returns && fn.returns !== 'unknown' ? fn.returns : 'unknown';
+      .map(([p, info]) => `${p}${info.required ? "" : "?"}: ${info.type}`)
+      .join(", ");
+    const returns = fn.returns && fn.returns !== "unknown"
+      ? fn.returns
+      : "unknown";
     typeDeclLines.push(`  /** ${fn.description} (${originLabel}) */`);
-    typeDeclLines.push(`  ${fnName}(args: { ${params} }): Promise<${returns}>;`);
+    typeDeclLines.push(
+      `  ${fnName}(args: { ${params} }): Promise<${returns}>;`,
+    );
   }
   const functionsDecl = typeDeclLines.length > 0
-    ? `interface Codemode {\n${typeDeclLines.join('\n')}\n}`
-    : '';
+    ? `interface Codemode {\n${typeDeclLines.join("\n")}\n}`
+    : "";
 
   // Build Flash round 2 input for prompt construction
   let promptInput = `## User's Message\n${message}\n\n`;
   if (files?.length) promptInput += buildFileContext(files);
-  if (projectContext) promptInput += `## Local Project Context\n${projectContext}\n\n`;
-  if (activeWidgetContextBlock) promptInput += `${activeWidgetContextBlock}\n\n`;
+  if (projectContext) {
+    promptInput += `## Local Project Context\n${projectContext}\n\n`;
+  }
+  if (activeWidgetContextBlock) {
+    promptInput += `${activeWidgetContextBlock}\n\n`;
+  }
   promptInput += `## Live App Data\n`;
   for (const [slug, data] of Object.entries(magnifiedData)) {
     promptInput += `### ${appNames[slug] || slug}\n${data}\n\n`;
@@ -1392,13 +1712,16 @@ export async function* runFlashBroker(
   promptInput += `## Available Functions\n`;
   for (const [fnName] of Object.entries(toolMap)) {
     const fn = combinedFunctions[fnName];
-    if (!fn || fn.fnName === '__context') continue; // skip skill context entries
-    const originLabel = toolMap[fnName]?.origin === 'marketplace' ? 'from marketplace' : 'from your library';
+    if (!fn || fn.fnName === "__context") continue; // skip skill context entries
+    const originLabel = toolMap[fnName]?.origin === "marketplace"
+      ? "from marketplace"
+      : "from your library";
     const params = Object.entries(fn.params || {})
-      .map(([p, info]) => `${p}${info.required ? '' : '?'}: ${info.type}`)
-      .join(', ');
-    const rw = isReadOnly(fnName, fn.description) ? '[READ]' : '[WRITE]';
-    promptInput += `- codemode.${fnName}({ ${params} }) ${rw} [${originLabel}] — ${fn.description}\n`;
+      .map(([p, info]) => `${p}${info.required ? "" : "?"}: ${info.type}`)
+      .join(", ");
+    const rw = isReadOnly(fnName, fn.description) ? "[READ]" : "[WRITE]";
+    promptInput +=
+      `- codemode.${fnName}({ ${params} }) ${rw} [${originLabel}] — ${fn.description}\n`;
   }
   if (allConventions.length > 0) {
     promptInput += `\n## Conventions\n`;
@@ -1409,87 +1732,126 @@ export async function* runFlashBroker(
 
   // Inject conversation context for write mode
   if (summaryStr) promptInput += `\n## Conversation Summary\n${summaryStr}\n`;
-  if (lastExchangeStr) promptInput += `\n## Last Exchange\n${lastExchangeStr}\n`;
+  if (lastExchangeStr) {
+    promptInput += `\n## Last Exchange\n${lastExchangeStr}\n`;
+  }
 
   // Intra-conversation raw history magnification for write mode
   if (contextQuery && conversationHistory && conversationHistory.length > 0) {
     const rawContext = searchRawHistory(contextQuery, conversationHistory);
-    if (rawContext) promptInput += `\n## Relevant Earlier Conversation\n${rawContext}\n`;
+    if (rawContext) {
+      promptInput += `\n## Relevant Earlier Conversation\n${rawContext}\n`;
+    }
   }
 
   // Flash round 2: construct the final prompt for Heavy
   const promptSystem = systemAgentContext
     ? `You are constructing a prompt for "${systemAgentContext.persona}". Include their skills and conventions in the prompt.\n\n${FLASH_PROMPT_SYSTEM}`
     : FLASH_PROMPT_SYSTEM;
-  const promptResult = await callFlash(flashModel, promptSystem, buildMultimodalContent(promptInput, files), route, {
-    telemetry: flashTelemetry,
-    taskId: 'flash_broker.prompt_builder',
-    schemaId: FLASH_SCHEMA_IDS.promptBuilder,
-    inputFeatures: {
-      files,
-      projectContext,
-      conversationHistory,
-      functionCount: Object.keys(toolMap).length,
-      conventionCount: allConventions.length,
-      magnifiedData,
-      conversationSearch,
-      contextQuery,
-      activeWidgetContexts,
-      activeWidgetContextBlock,
+  const promptResult = await callFlash(
+    flashModel,
+    promptSystem,
+    buildMultimodalContent(promptInput, files),
+    route,
+    {
+      telemetry: flashTelemetry,
+      taskId: "flash_broker.prompt_builder",
+      schemaId: FLASH_SCHEMA_IDS.promptBuilder,
+      inputFeatures: {
+        files,
+        projectContext,
+        conversationHistory,
+        functionCount: Object.keys(toolMap).length,
+        conventionCount: allConventions.length,
+        magnifiedData,
+        conversationSearch,
+        contextQuery,
+        activeWidgetContexts,
+        activeWidgetContextBlock,
+      },
+      metadata: {
+        mode: "write",
+        involved_app_count: appIds.length,
+        action_function_count: actionFunctions.length,
+        active_widget_context_count: activeWidgetContextCount,
+        declared_context_source_count: declaredContextSourceCount,
+      },
+      signal,
     },
-    metadata: {
-      mode: 'write',
-      involved_app_count: appIds.length,
-      action_function_count: actionFunctions.length,
-      active_widget_context_count: activeWidgetContextCount,
-      declared_context_source_count: declaredContextSourceCount,
-    },
-  });
+  );
 
   let finalPrompt: string;
   let finalModel: string;
-  let resolvedEntities: FlashBrokerResult['entities'] = [];
-  let resolvedConventions: FlashBrokerResult['conventions'] = [];
+  let resolvedEntities: FlashBrokerResult["entities"] = [];
+  let resolvedConventions: FlashBrokerResult["conventions"] = [];
 
   if (promptResult) {
-    finalPrompt = promptResult.prompt || '';
-    finalModel = selectInferenceModel(route, resolveModel(promptResult.model, heavyModel));
+    finalPrompt = promptResult.prompt || "";
+    finalModel = selectInferenceModel(
+      route,
+      resolveModel(promptResult.model, heavyModel),
+    );
     resolvedEntities = (promptResult.entities || []).map((e: any) => ({
-      name: e.name || '', type: e.type || '', id: String(e.id || ''),
-      appId: e.appId || '', appName: e.appName || '', context: e.context || '',
+      name: e.name || "",
+      type: e.type || "",
+      id: String(e.id || ""),
+      appId: e.appId || "",
+      appName: e.appName || "",
+      context: e.context || "",
     }));
     resolvedConventions = (promptResult.conventions || []).map((c: any) => ({
-      appName: c.appName || '', key: c.key || '', value: c.value || '',
+      appName: c.appName || "",
+      key: c.key || "",
+      value: c.value || "",
     }));
   } else {
     finalPrompt = `The user said: "${message}"\n\n`;
     for (const [slug, data] of Object.entries(magnifiedData)) {
       finalPrompt += `Data from ${slug}:\n${data}\n\n`;
     }
-    finalPrompt += 'Write a codemode recipe that fulfills the user\'s request.\n';
-    finalPrompt += 'Keep narration brief and focused on why the action matters.\n';
-    finalPrompt += 'Do not repeat full tool arguments or raw execution results when the UI already shows them.\n';
-    finalPrompt += 'Always name each tool you use; mention the origin too when it is explicitly provided.\n';
-    finalModel = selectInferenceModel(route, resolveModel(analyzeResult.model, heavyModel));
+    finalPrompt +=
+      "Write a codemode recipe that fulfills the user's request.\n";
+    finalPrompt +=
+      "Keep narration brief and focused on why the action matters.\n";
+    finalPrompt +=
+      "Do not repeat full tool arguments or raw execution results when the UI already shows them.\n";
+    finalPrompt +=
+      "Always name each tool you use; mention the origin too when it is explicitly provided.\n";
+    finalModel = selectInferenceModel(
+      route,
+      resolveModel(analyzeResult.model, heavyModel),
+    );
   }
 
-  yield { type: 'prompt_ready', prompt: finalPrompt.slice(0, 200) + '...', model: finalModel };
+  yield {
+    type: "prompt_ready",
+    prompt: finalPrompt.slice(0, 200) + "...",
+    model: finalModel,
+  };
 
   const result: FlashBrokerResult = {
     needsTool: true,
-    directResponse: '',
+    directResponse: "",
     model: finalModel,
     prompt: finalPrompt,
     functions: functionsDecl,
     entities: resolvedEntities,
-    conventions: resolvedConventions.length > 0 ? resolvedConventions : allConventions.slice(0, 5),
+    conventions: resolvedConventions.length > 0
+      ? resolvedConventions
+      : allConventions.slice(0, 5),
     involvedAppIds: appIds,
     toolMap,
     usage: analyzeResult._usage,
-    systemAgentDelegations: systemAgentDelegations.length > 0 ? systemAgentDelegations : undefined,
+    systemAgentDelegations: systemAgentDelegations.length > 0
+      ? systemAgentDelegations
+      : undefined,
+    marketplaceCandidates,
+    ambientSuggestionContext,
+    capabilityGapShortcoming,
+    conversationSearch,
   };
 
-  yield { type: 'done', result };
+  yield { type: "done", result };
 }
 
 // ── Magnification: Pull live D1 data for an app ──
@@ -1501,37 +1863,57 @@ interface MagnifyResult {
 }
 
 /** Fetch lightweight app metadata for type checking (skill vs mcp) */
-async function getAppMeta(appId: string): Promise<{ app_type: string | null; storage_key: string; name: string } | null> {
-  const SUPABASE_URL = getEnv('SUPABASE_URL');
-  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+async function getAppMeta(
+  appId: string,
+): Promise<
+  { app_type: string | null; storage_key: string; name: string } | null
+> {
+  const SUPABASE_URL = getEnv("SUPABASE_URL");
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv("SUPABASE_SERVICE_ROLE_KEY");
   const res = await fetch(
     `${SUPABASE_URL}/rest/v1/apps?id=eq.${appId}&select=app_type,storage_key,name`,
-    { headers: { 'apikey': SUPABASE_SERVICE_ROLE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` } }
+    {
+      headers: {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      },
+    },
   );
   if (!res.ok) return null;
-  const rows = await res.json() as Array<{ app_type: string | null; storage_key: string; name: string }>;
+  const rows = await res.json() as Array<
+    { app_type: string | null; storage_key: string; name: string }
+  >;
   return rows[0] || null;
 }
 
 /** Magnify a skill app — fetch .md content from R2 instead of D1 */
-async function magnifySkillApp(app: { storage_key: string; name: string }, scope?: string): Promise<MagnifyResult> {
+async function magnifySkillApp(
+  app: { storage_key: string; name: string },
+  scope?: string,
+): Promise<MagnifyResult> {
   try {
     const r2 = (globalThis as any).__env?.R2_BUCKET;
-    if (!r2) return { context: '(R2 not available)', tableCount: 0, rowCount: 0 };
+    if (!r2) {
+      return { context: "(R2 not available)", tableCount: 0, rowCount: 0 };
+    }
 
     // List files under the app's storage key to find .md files
     const listed = await r2.list({ prefix: app.storage_key, limit: 20 });
     const mdKeys = (listed.objects || [])
       .map((o: any) => o.key as string)
-      .filter((k: string) => k.endsWith('.md'));
+      .filter((k: string) => k.endsWith(".md"));
 
     if (mdKeys.length === 0) {
-      return { context: '(No skill content found)', tableCount: 0, rowCount: 0 };
+      return {
+        context: "(No skill content found)",
+        tableCount: 0,
+        rowCount: 0,
+      };
     }
 
     // Read all .md files and concatenate (respect 8000 char limit)
     const MAX_CHARS = 8000;
-    let content = '';
+    let content = "";
     for (const key of mdKeys) {
       const obj = await r2.get(key);
       if (!obj) continue;
@@ -1540,13 +1922,17 @@ async function magnifySkillApp(app: { storage_key: string; name: string }, scope
         content += text.slice(0, MAX_CHARS - content.length);
         break;
       }
-      content += text + '\n\n';
+      content += text + "\n\n";
     }
 
     return { context: content.trim(), tableCount: 0, rowCount: 0 };
   } catch (err) {
     console.error(`[MAGNIFY] Skill magnification failed for ${app.name}:`, err);
-    return { context: '(Skill content unavailable)', tableCount: 0, rowCount: 0 };
+    return {
+      context: "(Skill content unavailable)",
+      tableCount: 0,
+      rowCount: 0,
+    };
   }
 }
 
@@ -1554,30 +1940,34 @@ async function magnifySkillApp(app: { storage_key: string; name: string }, scope
  * Query an app's D1 database and return a compact context string
  * with all user-relevant data. This is the "magnification" step.
  */
-async function magnifyApp(appId: string, userId: string, scope?: string): Promise<MagnifyResult> {
+async function magnifyApp(
+  appId: string,
+  userId: string,
+  scope?: string,
+): Promise<MagnifyResult> {
   // ── Skill apps: fetch .md content from R2 instead of querying D1 ──
   const appMeta = await getAppMeta(appId);
-  if (appMeta?.app_type === 'skill') {
+  if (appMeta?.app_type === "skill") {
     return magnifySkillApp(appMeta, scope);
   }
 
   const dbId = await getD1DatabaseId(appId);
   if (!dbId) {
-    return { context: '(No database provisioned)', tableCount: 0, rowCount: 0 };
+    return { context: "(No database provisioned)", tableCount: 0, rowCount: 0 };
   }
 
-  const cfAccountId = getEnv('CF_ACCOUNT_ID');
-  const cfApiToken = getEnv('CF_API_TOKEN');
+  const cfAccountId = getEnv("CF_ACCOUNT_ID");
+  const cfApiToken = getEnv("CF_API_TOKEN");
 
   // Helper to query D1 via HTTP API
   async function queryD1(sql: string, params: unknown[] = []): Promise<any[]> {
     const res = await fetch(
       `https://api.cloudflare.com/client/v4/accounts/${cfAccountId}/d1/database/${dbId}/query`,
       {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Authorization': `Bearer ${cfApiToken}`,
-          'Content-Type': 'application/json',
+          "Authorization": `Bearer ${cfApiToken}`,
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({ sql, params }),
       },
@@ -1591,8 +1981,29 @@ async function magnifyApp(appId: string, userId: string, scope?: string): Promis
   const scopeKeywords: string[] = [];
   if (scope) {
     const stopWords = new Set([
-      'the','a','an','in','on','at','to','for','of','and','or','is','are',
-      'was','were','from','with','about','my','their','this','that','all',
+      "the",
+      "a",
+      "an",
+      "in",
+      "on",
+      "at",
+      "to",
+      "for",
+      "of",
+      "and",
+      "or",
+      "is",
+      "are",
+      "was",
+      "were",
+      "from",
+      "with",
+      "about",
+      "my",
+      "their",
+      "this",
+      "that",
+      "all",
     ]);
     for (const word of scope.split(/[\s,]+/)) {
       if (word.length > 2 && !stopWords.has(word.toLowerCase())) {
@@ -1602,13 +2013,18 @@ async function magnifyApp(appId: string, userId: string, scope?: string): Promis
   }
 
   // 1. Discover tables
-  const tables = await queryD1("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name");
+  const tables = await queryD1(
+    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
+  );
   const tableNames = tables
     .map((t: any) => t.name as string)
-    .filter(name => !SKIP_TABLES.has(name) && !name.startsWith('_') && !name.startsWith('sqlite_'));
+    .filter((name) =>
+      !SKIP_TABLES.has(name) && !name.startsWith("_") &&
+      !name.startsWith("sqlite_")
+    );
 
   if (tableNames.length === 0) {
-    return { context: '(Empty database)', tableCount: 0, rowCount: 0 };
+    return { context: "(Empty database)", tableCount: 0, rowCount: 0 };
   }
 
   // 2. Sample data from each table (parallel)
@@ -1626,21 +2042,24 @@ async function magnifyApp(appId: string, userId: string, scope?: string): Promis
 
       if (scopeKeywords.length > 0) {
         // Identify searchable text columns (skip IDs and timestamps)
-        const textCols = colNames.filter(c =>
-          !c.endsWith('_at') && !c.endsWith('_id') && c !== 'id' && c !== 'user_id' && c !== 'rowid'
+        const textCols = colNames.filter((c) =>
+          !c.endsWith("_at") && !c.endsWith("_id") && c !== "id" &&
+          c !== "user_id" && c !== "rowid"
         );
 
         if (textCols.length > 0) {
           // Build WHERE: any text column LIKE any keyword
-          const conditions = scopeKeywords.flatMap(kw =>
-            textCols.map(col => `"${col}" LIKE ?`)
+          const conditions = scopeKeywords.flatMap((kw) =>
+            textCols.map((col) => `"${col}" LIKE ?`)
           );
-          const params = scopeKeywords.flatMap(kw =>
+          const params = scopeKeywords.flatMap((kw) =>
             textCols.map(() => `%${kw}%`)
           );
 
           rows = await queryD1(
-            `SELECT * FROM "${tableName}" WHERE (${conditions.join(' OR ')}) ORDER BY rowid DESC LIMIT ${MAX_ROWS_PER_TABLE}`,
+            `SELECT * FROM "${tableName}" WHERE (${
+              conditions.join(" OR ")
+            }) ORDER BY rowid DESC LIMIT ${MAX_ROWS_PER_TABLE}`,
             params,
           );
 
@@ -1683,21 +2102,23 @@ async function magnifyApp(appId: string, userId: string, scope?: string): Promis
 
     // Compact format: table name + column headers + rows as compact JSON
     let section = `[${tableName}] (${rows.length} rows)\n`;
-    section += `Columns: ${colNames.join(', ')}\n`;
+    section += `Columns: ${colNames.join(", ")}\n`;
 
     // Compact row representation — skip large text fields
     for (const row of rows) {
       const compactRow: Record<string, unknown> = {};
-      for (const [key, value] of Object.entries(row as Record<string, unknown>)) {
-        if (typeof value === 'string' && value.length > 200) {
-          compactRow[key] = value.slice(0, 200) + '...';
+      for (
+        const [key, value] of Object.entries(row as Record<string, unknown>)
+      ) {
+        if (typeof value === "string" && value.length > 200) {
+          compactRow[key] = value.slice(0, 200) + "...";
         } else {
           compactRow[key] = value;
         }
       }
       const rowStr = JSON.stringify(compactRow);
       if (totalChars + rowStr.length > MAX_CHARS_PER_APP) break;
-      section += rowStr + '\n';
+      section += rowStr + "\n";
       totalChars += rowStr.length;
     }
 
@@ -1710,23 +2131,30 @@ async function magnifyApp(appId: string, userId: string, scope?: string): Promis
     for (const { tableName, colNames, rows } of samples) {
       if (rows.length === 0 || totalChars >= MAX_CHARS_PER_APP) continue;
 
-      const fkCols = colNames.filter(c => c.endsWith('_id') && c !== 'id' && c !== 'user_id');
+      const fkCols = colNames.filter((c) =>
+        c.endsWith("_id") && c !== "id" && c !== "user_id"
+      );
       for (const fkCol of fkCols) {
         if (totalChars >= MAX_CHARS_PER_APP) break;
 
         // Infer target table: world_id → worlds, character_a_id → characters
-        const base = fkCol.replace(/_id$/, '').replace(/_[a-z]$/, '');
-        const targetTable = tableNames.find(t => t === base + 's' || t === base + 'es' || t === base);
+        const base = fkCol.replace(/_id$/, "").replace(/_[a-z]$/, "");
+        const targetTable = tableNames.find((t) =>
+          t === base + "s" || t === base + "es" || t === base
+        );
         if (!targetTable) continue;
 
         // Skip if we already sampled this table with results
-        if (samples.some(s => s.tableName === targetTable && s.rows.length > 0)) continue;
+        if (
+          samples.some((s) => s.tableName === targetTable && s.rows.length > 0)
+        ) continue;
 
-        const ids = [...new Set(rows.map((r: any) => r[fkCol]).filter(Boolean))].slice(0, 10);
+        const ids = [...new Set(rows.map((r: any) => r[fkCol]).filter(Boolean))]
+          .slice(0, 10);
         if (ids.length === 0) continue;
 
         try {
-          const placeholders = ids.map(() => '?').join(',');
+          const placeholders = ids.map(() => "?").join(",");
           const related = await queryD1(
             `SELECT * FROM "${targetTable}" WHERE id IN (${placeholders}) LIMIT 10`,
             ids,
@@ -1735,17 +2163,22 @@ async function magnifyApp(appId: string, userId: string, scope?: string): Promis
 
           let section = `[${targetTable}] (${related.length} related rows)\n`;
           const relCols = await queryD1(`PRAGMA table_info("${targetTable}")`);
-          section += `Columns: ${relCols.map((c: any) => c.name).join(', ')}\n`;
+          section += `Columns: ${relCols.map((c: any) => c.name).join(", ")}\n`;
 
           for (const row of related) {
             const compact: Record<string, unknown> = {};
-            for (const [key, value] of Object.entries(row as Record<string, unknown>)) {
-              compact[key] = typeof value === 'string' && value.length > 200
-                ? value.slice(0, 200) + '...' : value;
+            for (
+              const [key, value] of Object.entries(
+                row as Record<string, unknown>,
+              )
+            ) {
+              compact[key] = typeof value === "string" && value.length > 200
+                ? value.slice(0, 200) + "..."
+                : value;
             }
             const rowStr = JSON.stringify(compact);
             if (totalChars + rowStr.length > MAX_CHARS_PER_APP) break;
-            section += rowStr + '\n';
+            section += rowStr + "\n";
             totalChars += rowStr.length;
             totalRows++;
           }
@@ -1756,7 +2189,7 @@ async function magnifyApp(appId: string, userId: string, scope?: string): Promis
   }
 
   return {
-    context: sections.join('\n'),
+    context: sections.join("\n"),
     tableCount: tableNames.length,
     rowCount: totalRows,
   };
@@ -1764,7 +2197,7 @@ async function magnifyApp(appId: string, userId: string, scope?: string): Promis
 
 // ── Flash API Call ──
 
-type FlashMessage = { role: 'system' | 'user'; content: unknown };
+type FlashMessage = { role: "system" | "user"; content: unknown };
 
 function createFlashTelemetrySession(
   route: ResolvedInferenceRoute,
@@ -1797,7 +2230,8 @@ function createFlashTelemetrySession(
   return createLlmInvocationTelemetrySession({
     userId: options.telemetry.userId,
     userEmail: options.telemetry.userEmail,
-    invocationId: `${options.telemetry.traceId}:${options.taskId}:${crypto.randomUUID()}`,
+    invocationId:
+      `${options.telemetry.traceId}:${options.taskId}:${crypto.randomUUID()}`,
     traceId: options.telemetry.traceId,
     conversationId: options.telemetry.conversationId,
     source: options.telemetry.source,
@@ -1813,27 +2247,36 @@ function createFlashTelemetrySession(
   });
 }
 
-function buildJsonOutputLabels(taskId: FlashTaskId | undefined, output: unknown, parseSuccess: boolean): Record<string, unknown> {
-  if (taskId === 'flash_broker.analyze') {
+function buildJsonOutputLabels(
+  taskId: FlashTaskId | undefined,
+  output: unknown,
+  parseSuccess: boolean,
+): Record<string, unknown> {
+  if (taskId === "flash_broker.analyze") {
     return buildAnalyzeOutputLabels(output, { parseSuccess });
   }
-  if (taskId === 'flash_broker.prompt_builder') {
+  if (taskId === "flash_broker.prompt_builder") {
     return buildPromptBuilderOutputLabels(output, { parseSuccess });
   }
   return { parse_success: parseSuccess };
 }
 
-function buildTextOutputLabels(taskId: FlashTaskId | undefined, text: string, options?: FlashCallOptions): Record<string, unknown> {
-  if (taskId === 'orchestrate.execution_confirmation') {
+function buildTextOutputLabels(
+  taskId: FlashTaskId | undefined,
+  text: string,
+  options?: FlashCallOptions,
+): Record<string, unknown> {
+  if (taskId === "orchestrate.execution_confirmation") {
     return buildExecutionConfirmationOutputLabels(text, {
-      executionResultAvailable: options?.metadata?.execution_result_available === true,
+      executionResultAvailable:
+        options?.metadata?.execution_result_available === true,
     });
   }
   return buildReadResponseOutputLabels(text);
 }
 
 function stripInternalUsage(value: unknown): unknown {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const copy = { ...(value as Record<string, unknown>) };
   delete copy._usage;
   return copy;
@@ -1847,15 +2290,21 @@ async function callFlash(
   options?: FlashCallOptions,
 ): Promise<any | null> {
   const messages: FlashMessage[] = [
-    { role: 'system', content: systemPrompt },
-    { role: 'user', content: userContent },
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userContent },
   ];
   const requestParams = {
     temperature: 0,
     max_tokens: 2048,
-    response_format: { type: 'json_object' },
+    response_format: { type: "json_object" },
   };
-  const llmTelemetry = createFlashTelemetrySession(route, model, messages, requestParams, options);
+  const llmTelemetry = createFlashTelemetrySession(
+    route,
+    model,
+    messages,
+    requestParams,
+    options,
+  );
   llmTelemetry?.start();
 
   try {
@@ -1867,18 +2316,19 @@ async function callFlash(
         ...requestParams,
       },
       {
-        title: 'Ultralight Flash Broker',
-        referer: 'https://ultralight-api.rgn4jz429m.workers.dev',
+        title: "Ultralight Flash Broker",
+        referer: "https://ultralight-api.rgn4jz429m.workers.dev",
+        signal: options?.signal,
       },
     );
 
     if (!response.ok) {
-      const detail = await response.text().catch(() => '');
+      const detail = await response.text().catch(() => "");
       console.error(`[FLASH-BROKER] Flash failed: ${response.status}`);
       const outputLabels = buildJsonOutputLabels(options?.taskId, null, false);
       await llmTelemetry?.finish({
-        status: 'error',
-        errorType: 'provider_error',
+        status: "error",
+        errorType: "provider_error",
         errorMessage: `Flash failed: ${response.status}`,
         metadata: {
           output_labels: outputLabels,
@@ -1901,7 +2351,9 @@ async function callFlash(
     }
 
     const data = await response.json() as {
-      choices: Array<{ message: { content: string }; finish_reason?: string | null }>;
+      choices: Array<
+        { message: { content: string }; finish_reason?: string | null }
+      >;
       usage?: object;
     };
 
@@ -1909,11 +2361,11 @@ async function callFlash(
     if (!content) {
       const outputLabels = buildJsonOutputLabels(options?.taskId, null, false);
       await llmTelemetry?.finish({
-        status: 'error',
+        status: "error",
         finishReason: data.choices?.[0]?.finish_reason || null,
         usage: data.usage,
-        errorType: 'empty_response',
-        errorMessage: 'Flash returned no message content',
+        errorType: "empty_response",
+        errorMessage: "Flash returned no message content",
         metadata: {
           output_labels: outputLabels,
           parse_success: false,
@@ -1937,10 +2389,10 @@ async function callFlash(
     } catch (err) {
       const outputLabels = buildJsonOutputLabels(options?.taskId, null, false);
       await llmTelemetry?.finish({
-        status: 'error',
+        status: "error",
         finishReason: data.choices?.[0]?.finish_reason || null,
         usage: data.usage,
-        errorType: 'json_parse_error',
+        errorType: "json_parse_error",
         errorMessage: err instanceof Error ? err.message : String(err),
         metadata: {
           output_labels: outputLabels,
@@ -1962,7 +2414,7 @@ async function callFlash(
     parsed._usage = data.usage || undefined;
     const outputLabels = buildJsonOutputLabels(options?.taskId, parsed, true);
     await llmTelemetry?.finish({
-      status: 'success',
+      status: "success",
       finishReason: data.choices?.[0]?.finish_reason || null,
       usage: data.usage,
       metadata: {
@@ -1983,11 +2435,11 @@ async function callFlash(
     });
     return parsed;
   } catch (err) {
-    console.error('[FLASH-BROKER] Flash error:', err);
+    console.error("[FLASH-BROKER] Flash error:", err);
     const outputLabels = buildJsonOutputLabels(options?.taskId, null, false);
     await llmTelemetry?.finish({
-      status: 'error',
-      errorType: 'exception',
+      status: "error",
+      errorType: "exception",
       errorMessage: err instanceof Error ? err.message : String(err),
       metadata: {
         output_labels: outputLabels,
@@ -2018,14 +2470,20 @@ export async function callFlashText(
   options?: FlashCallOptions,
 ): Promise<string> {
   const messages: FlashMessage[] = [
-    { role: 'system', content: systemPrompt },
-    { role: 'user', content: userContent },
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userContent },
   ];
   const requestParams = {
     temperature: 0.3,
     max_tokens: 2048,
   };
-  const llmTelemetry = createFlashTelemetrySession(route, model, messages, requestParams, options);
+  const llmTelemetry = createFlashTelemetrySession(
+    route,
+    model,
+    messages,
+    requestParams,
+    options,
+  );
   llmTelemetry?.start();
 
   try {
@@ -2038,18 +2496,21 @@ export async function callFlashText(
         // No response_format — plain text output
       },
       {
-        title: 'Ultralight Flash Broker',
-        referer: 'https://ultralight-api.rgn4jz429m.workers.dev',
+        title: "Ultralight Flash Broker",
+        referer: "https://ultralight-api.rgn4jz429m.workers.dev",
+        signal: options?.signal,
       },
     );
 
     if (!response.ok) {
-      const detail = await response.text().catch(() => '');
-      console.error(`[FLASH-BROKER] Flash text call failed: ${response.status}`);
-      const outputLabels = buildTextOutputLabels(options?.taskId, '', options);
+      const detail = await response.text().catch(() => "");
+      console.error(
+        `[FLASH-BROKER] Flash text call failed: ${response.status}`,
+      );
+      const outputLabels = buildTextOutputLabels(options?.taskId, "", options);
       await llmTelemetry?.finish({
-        status: 'error',
-        errorType: 'provider_error',
+        status: "error",
+        errorType: "provider_error",
         errorMessage: `Flash text call failed: ${response.status}`,
         metadata: {
           output_labels: outputLabels,
@@ -2066,18 +2527,24 @@ export async function callFlashText(
           },
         },
       });
-      return '';
+      return "";
     }
 
     const data = await response.json() as {
-      choices: Array<{ message: { content: string }; finish_reason?: string | null }>;
+      choices: Array<
+        { message: { content: string }; finish_reason?: string | null }
+      >;
       usage?: object;
     };
 
-    const content = data.choices?.[0]?.message?.content || '';
-    const outputLabels = buildTextOutputLabels(options?.taskId, content, options);
+    const content = data.choices?.[0]?.message?.content || "";
+    const outputLabels = buildTextOutputLabels(
+      options?.taskId,
+      content,
+      options,
+    );
     await llmTelemetry?.finish({
-      status: 'success',
+      status: "success",
       finishReason: data.choices?.[0]?.finish_reason || null,
       usage: data.usage,
       metadata: {
@@ -2095,11 +2562,11 @@ export async function callFlashText(
     });
     return content;
   } catch (err) {
-    console.error('[FLASH-BROKER] Flash text error:', err);
-    const outputLabels = buildTextOutputLabels(options?.taskId, '', options);
+    console.error("[FLASH-BROKER] Flash text error:", err);
+    const outputLabels = buildTextOutputLabels(options?.taskId, "", options);
     await llmTelemetry?.finish({
-      status: 'error',
-      errorType: 'exception',
+      status: "error",
+      errorType: "exception",
       errorMessage: err instanceof Error ? err.message : String(err),
       metadata: {
         output_labels: outputLabels,
@@ -2113,7 +2580,7 @@ export async function callFlashText(
         },
       },
     });
-    return '';
+    return "";
   }
 }
 
@@ -2127,7 +2594,10 @@ function buildCatalog(
   const sections: string[] = [];
 
   // Group functions by app
-  const appFns: Record<string, Array<{ name: string; fn: FunctionIndex['functions'][string] }>> = {};
+  const appFns: Record<
+    string,
+    Array<{ name: string; fn: FunctionIndex["functions"][string] }>
+  > = {};
   for (const [name, fn] of Object.entries(fnIndex.functions)) {
     if (!appFns[fn.appSlug]) appFns[fn.appSlug] = [];
     appFns[fn.appSlug].push({ name, fn });
@@ -2135,8 +2605,8 @@ function buildCatalog(
 
   for (const [slug, fns] of Object.entries(appFns)) {
     // Skill entries — show as available context, not callable functions
-    if (fns.length === 1 && fns[0].fn.fnName === '__context') {
-      const desc = fns[0].fn.description.replace(/^\[[^\]]+\]\s*/, '');
+    if (fns.length === 1 && fns[0].fn.fnName === "__context") {
+      const desc = fns[0].fn.description.replace(/^\[[^\]]+\]\s*/, "");
       sections.push(`\n### [saved] ${slug} [SKILL/CONTEXT] — ${desc}`);
       continue;
     }
@@ -2144,14 +2614,16 @@ function buildCatalog(
     const appDesc = fns[0]?.fn.description?.match(/^\[([^\]]+)\]/)?.[1] || slug;
     sections.push(`\n### [saved] ${slug} (${appDesc})`);
     for (const { name, fn } of fns) {
-      if (fn.fnName === '__context') continue; // skip skill entries mixed in
+      if (fn.fnName === "__context") continue; // skip skill entries mixed in
       const params = Object.entries(fn.params || {})
-        .map(([p, info]) => `${p}${info.required ? '' : '?'}: ${info.type}`)
-        .join(', ');
-      const returns = fn.returns && fn.returns !== 'unknown' ? ` -> ${fn.returns}` : '';
-      const rw = isReadOnly(name, fn.description) ? ' [READ]' : ' [WRITE]';
+        .map(([p, info]) => `${p}${info.required ? "" : "?"}: ${info.type}`)
+        .join(", ");
+      const returns = fn.returns && fn.returns !== "unknown"
+        ? ` -> ${fn.returns}`
+        : "";
+      const rw = isReadOnly(name, fn.description) ? " [READ]" : " [WRITE]";
       // Strip the [appName] prefix from description since we're grouping by app
-      const desc = fn.description.replace(/^\[[^\]]+\]\s*/, '');
+      const desc = fn.description.replace(/^\[[^\]]+\]\s*/, "");
       sections.push(`- ${name}(${params})${returns}${rw} — ${desc}`);
     }
 
@@ -2164,70 +2636,78 @@ function buildCatalog(
     }
     if (convs.size > 0) {
       const convList = [...convs].slice(0, 5);
-      sections.push(`  Conventions: ${convList.join('; ')}`);
+      sections.push(`  Conventions: ${convList.join("; ")}`);
     }
   }
 
   if (fnIndex.contextSources?.length) {
-    sections.push('\n## Declared Read Context Sources\nSearchable app data sources available for read-only grounding:');
+    sections.push(
+      "\n## Declared Read Context Sources\nSearchable app data sources available for read-only grounding:",
+    );
     for (const source of fnIndex.contextSources.slice(0, 40)) {
       const details = [
         source.type,
-        source.searchable === false ? 'not_searchable' : 'searchable',
+        source.searchable === false ? "not_searchable" : "searchable",
         source.defaultForWidgets?.length
-          ? `widgets:${source.defaultForWidgets.join('|')}`
+          ? `widgets:${source.defaultForWidgets.join("|")}`
           : null,
-        source.tables?.length ? `tables:${source.tables.join('|')}` : null,
-      ].filter(Boolean).join(', ');
+        source.tables?.length ? `tables:${source.tables.join("|")}` : null,
+      ].filter(Boolean).join(", ");
       sections.push(
         `- ${source.appSlug}:${source.id} (${source.label}) [${details}] — ${
-          source.description || 'Read context'
+          source.description || "Read context"
         }`,
       );
     }
   }
 
   const commandCards = flattenCommandSurfaceInventory(fnIndex, {
-    surfaces: ['command_card'],
+    surfaces: ["command_card"],
     limit: 24,
   }).surfaces;
   if (commandCards.length > 0) {
-    sections.push('\n## Command Dashboard Surfaces\nInstalled read-only cards available for Command dashboards:');
+    sections.push(
+      "\n## Command Dashboard Surfaces\nInstalled read-only cards available for Command dashboards:",
+    );
     for (const surface of commandCards) {
-      if (surface.surface !== 'command_card') continue;
+      if (surface.surface !== "command_card") continue;
       const bits = [
         `${surface.size}`,
         surface.kind,
         surface.data_view ? `view:${surface.data_view}` : null,
-      ].filter(Boolean).join(', ');
+      ].filter(Boolean).join(", ");
       sections.push(
         `- ${surface.app_slug}/${surface.widget_id}/${surface.card_id} (${surface.card_label}) [${bits}] — ${
           surface.description || surface.widget_label
-        }`
+        }`,
       );
     }
   }
 
   if (fnIndex.routines?.length > 0) {
-    sections.push('\n## Routine Templates\nInstalled ongoing-work templates that can become durable routines:');
+    sections.push(
+      "\n## Routine Templates\nInstalled ongoing-work templates that can become durable routines:",
+    );
     for (const routine of fnIndex.routines.slice(0, 24)) {
       const schedule = routine.defaultSchedule
         ? ` default_schedule=${
-          typeof routine.defaultSchedule === 'string'
+          typeof routine.defaultSchedule === "string"
             ? routine.defaultSchedule
             : JSON.stringify(routine.defaultSchedule)
         }`
-        : '';
+        : "";
       const capabilities = routine.capabilities?.length
         ? ` capabilities=${
           routine.capabilities.map((capability) =>
-            `${capability.app}:${capability.functions.join('|')}:${capability.access || 'read'}`
-          ).join(',')
+            `${capability.app}:${capability.functions.join("|")}:${
+              capability.access || "read"
+            }`
+          ).join(",")
         }`
-        : '';
+        : "";
       sections.push(
         `- ${routine.appSlug}/${routine.id} (${routine.label}) handler=${routine.handler}${schedule}${capabilities} — ${
-          routine.description || 'Routine template'
+          routine.description || "Routine template"
         }`,
       );
     }
@@ -2235,40 +2715,43 @@ function buildCatalog(
 
   // System Agents section — allows Flash to recommend delegations
   if (systemAgentStates && systemAgentStates.length > 0) {
-    sections.push('\n## System Agents\nSpecialized agents you can delegate tasks to:');
+    sections.push(
+      "\n## System Agents\nSpecialized agents you can delegate tasks to:",
+    );
     for (const sa of systemAgentStates) {
-      let line = `- **${sa.name}** (${sa.type}): ${sa.tools.join(', ')}`;
+      let line = `- **${sa.name}** (${sa.type}): ${sa.tools.join(", ")}`;
       if (sa.stateSummary) line += ` | State: ${sa.stateSummary.slice(0, 200)}`;
       sections.push(line);
     }
   }
 
   if (marketplaceCandidates.length > 0) {
-    sections.push('\n## Marketplace candidates (not yet in your library)');
+    sections.push("\n## Marketplace candidates (not yet in your library)");
     for (const candidate of marketplaceCandidates) {
-      const description = candidate.app.description || 'No description available';
+      const description = candidate.app.description ||
+        "No description available";
       const keyFns = candidate.keyFunctions.length > 0
-        ? ` — key_functions: ${candidate.keyFunctions.join(', ')}`
-        : '';
+        ? ` — key_functions: ${candidate.keyFunctions.join(", ")}`
+        : "";
       sections.push(
-        `- [marketplace] ${candidate.app.slug} (${candidate.app.name}) — ${description}${keyFns}`
+        `- [marketplace] ${candidate.app.slug} (${candidate.app.name}) — ${description}${keyFns}`,
       );
     }
   }
 
-  return sections.join('\n');
+  return sections.join("\n");
 }
 
 function buildProvisionalFunctionEntries(
   marketplaceCandidates: MarketplaceCandidate[],
-): FunctionIndex['functions'] {
+): FunctionIndex["functions"] {
   const apps: AppForCodemode[] = marketplaceCandidates
     .map((candidate) => {
       if (!candidate.app.manifest) return null;
       try {
-        const manifest = typeof candidate.app.manifest === 'string'
-          ? JSON.parse(candidate.app.manifest) as AppForCodemode['manifest']
-          : candidate.app.manifest as AppForCodemode['manifest'];
+        const manifest = typeof candidate.app.manifest === "string"
+          ? JSON.parse(candidate.app.manifest) as AppForCodemode["manifest"]
+          : candidate.app.manifest as AppForCodemode["manifest"];
         return {
           id: candidate.app.id,
           name: candidate.app.name,
@@ -2284,18 +2767,18 @@ function buildProvisionalFunctionEntries(
   if (apps.length === 0) return {};
 
   const { descriptors, toolMap } = buildJsonSchemaDescriptors(apps);
-  const functions: FunctionIndex['functions'] = {};
+  const functions: FunctionIndex["functions"] = {};
 
   for (const [sanitizedName, mapping] of Object.entries(toolMap)) {
     const descriptor = descriptors[sanitizedName];
-    const params: FunctionEntry['params'] = {};
+    const params: FunctionEntry["params"] = {};
     const properties = descriptor?.inputSchema?.properties || {};
     const required = new Set(descriptor?.inputSchema?.required || []);
 
     for (const [paramName, schema] of Object.entries(properties)) {
       const typedSchema = schema as { type?: string; description?: string };
       params[paramName] = {
-        type: typedSchema.type || 'unknown',
+        type: typedSchema.type || "unknown",
         required: required.has(paramName),
         description: typedSchema.description,
       };
@@ -2305,9 +2788,10 @@ function buildProvisionalFunctionEntries(
       appId: mapping.appId,
       appSlug: mapping.appSlug,
       fnName: mapping.fnName,
-      description: descriptor?.description || `[${mapping.appName}] ${mapping.fnName}`,
+      description: descriptor?.description ||
+        `[${mapping.appName}] ${mapping.fnName}`,
       params,
-      returns: 'unknown',
+      returns: "unknown",
       conventions: [],
       dependsOn: [],
     };
@@ -2316,7 +2800,10 @@ function buildProvisionalFunctionEntries(
   return functions;
 }
 
-function extractAppNameFromDescription(description: string, fallbackSlug: string): string {
+function extractAppNameFromDescription(
+  description: string,
+  fallbackSlug: string,
+): string {
   const match = description.match(/^\[([^\]]+)\]/);
   return match ? match[1] : fallbackSlug;
 }
@@ -2331,17 +2818,28 @@ async function retrieveMarketplaceCandidates(
   const embedding = createEmbeddingService();
   if (!embedding) return [];
 
-  const savedAppIds = new Set(Object.values(fnIndex.functions).map((fn) => fn.appId));
-  const savedAppSlugs = new Set(Object.values(fnIndex.functions).map((fn) => fn.appSlug));
-  const query = [userMessage, conversationSummary].filter(Boolean).join('\n\n').slice(0, 2000);
+  const savedAppIds = new Set(
+    Object.values(fnIndex.functions).map((fn) => fn.appId),
+  );
+  const savedAppSlugs = new Set(
+    Object.values(fnIndex.functions).map((fn) => fn.appSlug),
+  );
+  const query = [userMessage, conversationSummary].filter(Boolean).join("\n\n")
+    .slice(0, 2000);
 
   try {
     const { embedding: vec } = await embedding.embed(query);
     const appsService = createAppsService();
-    const matches = await appsService.searchByEmbedding(vec, userId, false, limit * 2, 0.6);
+    const matches = await appsService.searchByEmbedding(
+      vec,
+      userId,
+      false,
+      limit * 2,
+      0.6,
+    );
 
     return matches
-      .filter((app) => app.app_type !== 'skill')
+      .filter((app) => app.app_type !== "skill")
       .filter((app) => !savedAppIds.has(app.id) && !savedAppSlugs.has(app.slug))
       .slice(0, limit)
       .map((app) => ({
@@ -2366,22 +2864,24 @@ async function retrieveMarketplaceCandidates(
         keyFunctions: extractMarketplaceKeyFunctions(app),
       }));
   } catch (err) {
-    console.warn('[FLASH-BROKER] Marketplace retrieval failed:', err);
+    console.warn("[FLASH-BROKER] Marketplace retrieval failed:", err);
     return [];
   }
 }
 
-function extractMarketplaceKeyFunctions(app: Pick<App, 'manifest' | 'exports'>): string[] {
+function extractMarketplaceKeyFunctions(
+  app: Pick<App, "manifest" | "exports">,
+): string[] {
   const fnNames = new Set<string>();
 
   if (app.manifest) {
     try {
-      const manifest = typeof app.manifest === 'string'
+      const manifest = typeof app.manifest === "string"
         ? JSON.parse(app.manifest) as { functions?: Record<string, unknown> }
         : app.manifest as { functions?: Record<string, unknown> };
 
       for (const fnName of Object.keys(manifest?.functions || {})) {
-        if (fnName.startsWith('widget_')) continue;
+        if (fnName.startsWith("widget_")) continue;
         fnNames.add(fnName);
         if (fnNames.size >= 4) break;
       }
@@ -2391,7 +2891,7 @@ function extractMarketplaceKeyFunctions(app: Pick<App, 'manifest' | 'exports'>):
   }
 
   for (const fnName of app.exports || []) {
-    if (fnName.startsWith('widget_')) continue;
+    if (fnName.startsWith("widget_")) continue;
     fnNames.add(fnName);
     if (fnNames.size >= 4) break;
   }
@@ -2402,18 +2902,25 @@ function extractMarketplaceKeyFunctions(app: Pick<App, 'manifest' | 'exports'>):
 // ── Helpers ──
 
 function isReadOnly(fnName: string, description: string): boolean {
-  const writePatterns = /create|update|delete|remove|add|set|send|approve|reject|revise|act|store|save|insert|modify|post|put|generate|receive/i;
-  const readPatterns = /list|get|search|query|browse|count|check|view|show|find|fetch|read|load|inspect|history|context/i;
-  if (writePatterns.test(fnName) || writePatterns.test(description)) return false;
+  const writePatterns =
+    /create|update|delete|remove|add|set|send|approve|reject|revise|act|store|save|insert|modify|post|put|generate|receive/i;
+  const readPatterns =
+    /list|get|search|query|browse|count|check|view|show|find|fetch|read|load|inspect|history|context/i;
+  if (writePatterns.test(fnName) || writePatterns.test(description)) {
+    return false;
+  }
   if (readPatterns.test(fnName) || readPatterns.test(description)) return true;
   return true;
 }
 
-function resolveModel(flashSuggestion: string, userPreference?: string): string {
+function resolveModel(
+  flashSuggestion: string,
+  userPreference?: string,
+): string {
   if (userPreference) return userPreference;
-  if (flashSuggestion === 'sonnet') return DEFAULT_HEAVY_SONNET;
-  if (flashSuggestion === 'flash') return DEFAULT_HEAVY_FLASH;
-  if (flashSuggestion && flashSuggestion.includes('/')) return flashSuggestion;
+  if (flashSuggestion === "sonnet") return DEFAULT_HEAVY_SONNET;
+  if (flashSuggestion === "flash") return DEFAULT_HEAVY_FLASH;
+  if (flashSuggestion && flashSuggestion.includes("/")) return flashSuggestion;
   return DEFAULT_HEAVY_SONNET;
 }
 
@@ -2421,30 +2928,38 @@ async function loadConversationTopics(userId: string): Promise<string> {
   try {
     const env = getEnv();
     const kv = env.FN_INDEX;
-    if (!kv) return '';
-    const data = await kv.get(`conversation-topics:${userId}`, 'json') as {
+    if (!kv) return "";
+    const data = await kv.get(`conversation-topics:${userId}`, "json") as {
       count: number;
-      recent: Array<{ id: string; name: string; timestamp: number; entities: string[] }>;
+      recent: Array<
+        { id: string; name: string; timestamp: number; entities: string[] }
+      >;
     } | null;
-    if (!data?.recent?.length) return '';
+    if (!data?.recent?.length) return "";
     let hint = `${data.count} past conversations. Recent:\n`;
     for (const r of data.recent) {
       const date = new Date(r.timestamp).toLocaleDateString();
-      hint += `- "${r.name}" (${date})${r.entities?.length ? ': ' + r.entities.join(', ') : ''}\n`;
+      hint += `- "${r.name}" (${date})${
+        r.entities?.length ? ": " + r.entities.join(", ") : ""
+      }\n`;
     }
     return hint;
   } catch {
-    return '';
+    return "";
   }
 }
 
-async function loadConversationSummary(conversationId?: string): Promise<ConversationSummary | null> {
+async function loadConversationSummary(
+  conversationId?: string,
+): Promise<ConversationSummary | null> {
   if (!conversationId) return null;
   try {
     const env = getEnv();
     const kv = env.FN_INDEX;
     if (!kv) return null;
-    return await kv.get(`convo-summary:${conversationId}`, 'json') as ConversationSummary | null;
+    return await kv.get(`convo-summary:${conversationId}`, "json") as
+      | ConversationSummary
+      | null;
   } catch {
     return null;
   }
@@ -2454,43 +2969,46 @@ function searchRawHistory(
   query: string,
   history: Array<{ role: string; content: string }>,
 ): string {
-  const terms = query.toLowerCase().split(/\s+/).filter(t => t.length > 2);
-  if (terms.length === 0) return '';
+  const terms = query.toLowerCase().split(/\s+/).filter((t) => t.length > 2);
+  if (terms.length === 0) return "";
   const scored: Array<{ score: number; text: string }> = [];
   for (let i = 0; i < history.length; i++) {
     const content = history[i].content.toLowerCase();
-    const score = terms.filter(t => content.includes(t)).length;
+    const score = terms.filter((t) => content.includes(t)).length;
     if (score > 0) {
       scored.push({ score, text: `${history[i].role}: ${history[i].content}` });
     }
   }
   const top = scored.sort((a, b) => b.score - a.score).slice(0, 5);
-  let result = top.map(m => m.text).join('\n---\n');
-  return result.length > 2500 ? result.slice(0, 2500) + '\n...(truncated)' : result;
+  let result = top.map((m) => m.text).join("\n---\n");
+  return result.length > 2500
+    ? result.slice(0, 2500) + "\n...(truncated)"
+    : result;
 }
 
 async function loadSystemAgentSkills(agentType: string): Promise<string> {
   try {
     const r2 = createR2Service();
     const text = await r2.fetchTextFile(`system-agents/${agentType}/skills.md`);
-    return text.length > 10000 ? text.substring(0, 10000) + '...' : text;
+    return text.length > 10000 ? text.substring(0, 10000) + "..." : text;
   } catch {
-    return '';
+    return "";
   }
 }
 
-async function loadSystemAgentStates(userId: string): Promise<SystemAgentState[]> {
+async function loadSystemAgentStates(
+  userId: string,
+): Promise<SystemAgentState[]> {
   try {
     const env = getEnv();
     const kv = env.FN_INDEX;
     if (!kv) return [];
-    const data = await kv.get(`system-agents:${userId}`, 'json');
+    const data = await kv.get(`system-agents:${userId}`, "json");
     return Array.isArray(data) ? data as SystemAgentState[] : [];
   } catch {
     return [];
   }
 }
-
 
 // ── Heuristic Fallback ──
 
@@ -2502,19 +3020,25 @@ function heuristicFallback(
   const msgLower = message.toLowerCase();
   const words = msgLower.split(/\s+/);
 
-  const greetings = ['hi', 'hello', 'hey', 'sup', 'yo', 'howdy'];
-  if (words.length <= 3 && words.some(w => greetings.includes(w))) {
+  const greetings = ["hi", "hello", "hey", "sup", "yo", "howdy"];
+  if (words.length <= 3 && words.some((w) => greetings.includes(w))) {
     return {
       needsTool: false,
-      directResponse: 'Hey! How can I help you today?',
+      directResponse: "Hey! How can I help you today?",
       model: preferredModel || DEFAULT_HEAVY_FLASH,
-      prompt: '', functions: '', entities: [], conventions: [],
-      involvedAppIds: [], toolMap: {},
+      prompt: "",
+      functions: "",
+      entities: [],
+      conventions: [],
+      involvedAppIds: [],
+      toolMap: {},
     };
   }
 
   // Match functions by keyword overlap
-  const scored: Array<{ name: string; fn: FunctionIndex['functions'][string]; score: number }> = [];
+  const scored: Array<
+    { name: string; fn: FunctionIndex["functions"][string]; score: number }
+  > = [];
   for (const [name, fn] of Object.entries(fnIndex.functions)) {
     const descLower = fn.description.toLowerCase();
     const nameLower = name.toLowerCase();
@@ -2533,14 +3057,19 @@ function heuristicFallback(
   if (topFunctions.length === 0) {
     return {
       needsTool: false,
-      directResponse: "I'm not sure how to help with that. Could you be more specific?",
+      directResponse:
+        "I'm not sure how to help with that. Could you be more specific?",
       model: preferredModel || DEFAULT_HEAVY_FLASH,
-      prompt: '', functions: '', entities: [], conventions: [],
-      involvedAppIds: [], toolMap: {},
+      prompt: "",
+      functions: "",
+      entities: [],
+      conventions: [],
+      involvedAppIds: [],
+      toolMap: {},
     };
   }
 
-  const toolMap: FlashBrokerResult['toolMap'] = {};
+  const toolMap: FlashBrokerResult["toolMap"] = {};
   const involvedAppIds = new Set<string>();
   const typeDeclLines: string[] = [];
 
@@ -2550,26 +3079,32 @@ function heuristicFallback(
       appName: extractAppNameFromDescription(fn.description, fn.appSlug),
       fnName: fn.fnName,
       appSlug: fn.appSlug,
-      origin: 'library',
+      origin: "library",
     };
     involvedAppIds.add(fn.appId);
     const params = Object.entries(fn.params || {})
-      .map(([p, info]) => `${p}${info.required ? '' : '?'}: ${info.type}`)
-      .join(', ');
-    const returns = fn.returns && fn.returns !== 'unknown' ? fn.returns : 'unknown';
+      .map(([p, info]) => `${p}${info.required ? "" : "?"}: ${info.type}`)
+      .join(", ");
+    const returns = fn.returns && fn.returns !== "unknown"
+      ? fn.returns
+      : "unknown";
     typeDeclLines.push(`  /** ${fn.description} */`);
     typeDeclLines.push(`  ${name}(args: { ${params} }): Promise<${returns}>;`);
   }
 
-  const fnList = topFunctions.map(f => `- codemode.${f.name}(): ${f.fn.description}`).join('\n');
+  const fnList = topFunctions.map((f) =>
+    `- codemode.${f.name}(): ${f.fn.description}`
+  ).join("\n");
 
   return {
     needsTool: true,
-    directResponse: '',
+    directResponse: "",
     model: preferredModel || DEFAULT_HEAVY_FLASH,
-    prompt: `The user said: "${message}"\n\nAvailable functions:\n${fnList}\n\nWrite a codemode recipe.`,
-    functions: `interface Codemode {\n${typeDeclLines.join('\n')}\n}`,
-    entities: [], conventions: [],
+    prompt:
+      `The user said: "${message}"\n\nAvailable functions:\n${fnList}\n\nWrite a codemode recipe.`,
+    functions: `interface Codemode {\n${typeDeclLines.join("\n")}\n}`,
+    entities: [],
+    conventions: [],
     involvedAppIds: [...involvedAppIds],
     toolMap,
   };

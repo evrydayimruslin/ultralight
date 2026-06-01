@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Message } from '../hooks/useChat';
 import type { SystemAgentConfig } from '../lib/systemAgents';
 import type { PermissionRequest } from '../hooks/usePermissions';
+import type { NextStep } from '../../../shared/contracts/command-turn.ts';
 import MessageBubble from './MessageBubble';
 import ConstellationHero from './ui/ConstellationHero';
 
@@ -14,13 +15,12 @@ interface MessageListProps {
   systemAgent?: SystemAgentConfig;
   /** Fires a starter prompt as if the user typed it */
   onStarterClick?: (prompt: string) => void;
-  /** Fired from the generic-empty constellation hero — navigates to that system agent's chat. */
-  onPickSystemAgent?: (agent: SystemAgentConfig) => void;
   /** Pending runner permission request — surfaced inline on matching tool-call cards (A7). */
   pendingPermission?: PermissionRequest | null;
   onAllowPermission?: () => void;
   onAlwaysAllowPermission?: () => void;
   onDenyPermission?: () => void;
+  onNextStepClick?: (step: NextStep, message: Message) => void;
 }
 
 export default function MessageList({
@@ -28,11 +28,11 @@ export default function MessageList({
   isLoading,
   systemAgent,
   onStarterClick,
-  onPickSystemAgent,
   pendingPermission,
   onAllowPermission,
   onAlwaysAllowPermission,
   onDenyPermission,
+  onNextStepClick,
 }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -113,11 +113,11 @@ export default function MessageList({
       );
     }
 
-    // Generic empty state — the product constellation. Picking a dot routes
-    // the user into that system agent's chat (handled by ChatView upstream).
+    // Generic empty state — the product constellation. It frames system
+    // agents as internal Command delegation targets, not separate chats.
     return (
       <div className="flex-1 min-h-0">
-        <ConstellationHero onPickAgent={onPickSystemAgent} />
+        <ConstellationHero />
       </div>
     );
   }
@@ -139,6 +139,7 @@ export default function MessageList({
             onAllowPermission={onAllowPermission}
             onAlwaysAllowPermission={onAlwaysAllowPermission}
             onDenyPermission={onDenyPermission}
+            onNextStepClick={onNextStepClick}
           />
         ))}
 

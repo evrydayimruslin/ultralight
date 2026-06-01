@@ -32,7 +32,9 @@ function installTelemetryEnv(posts: FetchPost[]) {
   } as unknown as typeof globalThis.__env;
 
   globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
-    const url = typeof input === "string" || input instanceof URL ? String(input) : input.url;
+    const url = typeof input === "string" || input instanceof URL
+      ? String(input)
+      : input.url;
     const method = init?.method || "GET";
     if (method !== "GET") {
       posts.push({
@@ -43,16 +45,20 @@ function installTelemetryEnv(posts: FetchPost[]) {
     }
 
     if (method === "GET" && url.includes("/rest/v1/apps")) {
-      return Promise.resolve(new Response("[]", {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }));
+      return Promise.resolve(
+        new Response("[]", {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
     }
     if (method === "GET" && url.includes("/rest/v1/user_app_library")) {
-      return Promise.resolve(new Response("[]", {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }));
+      return Promise.resolve(
+        new Response("[]", {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
     }
 
     return Promise.resolve(new Response("", { status: 201 }));
@@ -93,25 +99,112 @@ Deno.test("capability suggestion telemetry: records intent, set, suggestions, an
     assertEquals(result.suggestions.length, 1);
     assert(result.suggestions[0].suggestionId);
 
-    const intentPost = posts.find((post) => post.url.includes("/capability_intents"));
-    const setPost = posts.find((post) => post.url.includes("/capability_suggestion_sets"));
-    const suggestionPost = posts.find((post) => post.url.includes("/capability_suggestions"));
-    const eventPost = posts.find((post) => post.url.includes("/capability_suggestion_events"));
+    const intentPost = posts.find((post) =>
+      post.url.includes("/capability_intents")
+    );
+    const setPost = posts.find((post) =>
+      post.url.includes("/capability_suggestion_sets")
+    );
+    const suggestionPost = posts.find((post) =>
+      post.url.includes("/capability_suggestions")
+    );
+    const eventPost = posts.find((post) =>
+      post.url.includes("/capability_suggestion_events")
+    );
 
     assert(intentPost);
-    assertEquals((intentPost.body as { conversation_id: string }).conversation_id, "conversation-1");
+    assertEquals(
+      (intentPost.body as { conversation_id: string }).conversation_id,
+      "conversation-1",
+    );
     assert(setPost);
-    assertEquals((setPost.body as { suggestion_count: number }).suggestion_count, 1);
+    assertEquals(
+      (setPost.body as { suggestion_count: number }).suggestion_count,
+      1,
+    );
     assert(suggestionPost);
     assertEquals(
-      (suggestionPost.body as Array<{ app_id: string; app_slug: string }>)[0].app_id,
+      (suggestionPost.body as Array<{ app_id: string; app_slug: string }>)[0]
+        .app_id,
       APP_ID,
     );
     assert(eventPost);
     assertEquals(
-      (eventPost.body as Array<{ event_type: string; suggestion_id: string }>)[0].event_type,
+      (eventPost.body as Array<{ event_type: string; suggestion_id: string }>)[
+        0
+      ].event_type,
       "suggested",
     );
+  } finally {
+    await restore();
+  }
+});
+
+Deno.test("capability suggestion telemetry: records non-app platform suggestion rows", async () => {
+  const posts: FetchPost[] = [];
+  const restore = installTelemetryEnv(posts);
+
+  try {
+    const result = await recordCapabilitySuggestionSet({
+      userId: USER_ID,
+      conversationId: "conversation-1",
+      traceId: TRACE_ID,
+      messageId: "message-1",
+      intentSummary: "Need a tool dealer",
+      queryText: "Find a scheduling tool",
+      candidateCount: 0,
+      noMatch: true,
+      suggestions: [{
+        appId: null,
+        appSlug: null,
+        appName: "Tool Dealer",
+        appType: "system_agent",
+        suggestionSource: "platform_primitive",
+        rank: 1,
+        metadata: {
+          target: {
+            kind: "system_agent",
+            agentType: "tool_marketer",
+            task: "Find scheduling tools.",
+            originalPrompt: "Find a scheduling tool",
+          },
+          display: {
+            label: "Tool Dealer",
+            meta: "one-click",
+          },
+        },
+      }],
+    });
+
+    assert(result.suggestionSetId);
+
+    const suggestionPost = posts.find((post) =>
+      post.url.includes("/capability_suggestions")
+    );
+    assert(suggestionPost);
+    const row = (suggestionPost.body as Array<{
+      app_id: string | null;
+      app_slug: string | null;
+      suggestion_source: string;
+      metadata: {
+        target: {
+          kind: string;
+          agentType: string;
+        };
+      };
+    }>)[0];
+    assertEquals(row.app_id, null);
+    assertEquals(row.app_slug, null);
+    assertEquals(row.suggestion_source, "platform_primitive");
+    assertEquals(row.metadata.target.kind, "system_agent");
+    assertEquals(row.metadata.target.agentType, "tool_marketer");
+
+    const noMatchEvent = posts.find((post) =>
+      post.url.includes("/capability_suggestion_events") &&
+      !Array.isArray(post.body) &&
+      (post.body as { event_type?: string }).event_type === "no_match"
+    );
+    assert(noMatchEvent);
   } finally {
     await restore();
   }
@@ -136,18 +229,33 @@ Deno.test("capability suggestion telemetry: accepted events install the app libr
     assert(result.eventId);
     assertEquals(result.libraryInstalled, true);
 
-    const libraryPost = posts.find((post) => post.url.includes("/user_app_library"));
+    const libraryPost = posts.find((post) =>
+      post.url.includes("/user_app_library")
+    );
     assert(libraryPost);
-    assertEquals((libraryPost.body as { user_id: string; app_id: string; source: string }), {
-      user_id: USER_ID,
-      app_id: APP_ID,
-      source: "ambient_suggestion_accept",
-    });
+    assertEquals(
+      libraryPost.body as { user_id: string; app_id: string; source: string },
+      {
+        user_id: USER_ID,
+        app_id: APP_ID,
+        source: "ambient_suggestion_accept",
+      },
+    );
 
-    const eventPost = posts.find((post) => post.url.includes("/capability_suggestion_events"));
+    const eventPost = posts.find((post) =>
+      post.url.includes("/capability_suggestion_events")
+    );
     assert(eventPost);
-    assertEquals((eventPost.body as { event_type: string; library_installed: boolean }).event_type, "accepted");
-    assertEquals((eventPost.body as { event_type: string; library_installed: boolean }).library_installed, true);
+    assertEquals(
+      (eventPost.body as { event_type: string; library_installed: boolean })
+        .event_type,
+      "accepted",
+    );
+    assertEquals(
+      (eventPost.body as { event_type: string; library_installed: boolean })
+        .library_installed,
+      true,
+    );
   } finally {
     await restore();
   }

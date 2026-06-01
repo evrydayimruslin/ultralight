@@ -6,6 +6,7 @@ import {
 } from "./analytics-identity.ts";
 import { rebuildFunctionIndex } from "./function-index.ts";
 import { createServerLogger } from "./logging.ts";
+import type { SuggestionSource } from "../../shared/contracts/suggestions.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -30,7 +31,7 @@ export interface CapabilitySuggestionCandidateInput {
   appSlug?: string | null;
   appName?: string | null;
   appType?: string | null;
-  suggestionSource?: string | null;
+  suggestionSource?: SuggestionSource | null;
   rank?: number | null;
   similarity?: number | null;
   keyFunctions?: string[];
@@ -59,7 +60,9 @@ export interface CapabilitySuggestionSetInput {
 export interface CapabilitySuggestionSetRecord {
   intentId: string;
   suggestionSetId: string;
-  suggestions: Array<CapabilitySuggestionCandidateInput & { suggestionId: string }>;
+  suggestions: Array<
+    CapabilitySuggestionCandidateInput & { suggestionId: string }
+  >;
 }
 
 export interface CapabilitySuggestionEventInput {
@@ -200,8 +203,12 @@ export async function recordCapabilitySuggestionSet(
     const similarities = suggestions
       .map((suggestion) => finiteNumber(suggestion.similarity))
       .filter((value): value is number => value !== null);
-    const topSimilarity = similarities.length > 0 ? Math.max(...similarities) : null;
-    const minSimilarity = similarities.length > 0 ? Math.min(...similarities) : null;
+    const topSimilarity = similarities.length > 0
+      ? Math.max(...similarities)
+      : null;
+    const minSimilarity = similarities.length > 0
+      ? Math.min(...similarities)
+      : null;
     const now = new Date().toISOString();
 
     await postRows("capability_intents", {
@@ -232,7 +239,8 @@ export async function recordCapabilitySuggestionSet(
       trace_id: asUuid(input.traceId),
       message_id: input.messageId || null,
       source: input.source || "flash_broker",
-      retrieval_source: input.retrievalSource || "ambient_marketplace_embedding",
+      retrieval_source: input.retrievalSource ||
+        "ambient_marketplace_embedding",
       query_text: queryText,
       query_sha256: querySha256,
       candidate_count: input.candidateCount ?? suggestions.length,
@@ -249,54 +257,63 @@ export async function recordCapabilitySuggestionSet(
     });
 
     if (suggestions.length > 0) {
-      await postRows("capability_suggestions", suggestions.map((suggestion) => ({
-        id: suggestion.suggestionId,
-        suggestion_set_id: suggestionSetId,
-        intent_id: intentId,
-        user_id: input.userId,
-        anon_user_id: identity.anonUserId,
-        conversation_id: input.conversationId || null,
-        trace_id: asUuid(input.traceId),
-        message_id: input.messageId || null,
-        app_id: asUuid(suggestion.appId),
-        app_slug: suggestion.appSlug || null,
-        app_name: suggestion.appName || null,
-        app_type: suggestion.appType || "app",
-        suggestion_source: suggestion.suggestionSource || "marketplace",
-        rank: suggestion.rank,
-        similarity: finiteNumber(suggestion.similarity),
-        key_functions: safeJson(suggestion.keyFunctions || []),
-        metadata: safeJson(suggestion.metadata || {}),
-        created_at: now,
-      })), {
-        prefer: "return=minimal,resolution=merge-duplicates",
-        onConflict: "id",
-      });
-
-      await postRows("capability_suggestion_events", suggestions.map((suggestion) => ({
-        event_type: "suggested",
-        intent_id: intentId,
-        suggestion_set_id: suggestionSetId,
-        suggestion_id: suggestion.suggestionId,
-        user_id: input.userId,
-        anon_user_id: identity.anonUserId,
-        conversation_id: input.conversationId || null,
-        trace_id: asUuid(input.traceId),
-        message_id: input.messageId || null,
-        app_id: asUuid(suggestion.appId),
-        app_slug: suggestion.appSlug || null,
-        event_source: "server",
-        metadata: safeJson({
+      await postRows(
+        "capability_suggestions",
+        suggestions.map((suggestion) => ({
+          id: suggestion.suggestionId,
+          suggestion_set_id: suggestionSetId,
+          intent_id: intentId,
+          user_id: input.userId,
+          anon_user_id: identity.anonUserId,
+          conversation_id: input.conversationId || null,
+          trace_id: asUuid(input.traceId),
+          message_id: input.messageId || null,
+          app_id: asUuid(suggestion.appId),
+          app_slug: suggestion.appSlug || null,
+          app_name: suggestion.appName || null,
+          app_type: suggestion.appType || "app",
+          suggestion_source: suggestion.suggestionSource || "marketplace",
           rank: suggestion.rank,
-          similarity: suggestion.similarity ?? null,
-        }),
-        created_at: now,
-      })));
+          similarity: finiteNumber(suggestion.similarity),
+          key_functions: safeJson(suggestion.keyFunctions || []),
+          metadata: safeJson(suggestion.metadata || {}),
+          created_at: now,
+        })),
+        {
+          prefer: "return=minimal,resolution=merge-duplicates",
+          onConflict: "id",
+        },
+      );
+
+      await postRows(
+        "capability_suggestion_events",
+        suggestions.map((suggestion) => ({
+          event_type: "suggested",
+          intent_id: intentId,
+          suggestion_set_id: suggestionSetId,
+          suggestion_id: suggestion.suggestionId,
+          user_id: input.userId,
+          anon_user_id: identity.anonUserId,
+          conversation_id: input.conversationId || null,
+          trace_id: asUuid(input.traceId),
+          message_id: input.messageId || null,
+          app_id: asUuid(suggestion.appId),
+          app_slug: suggestion.appSlug || null,
+          event_source: "server",
+          metadata: safeJson({
+            rank: suggestion.rank,
+            similarity: suggestion.similarity ?? null,
+          }),
+          created_at: now,
+        })),
+      );
     }
 
     if (input.weakMatch || input.noMatch || suggestions.length === 0) {
       await postRows("capability_suggestion_events", {
-        event_type: input.noMatch || suggestions.length === 0 ? "no_match" : "weak_match",
+        event_type: input.noMatch || suggestions.length === 0
+          ? "no_match"
+          : "weak_match",
         intent_id: intentId,
         suggestion_set_id: suggestionSetId,
         user_id: input.userId,
@@ -315,11 +332,14 @@ export async function recordCapabilitySuggestionSet(
       });
     }
   } catch (err) {
-    suggestionTelemetryLogger.warn("Failed to record capability suggestion set", {
-      intent_id: intentId,
-      suggestion_set_id: suggestionSetId,
-      error: err,
-    });
+    suggestionTelemetryLogger.warn(
+      "Failed to record capability suggestion set",
+      {
+        intent_id: intentId,
+        suggestion_set_id: suggestionSetId,
+        error: err,
+      },
+    );
   }
 
   return output;
@@ -330,7 +350,9 @@ export async function recordCapabilitySuggestionEvent(
 ): Promise<{ eventId: string; libraryInstalled: boolean }> {
   const eventId = crypto.randomUUID();
   let libraryInstalled = false;
-  if (!telemetryEnabled() || !supabaseReady()) return { eventId, libraryInstalled };
+  if (!telemetryEnabled() || !supabaseReady()) {
+    return { eventId, libraryInstalled };
+  }
 
   try {
     const identity = await analyticsIdentityFor(input.userId);
@@ -340,7 +362,10 @@ export async function recordCapabilitySuggestionEvent(
       input.installOnAccept !== false &&
       asUuid(input.appId)
     ) {
-      libraryInstalled = await installAcceptedSuggestion(input.userId, input.appId!);
+      libraryInstalled = await installAcceptedSuggestionApp(
+        input.userId,
+        input.appId!,
+      );
     }
 
     await postRows("capability_suggestion_events", {
@@ -361,12 +386,15 @@ export async function recordCapabilitySuggestionEvent(
       metadata: safeJson(input.metadata || {}),
     });
   } catch (err) {
-    suggestionTelemetryLogger.warn("Failed to record capability suggestion event", {
-      event_id: eventId,
-      event_type: input.eventType,
-      suggestion_id: input.suggestionId,
-      error: err,
-    });
+    suggestionTelemetryLogger.warn(
+      "Failed to record capability suggestion event",
+      {
+        event_id: eventId,
+        event_type: input.eventType,
+        suggestion_id: input.suggestionId,
+        error: err,
+      },
+    );
   }
 
   return { eventId, libraryInstalled };
@@ -388,36 +416,51 @@ export async function recordCapabilityGapShortcoming(
       context: safeJson(input.context || {}),
     });
   } catch (err) {
-    suggestionTelemetryLogger.warn("Failed to record capability gap shortcoming", {
-      error: err,
-    });
+    suggestionTelemetryLogger.warn(
+      "Failed to record capability gap shortcoming",
+      {
+        error: err,
+      },
+    );
   }
 }
 
-async function installAcceptedSuggestion(userId: string, appId: string): Promise<boolean> {
+export async function installAcceptedSuggestionApp(
+  userId: string,
+  appId: string,
+): Promise<boolean> {
   const appUuid = asUuid(appId);
   if (!appUuid) return false;
+  if (!supabaseReady()) return false;
 
-  const response = await fetch(`${getEnv("SUPABASE_URL")}/rest/v1/user_app_library`, {
-    method: "POST",
-    headers: dbHeaders("resolution=merge-duplicates,return=minimal"),
-    body: JSON.stringify({
-      user_id: userId,
-      app_id: appUuid,
-      source: "ambient_suggestion_accept",
-    }),
-  });
+  const response = await fetch(
+    `${getEnv("SUPABASE_URL")}/rest/v1/user_app_library`,
+    {
+      method: "POST",
+      headers: dbHeaders("resolution=merge-duplicates,return=minimal"),
+      body: JSON.stringify({
+        user_id: userId,
+        app_id: appUuid,
+        source: "ambient_suggestion_accept",
+      }),
+    },
+  );
 
   if (!response.ok) {
-    throw new Error(`Failed to install accepted suggestion: ${await response.text()}`);
+    throw new Error(
+      `Failed to install accepted suggestion: ${await response.text()}`,
+    );
   }
 
   rebuildFunctionIndex(userId).catch((err) =>
-    suggestionTelemetryLogger.warn("Failed to rebuild function index after suggestion accept", {
-      user_id: userId,
-      app_id: appUuid,
-      error: err,
-    })
+    suggestionTelemetryLogger.warn(
+      "Failed to rebuild function index after suggestion accept",
+      {
+        user_id: userId,
+        app_id: appUuid,
+        error: err,
+      },
+    )
   );
 
   return true;

@@ -1,31 +1,35 @@
 // App Router
 // Routes requests to appropriate handlers
 
-import { handleUpload } from './upload.ts';
-import { handleRun } from './run.ts';
-import { handleAuth } from './auth.ts';
-import { authenticate } from './auth.ts';
-import { appStoreUrl, deepLinkAppUrl, downloadUrl } from '../lib/urls.ts';
-import { handleApps } from './apps.ts';
-import { handleUser } from './user.ts';
-import { handleMcp, handleMcpDiscovery } from './mcp.ts';
-import { handlePlatformMcp, handlePlatformMcpDiscovery, handleSkills } from './platform-mcp.ts';
-import { handleOAuth } from './oauth.ts';
-import { handleDiscover, handleOnboarding } from './discover.ts';
-import { handleMcpConfig } from './config.ts';
-import { handleHttpEndpoint, handleHttpOptions } from './http.ts';
+import { handleUpload } from "./upload.ts";
+import { handleRun } from "./run.ts";
+import { handleAuth } from "./auth.ts";
+import { authenticate } from "./auth.ts";
+import { appStoreUrl, deepLinkAppUrl, downloadUrl } from "../lib/urls.ts";
+import { handleApps } from "./apps.ts";
+import { handleUser } from "./user.ts";
+import { handleMcp, handleMcpDiscovery } from "./mcp.ts";
+import {
+  handlePlatformMcp,
+  handlePlatformMcpDiscovery,
+  handleSkills,
+} from "./platform-mcp.ts";
+import { handleOAuth } from "./oauth.ts";
+import { handleDiscover, handleOnboarding } from "./discover.ts";
+import { handleMcpConfig } from "./config.ts";
+import { handleHttpEndpoint, handleHttpOptions } from "./http.ts";
 import {
   handleGpuBuildCallback,
   handleGpuBuildContextProxy,
   handleGpuCodeProxy,
   handleInternalD1Query,
-} from './internal-proxy.ts';
-import { handleTierChange } from './tier.ts';
-import { handleAdmin } from './admin.ts';
-import { handleDeveloper } from './developer.ts';
+} from "./internal-proxy.ts";
+import { handleTierChange } from "./tier.ts";
+import { handleAdmin } from "./admin.ts";
+import { handleDeveloper } from "./developer.ts";
 import {
-  handleChatContext,
   handleCapabilitySuggestionEventTelemetry,
+  handleChatContext,
   handleChatInferenceOptions,
   handleChatModels,
   handleChatStream,
@@ -34,45 +38,57 @@ import {
   handlePlanCancel,
   handlePlanConfirm,
   handleProvisionKey,
+  handleSuggestionAccept,
+  handleSuggestionPreview,
+  handleSuggestionPreviewBatch,
   handleToolInvocationTelemetry,
-} from './chat.ts';
-import { error, json, toResponseBody } from './response.ts';
-import { appendCookie, getCookieValueFromRequest } from '../services/auth-cookies.ts';
-import { getLayoutHTML } from '../../web/layout.ts';
-import { createAppsService } from '../services/apps.ts';
-import { createR2Service } from '../services/storage.ts';
-import { getCodeCache } from '../services/codecache.ts';
+  handleTurnCancel,
+} from "./chat.ts";
+import { error, json, toResponseBody } from "./response.ts";
+import {
+  appendCookie,
+  getCookieValueFromRequest,
+} from "../services/auth-cookies.ts";
+import { getLayoutHTML } from "../../web/layout.ts";
+import { createAppsService } from "../services/apps.ts";
+import { createR2Service } from "../services/storage.ts";
+import { getCodeCache } from "../services/codecache.ts";
 import {
   type AppContractResolution,
   type AppFunctionContract,
   logAppContractResolution,
   resolveAppFunctionContracts,
-} from '../services/app-contracts.ts';
-import { hasValidPageShareSession } from '../services/page-share-session.ts';
-import { fetchAppEntryCode } from '../services/app-runtime-resources.ts';
-import { buildAppTrustCard, type TrustCard } from '../services/trust.ts';
+} from "../services/app-contracts.ts";
+import { hasValidPageShareSession } from "../services/page-share-session.ts";
+import { fetchAppEntryCode } from "../services/app-runtime-resources.ts";
+import { buildAppTrustCard, type TrustCard } from "../services/trust.ts";
 import {
   buildMarketplaceListingSummary,
   type MarketplaceListingSummary,
   type MarketplaceListingSummaryListing,
-} from '../services/marketplace.ts';
-import { getBillingConfig, toPublicBillingConfig } from '../services/billing-config.ts';
+} from "../services/marketplace.ts";
+import {
+  getBillingConfig,
+  toPublicBillingConfig,
+} from "../services/billing-config.ts";
 import {
   createReferralClaimToken,
   recordReferralLanding,
   REFERRAL_VISITOR_COOKIE_MAX_AGE_SECONDS,
   REFERRAL_VISITOR_COOKIE_NAME,
   sha256Hex,
-} from '../services/referrals.ts';
+} from "../services/referrals.ts";
 import {
   isGpuSupportEnabled,
   sanitizeGpuTrustCard,
-} from '../services/gpu/feature-flag.ts';
-import { getEnv } from '../lib/env.ts';
-import { formatLight } from '../../shared/types/index.ts';
-import type { AppManifest } from '../../shared/contracts/manifest.ts';
+} from "../services/gpu/feature-flag.ts";
+import { getEnv } from "../lib/env.ts";
+import { formatLight } from "../../shared/types/index.ts";
+import type { AppManifest } from "../../shared/contracts/manifest.ts";
 
-function renderLayoutHTML(options: Parameters<typeof getLayoutHTML>[0]): string {
+function renderLayoutHTML(
+  options: Parameters<typeof getLayoutHTML>[0],
+): string {
   return getLayoutHTML({
     ...options,
     gpuSupportEnabled: isGpuSupportEnabled(),
@@ -90,8 +106,8 @@ function renderLayoutHTML(options: Parameters<typeof getLayoutHTML>[0]): string 
 function generateAppETag(
   app: { current_version?: string; updated_at?: string; storage_key: string },
 ): string {
-  const version = app.current_version || '0';
-  const updated = app.updated_at || '0';
+  const version = app.current_version || "0";
+  const updated = app.updated_at || "0";
   // Use a short hash of version + timestamp for the ETag
   let hash = 0;
   const str = `${version}:${updated}:${app.storage_key}`;
@@ -111,13 +127,13 @@ function checkConditionalRequest(
   request: Request,
   etag: string,
 ): Response | null {
-  const ifNoneMatch = request.headers.get('If-None-Match');
+  const ifNoneMatch = request.headers.get("If-None-Match");
   if (ifNoneMatch && (ifNoneMatch === etag || ifNoneMatch === `W/${etag}`)) {
     return new Response(null, {
       status: 304,
       headers: {
-        'ETag': etag,
-        'Cache-Control': 'public, max-age=3600',
+        "ETag": etag,
+        "Cache-Control": "public, max-age=3600",
       },
     });
   }
@@ -137,15 +153,15 @@ function addCacheHeaders(
   if (immutable) {
     return {
       ...headers,
-      'Cache-Control': 'public, max-age=31536000, immutable',
-      'ETag': etag,
+      "Cache-Control": "public, max-age=31536000, immutable",
+      "ETag": etag,
     };
   }
   return {
     ...headers,
-    'Cache-Control': 'public, max-age=3600',
-    'ETag': etag,
-    'Vary': 'Accept-Encoding',
+    "Cache-Control": "public, max-age=3600",
+    "ETag": etag,
+    "Vary": "Accept-Encoding",
   };
 }
 
@@ -157,212 +173,213 @@ export function createApp() {
       const method = request.method;
 
       // Developer portal subdomain routing
-      const host = request.headers.get('host') || '';
-      if (host.startsWith('dev.')) {
+      const host = request.headers.get("host") || "";
+      if (host.startsWith("dev.")) {
         return handleDeveloper(request);
       }
 
       // Developer portal on main domain path
-      if (path === '/developer' && method === 'GET') {
+      if (path === "/developer" && method === "GET") {
         return handleDeveloper(request);
       }
-      if (path.startsWith('/api/developer/')) {
+      if (path.startsWith("/api/developer/")) {
         return handleDeveloper(request);
       }
 
       // Detect embed mode (desktop app iframe)
-      const isEmbed = url.searchParams.get('embed') === '1';
+      const isEmbed = url.searchParams.get("embed") === "1";
 
       // Public homepage
-      if (path === '/' && method === 'GET') {
+      if (path === "/" && method === "GET") {
         return new Response(
-          renderLayoutHTML({ initialView: 'home', embed: isEmbed }),
+          renderLayoutHTML({ initialView: "home", embed: isEmbed }),
           {
             headers: {
-              'Content-Type': 'text/html',
-              'Cache-Control': 'no-store',
+              "Content-Type": "text/html",
+              "Cache-Control": "no-store",
             },
           },
         );
       }
 
       // Desktop app download page
-      if (path === '/download' && method === 'GET') {
+      if (path === "/download" && method === "GET") {
         return new Response(getDownloadPageHTML(), {
-          headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' },
+          headers: { "Content-Type": "text/html", "Cache-Control": "no-store" },
         });
       }
 
       // Desktop app binary download
-      if (path === '/download/macos' && method === 'GET') {
+      if (path === "/download/macos" && method === "GET") {
         try {
           const r2 = createR2Service();
           const dmgData = await r2.fetchFile(
-            'desktop/Ultralight_0.1.0_x64.dmg',
+            "desktop/Ultralight_0.1.0_x64.dmg",
           );
           return new Response(toResponseBody(dmgData), {
             headers: {
-              'Content-Type': 'application/x-apple-diskimage',
-              'Content-Disposition': 'attachment; filename="Ultralight_0.1.0_x64.dmg"',
-              'Content-Length': String(dmgData.byteLength),
+              "Content-Type": "application/x-apple-diskimage",
+              "Content-Disposition":
+                'attachment; filename="Ultralight_0.1.0_x64.dmg"',
+              "Content-Length": String(dmgData.byteLength),
             },
           });
         } catch {
           return new Response(
-            'Download unavailable. Build may not be uploaded yet.',
+            "Download unavailable. Build may not be uploaded yet.",
             { status: 404 },
           );
         }
       }
 
       // Desktop app binary upload (authenticated — used to push new builds)
-      if (path === '/download/upload' && method === 'PUT') {
+      if (path === "/download/upload" && method === "PUT") {
         try {
           // Validate API token
-          const authHeader = request.headers.get('Authorization');
-          if (!authHeader?.startsWith('Bearer ul_')) {
-            return new Response('Unauthorized', { status: 401 });
+          const authHeader = request.headers.get("Authorization");
+          if (!authHeader?.startsWith("Bearer ul_")) {
+            return new Response("Unauthorized", { status: 401 });
           }
-          const { validateToken } = await import('../services/tokens.ts');
+          const { validateToken } = await import("../services/tokens.ts");
           const validated = await validateToken(authHeader.slice(7));
-          if (!validated) return new Response('Invalid token', { status: 401 });
+          if (!validated) return new Response("Invalid token", { status: 401 });
 
           const body = new Uint8Array(await request.arrayBuffer());
-          if (body.length === 0) return error('Empty body');
+          if (body.length === 0) return error("Empty body");
           if (body.length > 50 * 1024 * 1024) {
-            return error('File too large (max 50MB)');
+            return error("File too large (max 50MB)");
           }
 
           const r2 = createR2Service();
-          await r2.uploadFile('desktop/Ultralight_0.1.0_x64.dmg', {
-            name: 'Ultralight_0.1.0_x64.dmg',
+          await r2.uploadFile("desktop/Ultralight_0.1.0_x64.dmg", {
+            name: "Ultralight_0.1.0_x64.dmg",
             content: body,
-            contentType: 'application/x-apple-diskimage',
+            contentType: "application/x-apple-diskimage",
           });
           return json({
             success: true,
             size: body.length,
-            key: 'desktop/Ultralight_0.1.0_x64.dmg',
+            key: "desktop/Ultralight_0.1.0_x64.dmg",
           });
         } catch (e) {
-          return error(e instanceof Error ? e.message : 'Upload failed', 500);
+          return error(e instanceof Error ? e.message : "Upload failed", 500);
         }
       }
 
       // Capabilities (unified Library + Marketplace)
-      if (path === '/capabilities' && method === 'GET') {
+      if (path === "/capabilities" && method === "GET") {
         return new Response(
           renderLayoutHTML({
-            initialView: 'dashboard',
+            initialView: "dashboard",
             embed: isEmbed,
-            dashSection: 'capabilities',
+            dashSection: "capabilities",
           }),
           {
             headers: {
-              'Content-Type': 'text/html',
-              'Cache-Control': 'no-store',
+              "Content-Type": "text/html",
+              "Cache-Control": "no-store",
             },
           },
         );
       }
 
       // Dashboard — backward compat, maps to capabilities
-      if (path === '/dash' && method === 'GET') {
+      if (path === "/dash" && method === "GET") {
         return new Response(
           renderLayoutHTML({
-            initialView: 'dashboard',
+            initialView: "dashboard",
             embed: isEmbed,
-            dashSection: 'capabilities',
+            dashSection: "capabilities",
           }),
           {
             headers: {
-              'Content-Type': 'text/html',
-              'Cache-Control': 'no-store',
+              "Content-Type": "text/html",
+              "Cache-Control": "no-store",
             },
           },
         );
       }
 
       // Wallet — canonical payment portal shared by web and desktop embeds.
-      if (path === '/wallet' && method === 'GET') {
+      if (path === "/wallet" && method === "GET") {
         return new Response(
           renderLayoutHTML({
-            initialView: 'dashboard',
+            initialView: "dashboard",
             embed: isEmbed,
-            dashSection: 'billing',
+            dashSection: "billing",
           }),
           {
             headers: {
-              'Content-Type': 'text/html',
-              'Cache-Control': 'no-store',
+              "Content-Type": "text/html",
+              "Cache-Control": "no-store",
             },
           },
         );
       }
 
       // Terms and payment policy hooks used by funding, payout, and fee-waiver flows.
-      if (path === '/terms' && method === 'GET') {
+      if (path === "/terms" && method === "GET") {
         return new Response(await renderTermsHTML(), {
           headers: {
-            'Content-Type': 'text/html; charset=utf-8',
-            'Cache-Control': 'no-store',
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store",
           },
         });
       }
 
       // Settings page (account settings) — supports /settings, /settings/tokens, /settings/billing, /settings/supabase
       if (
-        (path === '/settings' || path.startsWith('/settings/')) &&
-        method === 'GET'
+        (path === "/settings" || path.startsWith("/settings/")) &&
+        method === "GET"
       ) {
-        const settingsSub = path.split('/settings/')[1] || 'keys';
-        const section = settingsSub === 'billing'
-          ? 'billing'
-          : settingsSub === 'tokens'
-          ? 'keys'
+        const settingsSub = path.split("/settings/")[1] || "keys";
+        const section = settingsSub === "billing"
+          ? "billing"
+          : settingsSub === "tokens"
+          ? "keys"
           : settingsSub;
         return new Response(
           renderLayoutHTML({
-            initialView: 'dashboard',
+            initialView: "dashboard",
             embed: isEmbed,
             dashSection: section,
           }),
           {
             headers: {
-              'Content-Type': 'text/html',
-              'Cache-Control': 'no-store',
+              "Content-Type": "text/html",
+              "Cache-Control": "no-store",
             },
           },
         );
       }
 
       // Marketplace — backward compat, maps to capabilities
-      if (path === '/marketplace' && method === 'GET') {
+      if (path === "/marketplace" && method === "GET") {
         return new Response(
           renderLayoutHTML({
-            initialView: 'dashboard',
+            initialView: "dashboard",
             embed: isEmbed,
-            dashSection: 'capabilities',
+            dashSection: "capabilities",
           }),
           {
             headers: {
-              'Content-Type': 'text/html',
-              'Cache-Control': 'no-store',
+              "Content-Type": "text/html",
+              "Cache-Control": "no-store",
             },
           },
         );
       }
 
       // Public user profile
-      if (path.startsWith('/u/') && method === 'GET') {
+      if (path.startsWith("/u/") && method === "GET") {
         const slug = path.slice(3);
         if (slug) {
           return new Response(
-            renderLayoutHTML({ initialView: 'profile', profileSlug: slug }),
+            renderLayoutHTML({ initialView: "profile", profileSlug: slug }),
             {
               headers: {
-                'Content-Type': 'text/html',
-                'Cache-Control': 'no-store',
+                "Content-Type": "text/html",
+                "Cache-Control": "no-store",
               },
             },
           );
@@ -370,84 +387,84 @@ export function createApp() {
       }
 
       // My profile (authenticated)
-      if (path === '/my-profile' && method === 'GET') {
+      if (path === "/my-profile" && method === "GET") {
         return new Response(
-          renderLayoutHTML({ initialView: 'profile', embed: isEmbed }),
+          renderLayoutHTML({ initialView: "profile", embed: isEmbed }),
           {
             headers: {
-              'Content-Type': 'text/html',
-              'Cache-Control': 'no-store',
+              "Content-Type": "text/html",
+              "Cache-Control": "no-store",
             },
           },
         );
       }
 
       // Gaps board & Leaderboard → redirect to capabilities
-      if ((path === '/gaps' || path === '/leaderboard') && method === 'GET') {
+      if ((path === "/gaps" || path === "/leaderboard") && method === "GET") {
         return new Response(null, {
           status: 302,
-          headers: { 'Location': '/capabilities' },
+          headers: { "Location": "/capabilities" },
         });
       }
 
       // Health check - includes deploy timestamp and cache stats
-      if (path === '/health') {
+      if (path === "/health") {
         const cacheStats = getCodeCache().stats;
         return json({
-          status: 'ok',
-          version: '0.2.3',
+          status: "ok",
+          version: "0.2.3",
           deployed: new Date().toISOString(),
           cache: cacheStats,
         });
       }
 
       // Legacy /upload redirects to home
-      if (path === '/upload' && method === 'GET') {
+      if (path === "/upload" && method === "GET") {
         return new Response(null, {
           status: 302,
-          headers: { 'Location': '/' },
+          headers: { "Location": "/" },
         });
       }
 
       // OAuth 2.1 routes for MCP spec compliance
       // Protected Resource Metadata + Authorization Server Metadata + OAuth endpoints
       if (
-        path === '/.well-known/oauth-protected-resource' ||
-        path === '/.well-known/oauth-authorization-server' ||
-        path.startsWith('/oauth/')
+        path === "/.well-known/oauth-protected-resource" ||
+        path === "/.well-known/oauth-authorization-server" ||
+        path.startsWith("/oauth/")
       ) {
         return handleOAuth(request);
       }
 
       // Auth routes
-      if (path.startsWith('/auth')) {
+      if (path.startsWith("/auth")) {
         return handleAuth(request);
       }
 
       // Upload route
-      if (path === '/api/upload' && method === 'POST') {
+      if (path === "/api/upload" && method === "POST") {
         return handleUpload(request);
       }
 
       // Temporary IMAP test endpoint
-      if (path === '/api/imap-test' && method === 'POST') {
+      if (path === "/api/imap-test" && method === "POST") {
         try {
-          const { authenticate } = await import('./auth.ts');
+          const { authenticate } = await import("./auth.ts");
           await authenticate(request);
           const body = await request.json() as Record<string, unknown>;
-          const { connect } = await import('cloudflare:sockets');
+          const { connect } = await import("cloudflare:sockets");
           const socket = connect(
             { hostname: body.host as string, port: body.port as number },
-            { secureTransport: 'on', allowHalfOpen: false },
+            { secureTransport: "on", allowHalfOpen: false },
           );
           const reader = socket.readable.getReader();
           const writer = socket.writable.getWriter();
           const d = new TextDecoder();
           const e = new TextEncoder();
-          let buf = '';
+          let buf = "";
           async function rl(): Promise<string> {
             while (true) {
-              const idx = buf.indexOf('\r\n');
+              const idx = buf.indexOf("\r\n");
               if (idx >= 0) {
                 const l = buf.substring(0, idx);
                 buf = buf.substring(idx + 2);
@@ -473,13 +490,13 @@ export function createApp() {
             c: string,
           ): Promise<{ lines: string[]; ok: boolean }> {
             tagN++;
-            const tag = 'A' + String(tagN).padStart(4, '0');
-            await writer.write(e.encode(tag + ' ' + c + '\r\n'));
+            const tag = "A" + String(tagN).padStart(4, "0");
+            await writer.write(e.encode(tag + " " + c + "\r\n"));
             const lines: string[] = [];
             while (true) {
               const line = await rl();
-              if (line.startsWith(tag + ' ')) {
-                return { lines, ok: line.includes(tag + ' OK') };
+              if (line.startsWith(tag + " ")) {
+                return { lines, ok: line.includes(tag + " OK") };
               }
               lines.push(line);
             }
@@ -489,20 +506,20 @@ export function createApp() {
             'LOGIN "' + (body.user as string) + '" "' + (body.pass as string) +
               '"',
           );
-          const sel = await cmd('SELECT INBOX');
-          const search = await cmd('UID SEARCH UNSEEN');
-          const uidLine = search.lines.find((l) => l.startsWith('* SEARCH'));
+          const sel = await cmd("SELECT INBOX");
+          const search = await cmd("UID SEARCH UNSEEN");
+          const uidLine = search.lines.find((l) => l.startsWith("* SEARCH"));
           const uids = uidLine
-            ? uidLine.replace('* SEARCH', '').trim().split(/\s+/).map(Number)
+            ? uidLine.replace("* SEARCH", "").trim().split(/\s+/).map(Number)
               .filter((n) => n > 0)
             : [];
           let fetchResult: any = null;
           if (uids.length > 0) {
             fetchResult = await cmd(
-              'UID FETCH ' + uids[0] + ' (BODY.PEEK[] FLAGS)',
+              "UID FETCH " + uids[0] + " (BODY.PEEK[] FLAGS)",
             );
           }
-          await cmd('LOGOUT');
+          await cmd("LOGOUT");
           reader.releaseLock();
           try {
             writer.releaseLock();
@@ -524,31 +541,31 @@ export function createApp() {
               null,
               2,
             ),
-            { headers: { 'Content-Type': 'application/json' } },
+            { headers: { "Content-Type": "application/json" } },
           );
         } catch (e2: unknown) {
           return new Response(
             JSON.stringify({
               error: e2 instanceof Error ? e2.message : String(e2),
             }),
-            { status: 500, headers: { 'Content-Type': 'application/json' } },
+            { status: 500, headers: { "Content-Type": "application/json" } },
           );
         }
       }
 
       // Internal TCP protocol endpoints — called by Dynamic Worker sandbox via fetch()
       // Auth: X-Worker-Secret header (service-to-service, not user-facing)
-      if (path === '/api/net/imap-fetch' && method === 'POST') {
-        const secret = request.headers.get('X-Worker-Secret');
-        if (!secret || secret !== getEnv('WORKER_SECRET')) {
-          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      if (path === "/api/net/imap-fetch" && method === "POST") {
+        const secret = request.headers.get("X-Worker-Secret");
+        if (!secret || secret !== getEnv("WORKER_SECRET")) {
+          return new Response(JSON.stringify({ error: "Unauthorized" }), {
             status: 403,
-            headers: { 'Content-Type': 'application/json' },
+            headers: { "Content-Type": "application/json" },
           });
         }
         try {
           const { imapFetchUnseen } = await import(
-            '../services/tcp-protocols.ts'
+            "../services/tcp-protocols.ts"
           );
           const body = await request.json() as Record<string, unknown>;
           const result = await imapFetchUnseen(
@@ -557,33 +574,33 @@ export function createApp() {
             body.user as string,
             body.pass as string,
             (body.lastUid as number) || 0,
-            (body.businessEmail as string) || '',
-            (body.processedFlag as string) || '$ULProcessed',
+            (body.businessEmail as string) || "",
+            (body.processedFlag as string) || "$ULProcessed",
             (body.limit as number) || 20,
           );
           return new Response(JSON.stringify(result), {
-            headers: { 'Content-Type': 'application/json' },
+            headers: { "Content-Type": "application/json" },
           });
         } catch (e: unknown) {
           return new Response(
             JSON.stringify({
               error: e instanceof Error ? e.message : String(e),
             }),
-            { status: 500, headers: { 'Content-Type': 'application/json' } },
+            { status: 500, headers: { "Content-Type": "application/json" } },
           );
         }
       }
 
-      if (path === '/api/net/smtp-send' && method === 'POST') {
-        const secret = request.headers.get('X-Worker-Secret');
-        if (!secret || secret !== getEnv('WORKER_SECRET')) {
-          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      if (path === "/api/net/smtp-send" && method === "POST") {
+        const secret = request.headers.get("X-Worker-Secret");
+        if (!secret || secret !== getEnv("WORKER_SECRET")) {
+          return new Response(JSON.stringify({ error: "Unauthorized" }), {
             status: 403,
-            headers: { 'Content-Type': 'application/json' },
+            headers: { "Content-Type": "application/json" },
           });
         }
         try {
-          const { smtpSend } = await import('../services/tcp-protocols.ts');
+          const { smtpSend } = await import("../services/tcp-protocols.ts");
           const body = await request.json() as Record<string, unknown>;
           const result = await smtpSend(
             body.host as string,
@@ -591,175 +608,200 @@ export function createApp() {
             body.user as string,
             body.pass as string,
             body.from as string,
-            (body.fromName as string) || '',
+            (body.fromName as string) || "",
             body.to as string,
             body.subject as string,
             body.body as string,
             body.inReplyTo as string | undefined,
           );
           return new Response(JSON.stringify(result), {
-            headers: { 'Content-Type': 'application/json' },
+            headers: { "Content-Type": "application/json" },
           });
         } catch (e: unknown) {
           return new Response(
             JSON.stringify({
               error: e instanceof Error ? e.message : String(e),
             }),
-            { status: 500, headers: { 'Content-Type': 'application/json' } },
+            { status: 500, headers: { "Content-Type": "application/json" } },
           );
         }
       }
 
       // Run route
-      if (path.startsWith('/api/run/') && method === 'POST') {
-        const appId = path.replace('/api/run/', '');
+      if (path.startsWith("/api/run/") && method === "POST") {
+        const appId = path.replace("/api/run/", "");
         return handleRun(request, appId);
       }
 
       // Homepage data API — public, returns gaps + leaderboard + top apps
-      if (path === '/api/homepage' && method === 'GET') {
+      if (path === "/api/homepage" && method === "GET") {
         return handleHomepageApi(request);
       }
 
       // Public billing economics used by wallet/payment UI copy.
-      if (path === '/api/billing/config' && method === 'GET') {
+      if (path === "/api/billing/config" && method === "GET") {
         return json(toPublicBillingConfig(await getBillingConfig()));
       }
 
       // Stripe webhook route — unauthenticated, verified by signature
-      if (path === '/api/webhooks/stripe' && method === 'POST') {
+      if (path === "/api/webhooks/stripe" && method === "POST") {
         return handleUser(request);
       }
 
       // Marketplace API routes — authenticated bid/ask/accept endpoints
-      if (path.startsWith('/api/marketplace')) {
+      if (path.startsWith("/api/marketplace")) {
         return handleUser(request);
       }
 
       // User API routes - handle all /api/user/* paths (must be before /api/apps)
-      if (path.startsWith('/api/user')) {
+      if (path.startsWith("/api/user")) {
         return handleUser(request);
       }
 
       // Apps API routes - handle all /api/apps/* paths
-      if (path.startsWith('/api/apps')) {
+      if (path.startsWith("/api/apps")) {
         return handleApps(request);
       }
 
       // Tier change route (service-to-service, secured by secret)
-      if (path === '/api/tier/change' && method === 'POST') {
+      if (path === "/api/tier/change" && method === "POST") {
         return handleTierChange(request);
       }
 
       // Admin routes (service-to-service, secured by service-role key)
-      if (path.startsWith('/api/admin')) {
+      if (path.startsWith("/api/admin")) {
         return handleAdmin(request);
       }
 
       // MCP config generator - ready-to-paste client configs
-      if (path.startsWith('/api/mcp-config/') && method === 'GET') {
-        const appId = path.slice('/api/mcp-config/'.length).split('/')[0];
+      if (path.startsWith("/api/mcp-config/") && method === "GET") {
+        const appId = path.slice("/api/mcp-config/".length).split("/")[0];
         return handleMcpConfig(request, appId);
       }
 
       // Platform Skills.md — plain HTTP access for any agent
-      if (path === '/api/skills' && method === 'GET') {
+      if (path === "/api/skills" && method === "GET") {
         return handleSkills(request);
       }
 
       // GPU code proxy — serves developer code bundles to RunPod workers
       // Authenticated via shared secret (machine-to-machine, no user auth)
-      if (path.startsWith('/internal/gpu/code/') && method === 'GET') {
+      if (path.startsWith("/internal/gpu/code/") && method === "GET") {
         return handleGpuCodeProxy(request, path);
       }
 
       // GPU image build context/callback — used by GitHub Actions build workers.
-      if (path.startsWith('/internal/gpu/build-context/') && method === 'GET') {
+      if (path.startsWith("/internal/gpu/build-context/") && method === "GET") {
         return handleGpuBuildContextProxy(request, path);
       }
 
-      if (path === '/internal/gpu/build-callback' && method === 'POST') {
+      if (path === "/internal/gpu/build-callback" && method === "POST") {
         return handleGpuBuildCallback(request);
       }
 
       // D1 query proxy — allows GPU workers to execute D1 queries via the API server
       // Authenticated via shared secret (same as GPU code proxy)
-      if (path === '/internal/d1/query' && method === 'POST') {
+      if (path === "/internal/d1/query" && method === "POST") {
         return handleInternalD1Query(request);
       }
 
       // Chat stream endpoint — routed inference with SSE streaming.
       // Also serves /v1/chat/completions for OpenAI-compatible clients
       if (
-        (path === '/chat/stream' || path === '/v1/chat/completions') &&
-        method === 'POST'
+        (path === "/chat/stream" || path === "/v1/chat/completions") &&
+        method === "POST"
       ) {
         return handleChatStream(request);
       }
 
       // Chat models endpoint — available model list for model picker
-      if (path === '/chat/models' && method === 'GET') {
+      if (path === "/chat/models" && method === "GET") {
         return handleChatModels(request);
       }
 
-      if (path === '/chat/inference-options' && method === 'GET') {
+      if (path === "/chat/inference-options" && method === "GET") {
         return handleChatInferenceOptions(request);
       }
 
       // Function index — per-user typed function list for codemode
-      if (path === '/chat/function-index' && method === 'GET') {
+      if (path === "/chat/function-index" && method === "GET") {
         return handleFunctionIndex(request);
       }
 
       // Context resolver — per-request entity + function resolution
-      if (path === '/chat/context' && method === 'POST') {
+      if (path === "/chat/context" && method === "POST") {
         return handleChatContext(request);
       }
 
       // Tool invocation telemetry — desktop local tool calls send full args/results here.
-      if (path === '/chat/tool-invocation' && method === 'POST') {
+      if (path === "/chat/tool-invocation" && method === "POST") {
         return handleToolInvocationTelemetry(request);
       }
 
       // Ambient capability suggestion telemetry — shown/viewed/accepted/dismissed lifecycle.
-      if (path === '/chat/capability-suggestion-event' && method === 'POST') {
+      if (path === "/chat/capability-suggestion-event" && method === "POST") {
         return handleCapabilitySuggestionEventTelemetry(request);
       }
 
+      if (path === "/chat/suggestions/preview" && method === "POST") {
+        return handleSuggestionPreviewBatch(request);
+      }
+
+      const suggestionAcceptMatch = path.match(
+        /^\/chat\/suggestions\/([a-f0-9-]{36})\/accept$/,
+      );
+      if (suggestionAcceptMatch && method === "POST") {
+        return handleSuggestionAccept(request, suggestionAcceptMatch[1]);
+      }
+
+      const suggestionPreviewMatch = path.match(
+        /^\/chat\/suggestions\/([a-f0-9-]{36})\/preview$/,
+      );
+      if (suggestionPreviewMatch && method === "GET") {
+        return handleSuggestionPreview(request, suggestionPreviewMatch[1]);
+      }
+
       // Server-side orchestration — Flash broker + heavy model + recipe execution
-      if (path === '/chat/orchestrate' && method === 'POST') {
+      if (path === "/chat/orchestrate" && method === "POST") {
         return handleOrchestrate(request);
+      }
+
+      const turnRouteMatch = path.match(
+        /^\/chat\/turn\/([a-f0-9-]{36})\/cancel$/,
+      );
+      if (turnRouteMatch && method === "POST") {
+        return handleTurnCancel(request, turnRouteMatch[1]);
       }
 
       const planRouteMatch = path.match(
         /^\/chat\/plan\/([a-f0-9-]{36})\/(confirm|cancel)$/,
       );
-      if (planRouteMatch && method === 'POST') {
+      if (planRouteMatch && method === "POST") {
         const [, planId, action] = planRouteMatch;
-        if (action === 'confirm') {
+        if (action === "confirm") {
           return handlePlanConfirm(request, planId);
         }
         return handlePlanCancel(request, planId);
       }
 
       // Pre-provision per-user OpenRouter key (called on login, before first chat)
-      if (path === '/chat/provision-key' && method === 'POST') {
+      if (path === "/chat/provision-key" && method === "POST") {
         return handleProvisionKey(request);
       }
 
       // Debug: auth test endpoint — step-by-step token validation with diagnostic output
-      if (path === '/debug/auth-test' && method === 'GET') {
-        const authHeader = request.headers.get('Authorization');
+      if (path === "/debug/auth-test" && method === "GET") {
+        const authHeader = request.headers.get("Authorization");
         const steps: { step: string; result: string; ok: boolean }[] = [];
 
-        if (!authHeader?.startsWith('Bearer ')) {
+        if (!authHeader?.startsWith("Bearer ")) {
           return json({
             ok: false,
-            error: 'Missing or invalid authorization header',
+            error: "Missing or invalid authorization header",
             steps: [{
-              step: 'header',
+              step: "header",
               result: `Authorization header: ${
-                authHeader ? 'present but wrong format' : 'missing'
+                authHeader ? "present but wrong format" : "missing"
               }`,
               ok: false,
             }],
@@ -768,24 +810,26 @@ export function createApp() {
 
         const token = authHeader.slice(7);
         steps.push({
-          step: 'header',
+          step: "header",
           result: `Bearer token extracted (${token.length} chars)`,
           ok: true,
         });
 
         // Check format
-        const hasPrefix = token.startsWith('ul_');
+        const hasPrefix = token.startsWith("ul_");
         steps.push({
-          step: 'prefix',
-          result: `Starts with "ul_": ${hasPrefix} (got "${token.substring(0, 4)}")`,
+          step: "prefix",
+          result: `Starts with "ul_": ${hasPrefix} (got "${
+            token.substring(0, 4)
+          }")`,
           ok: hasPrefix,
         });
         if (!hasPrefix) {
-          return json({ ok: false, error: 'Not a ul_ token', steps }, 401);
+          return json({ ok: false, error: "Not a ul_ token", steps }, 401);
         }
 
         steps.push({
-          step: 'length',
+          step: "length",
           result: `Token length: ${token.length} (expected 35)`,
           ok: token.length === 35,
         });
@@ -799,53 +843,53 @@ export function createApp() {
 
         const tokenPrefix = token.substring(0, 8);
         steps.push({
-          step: 'prefix_extract',
+          step: "prefix_extract",
           result: `Token prefix for DB lookup: "${tokenPrefix}"`,
           ok: true,
         });
 
         // Direct DB lookup to show what's happening
-        const { createClient } = await import('@supabase/supabase-js');
+        const { createClient } = await import("@supabase/supabase-js");
         const supabase = createClient(
-          getEnv('SUPABASE_URL'),
-          getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+          getEnv("SUPABASE_URL"),
+          getEnv("SUPABASE_SERVICE_ROLE_KEY"),
         );
 
         const { data: tokenRow, error: dbErr } = await supabase
-          .from('user_api_tokens')
-          .select('id, user_id, token_salt, expires_at, scopes, created_at')
-          .eq('token_prefix', tokenPrefix)
+          .from("user_api_tokens")
+          .select("id, user_id, token_salt, expires_at, scopes, created_at")
+          .eq("token_prefix", tokenPrefix)
           .single();
 
         if (dbErr || !tokenRow) {
           steps.push({
-            step: 'db_lookup',
+            step: "db_lookup",
             result: `No token found with prefix "${tokenPrefix}" — ${
-              dbErr?.message || 'no rows returned'
-            } (code: ${dbErr?.code || 'n/a'})`,
+              dbErr?.message || "no rows returned"
+            } (code: ${dbErr?.code || "n/a"})`,
             ok: false,
           });
 
           // Also check how many tokens exist total (sanity check)
-          const { count } = await supabase.from('user_api_tokens').select(
-            'id',
-            { count: 'exact', head: true },
+          const { count } = await supabase.from("user_api_tokens").select(
+            "id",
+            { count: "exact", head: true },
           );
           steps.push({
-            step: 'db_count',
-            result: `Total tokens in DB: ${count ?? 'unknown'}`,
+            step: "db_count",
+            result: `Total tokens in DB: ${count ?? "unknown"}`,
             ok: true,
           });
 
           return json({
             ok: false,
-            error: 'Token not found in database',
+            error: "Token not found in database",
             steps,
           }, 401);
         }
 
         steps.push({
-          step: 'db_lookup',
+          step: "db_lookup",
           result:
             `Token found — id: ${tokenRow.id}, user_id: ${tokenRow.user_id}, created: ${tokenRow.created_at}, has_salt: ${!!tokenRow
               .token_salt}`,
@@ -854,35 +898,35 @@ export function createApp() {
 
         // Check user exists
         const { data: userRow, error: userErr } = await supabase
-          .from('users')
-          .select('id, email, tier, provisional')
-          .eq('id', tokenRow.user_id)
+          .from("users")
+          .select("id, email, tier, provisional")
+          .eq("id", tokenRow.user_id)
           .single();
 
         if (userErr || !userRow) {
           steps.push({
-            step: 'user_lookup',
+            step: "user_lookup",
             result: `User not found for user_id: ${tokenRow.user_id} — ${
-              userErr?.message || 'no user'
+              userErr?.message || "no user"
             }`,
             ok: false,
           });
-          return json({ ok: false, error: 'User not found', steps }, 401);
+          return json({ ok: false, error: "User not found", steps }, 401);
         }
 
         steps.push({
-          step: 'user_lookup',
+          step: "user_lookup",
           result:
             `User found — email: ${userRow.email}, tier: ${userRow.tier}, provisional: ${userRow.provisional}`,
           ok: true,
         });
 
         // Now try full auth
-        const { authenticate } = await import('./auth.ts');
+        const { authenticate } = await import("./auth.ts");
         try {
           const user = await authenticate(request);
           steps.push({
-            step: 'full_auth',
+            step: "full_auth",
             result: `Auth SUCCESS — ${user.email}, tier: ${user.tier}`,
             ok: true,
           });
@@ -898,30 +942,32 @@ export function createApp() {
           });
         } catch (err) {
           steps.push({
-            step: 'full_auth',
-            result: `Auth FAILED — ${err instanceof Error ? err.message : 'unknown'}`,
+            step: "full_auth",
+            result: `Auth FAILED — ${
+              err instanceof Error ? err.message : "unknown"
+            }`,
             ok: false,
           });
           return json({
             ok: false,
-            error: err instanceof Error ? err.message : 'Unknown error',
+            error: err instanceof Error ? err.message : "Unknown error",
             steps,
           }, 401);
         }
       }
 
       // Debug route for crediting the authenticated user with test balance.
-      if (path === '/debug/add-credits' && method === 'POST') {
-        const { authenticate } = await import('./auth.ts');
+      if (path === "/debug/add-credits" && method === "POST") {
+        const { authenticate } = await import("./auth.ts");
         try {
           const user = await authenticate(request);
-          const { createClient } = await import('@supabase/supabase-js');
+          const { createClient } = await import("@supabase/supabase-js");
           const supabase = createClient(
-            getEnv('SUPABASE_URL'),
-            getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+            getEnv("SUPABASE_URL"),
+            getEnv("SUPABASE_SERVICE_ROLE_KEY"),
           );
           // Add ✦4,000 Light as spend-only developer credit.
-          const { error: dbErr } = await supabase.rpc('credit_balance', {
+          const { error: dbErr } = await supabase.rpc("credit_balance", {
             p_user_id: user.id,
             p_amount_light: 4000,
           });
@@ -929,62 +975,68 @@ export function createApp() {
             throw dbErr;
           }
           // Check new balance
-          const { data: userData } = await supabase.from('users').select(
-            'balance_light',
-          ).eq('id', user.id).single();
+          const { data: userData } = await supabase.from("users").select(
+            "balance_light",
+          ).eq("id", user.id).single();
           return json({
             ok: true,
-            message: 'Added ✦4,000 dev credits',
-            balance_light: userData?.balance_light ?? 'unknown',
+            message: "Added ✦4,000 dev credits",
+            balance_light: userData?.balance_light ?? "unknown",
           });
         } catch (err) {
           return json({
             ok: false,
-            error: err instanceof Error ? err.message : 'failed',
+            error: err instanceof Error ? err.message : "failed",
           }, 401);
         }
       }
 
       // Debug: chat preflight — checks auth, balance, platform inference keys, and route resolution without making a request
-      if (path === '/debug/chat-preflight' && method === 'GET') {
-        const checks: { check: string; result: string; ok: boolean; severity?: string }[] = [];
+      if (path === "/debug/chat-preflight" && method === "GET") {
+        const checks: {
+          check: string;
+          result: string;
+          ok: boolean;
+          severity?: string;
+        }[] = [];
         const { ULTRALIGHT_DEEPSEEK_V4_FLASH_MODEL } = await import(
-          '../services/platform-inference-models.ts'
+          "../services/platform-inference-models.ts"
         );
-        const requestedModel = new URL(request.url).searchParams.get('model')?.trim() ||
+        const requestedModel =
+          new URL(request.url).searchParams.get("model")?.trim() ||
           ULTRALIGHT_DEEPSEEK_V4_FLASH_MODEL;
 
         // 1. Auth
-        const { authenticate } = await import('./auth.ts');
-        let userEmail = '';
+        const { authenticate } = await import("./auth.ts");
+        let userEmail = "";
         let userId: string | null = null;
         try {
           const user = await authenticate(request);
           userId = user.id;
           userEmail = user.email;
           checks.push({
-            check: 'auth',
+            check: "auth",
             result: `${user.email}, tier: ${user.tier}`,
             ok: true,
           });
 
           if (user.provisional) {
             checks.push({
-              check: 'provisional',
-              result: 'Provisional users cannot use chat',
+              check: "provisional",
+              result: "Provisional users cannot use chat",
               ok: false,
             });
             return json({ ok: false, checks });
           }
           checks.push({
-            check: 'provisional',
-            result: 'Not provisional',
+            check: "provisional",
+            result: "Not provisional",
             ok: true,
           });
         } catch (err) {
           checks.push({
-            check: 'auth',
-            result: err instanceof Error ? err.message : 'failed',
+            check: "auth",
+            result: err instanceof Error ? err.message : "failed",
             ok: false,
           });
           return json({ ok: false, checks }, 401);
@@ -992,59 +1044,61 @@ export function createApp() {
 
         // 2. Balance
         const { checkChatBalance } = await import(
-          '../services/chat-billing.ts'
+          "../services/chat-billing.ts"
         );
         const { CHAT_MIN_BALANCE_LIGHT: minBalance } = await import(
-          '../../shared/contracts/ai.ts'
+          "../../shared/contracts/ai.ts"
         );
         try {
           const balance = await checkChatBalance(userId!);
           const ok = balance >= minBalance;
           checks.push({
-            check: 'balance',
+            check: "balance",
             result: `✦${balance} (min: ✦${minBalance})`,
             ok,
           });
         } catch (err) {
           checks.push({
-            check: 'balance',
-            result: `Failed: ${err instanceof Error ? err.message : 'unknown'}`,
+            check: "balance",
+            result: `Failed: ${err instanceof Error ? err.message : "unknown"}`,
             ok: false,
           });
         }
 
         // 3. Platform inference secrets
         const { buildPlatformInferenceReadiness } = await import(
-          '../services/platform-inference-diagnostics.ts'
+          "../services/platform-inference-diagnostics.ts"
         );
         const readiness = buildPlatformInferenceReadiness();
         checks.push(...readiness.checks);
 
         // 4. Model ID validation + route resolution
-        const { isValidModelId } = await import('../services/model-validation.ts');
+        const { isValidModelId } = await import(
+          "../services/model-validation.ts"
+        );
         let routeSummary: Record<string, unknown> | null = null;
         if (!isValidModelId(requestedModel)) {
           checks.push({
-            check: 'requested_model',
+            check: "requested_model",
             result: `Invalid model id: ${requestedModel}`,
             ok: false,
-            severity: 'required',
+            severity: "required",
           });
         } else {
           checks.push({
-            check: 'requested_model',
+            check: "requested_model",
             result: requestedModel,
             ok: true,
           });
           const { InferenceRouteError, resolveInferenceRoute } = await import(
-            '../services/inference-route.ts'
+            "../services/inference-route.ts"
           );
           try {
             const route = await resolveInferenceRoute({
               userId: userId!,
               userEmail,
               requestedModel,
-              selection: { billingMode: 'light', model: requestedModel },
+              selection: { billingMode: "light", model: requestedModel },
             });
             routeSummary = {
               provider: route.provider,
@@ -1056,83 +1110,88 @@ export function createApp() {
               should_debit_light: route.shouldDebitLight,
             };
             checks.push({
-              check: 'inference_route',
+              check: "inference_route",
               result:
                 `${route.provider} → ${route.upstreamProvider}/${route.model} (${route.keySource})`,
               ok: true,
             });
 
-            if (route.upstreamProvider === 'openrouter') {
+            if (route.upstreamProvider === "openrouter") {
               const { getStoredOpenRouterKey } = await import(
-                '../services/openrouter-keys.ts'
+                "../services/openrouter-keys.ts"
               );
               const userOrKey = await getStoredOpenRouterKey(userId!);
               checks.push({
-                check: 'user_openrouter_key',
+                check: "user_openrouter_key",
                 result: userOrKey
-                  ? 'Provisioned'
-                  : 'Not yet created (will be provisioned on first OpenRouter Light chat)',
+                  ? "Provisioned"
+                  : "Not yet created (will be provisioned on first OpenRouter Light chat)",
                 ok: true,
               });
             }
           } catch (err) {
             checks.push({
-              check: 'inference_route',
+              check: "inference_route",
               result: err instanceof InferenceRouteError
                 ? `${err.code}: ${err.message}`
                 : err instanceof Error
                 ? err.message
-                : 'Route resolution failed',
+                : "Route resolution failed",
               ok: false,
-              severity: 'required',
+              severity: "required",
             });
           }
         }
 
         const allOk = checks.every((c) => c.ok);
-        return json({ ok: allOk, model: requestedModel, route: routeSummary, checks });
+        return json({
+          ok: allOk,
+          model: requestedModel,
+          route: routeSummary,
+          checks,
+        });
       }
 
       // Onboarding instructions template (must be before /api/discover catch-all)
-      if (path === '/api/onboarding/instructions' && method === 'GET') {
+      if (path === "/api/onboarding/instructions" && method === "GET") {
         return handleOnboarding(request);
       }
 
       // Discovery API routes - semantic search for apps
-      if (path.startsWith('/api/discover')) {
+      if (path.startsWith("/api/discover")) {
         return handleDiscover(request);
       }
 
       // Platform MCP well-known discovery
-      if (path === '/.well-known/mcp.json' && method === 'GET') {
+      if (path === "/.well-known/mcp.json" && method === "GET") {
         return handlePlatformMcpDiscovery();
       }
 
       // Platform MCP routes - POST /mcp/platform for JSON-RPC
-      if (path === '/mcp/platform') {
+      if (path === "/mcp/platform") {
         return handlePlatformMcp(request);
       }
 
       // App-specific MCP routes - POST /mcp/:appId for JSON-RPC
-      if (path.startsWith('/mcp/')) {
+      if (path.startsWith("/mcp/")) {
         const appId = path.slice(5); // Remove '/mcp/'
         return handleMcp(request, appId);
       }
 
       // HTTP endpoints - /http/:appId/:functionName/* - direct HTTP access to app functions
       // Enables webhooks, public APIs, mobile app backends, etc.
-      if (path.startsWith('/http/')) {
-        const pathParts = path.slice(6).split('/'); // Remove '/http/'
+      if (path.startsWith("/http/")) {
+        const pathParts = path.slice(6).split("/"); // Remove '/http/'
         const appId = pathParts[0];
-        const subPath = pathParts.slice(1).join('/');
+        const subPath = pathParts.slice(1).join("/");
 
         // Handle CORS preflight
-        if (method === 'OPTIONS') {
+        if (method === "OPTIONS") {
           return await handleHttpOptions(request, appId, subPath);
         }
 
         // Platform-level generic dashboard at /_ui
-        if (subPath === '_ui' && method === 'GET') {
+        if (subPath === "_ui" && method === "GET") {
           return handleGenericDashboard(request, appId);
         }
 
@@ -1141,36 +1200,36 @@ export function createApp() {
 
       // Published markdown pages - GET /p/:userId/:slug
       // Public, no auth required. Renders user-published markdown as styled HTML.
-      if (path.startsWith('/share/p/') && method === 'GET') {
+      if (path.startsWith("/share/p/") && method === "GET") {
         return handleSharedPageEntry(path);
       }
 
-      if (path.startsWith('/p/') && method === 'GET') {
+      if (path.startsWith("/p/") && method === "GET") {
         return handlePublishedPage(request, path);
       }
 
       // Publisher referral landing - GET /r/:slug
-      if (path.startsWith('/r/') && method === 'GET') {
+      if (path.startsWith("/r/") && method === "GET") {
         const slug = path.slice(3);
-        if (slug && !slug.includes('/')) {
+        if (slug && !slug.includes("/")) {
           return handleReferralLanding(request, slug);
         }
       }
 
       // Public app page - GET /app/:appId
       // Shareable page showing MCP endpoint, documentation, and metadata.
-      if (path.startsWith('/app/') && method === 'GET') {
+      if (path.startsWith("/app/") && method === "GET") {
         const appId = path.slice(5); // Remove '/app/'
-        if (appId && !appId.includes('/')) {
+        if (appId && !appId.includes("/")) {
           return handlePublicAppPage(request, appId);
         }
       }
 
       // Public user profile - GET /u/:userId
       // Shows all public MCP apps and published pages for a user.
-      if (path.startsWith('/u/') && method === 'GET') {
+      if (path.startsWith("/u/") && method === "GET") {
         const profileUserId = path.slice(3); // Remove '/u/'
-        if (profileUserId && !profileUserId.includes('/')) {
+        if (profileUserId && !profileUserId.includes("/")) {
           return handlePublicUserProfile(request, profileUserId);
         }
       }
@@ -1179,35 +1238,35 @@ export function createApp() {
       // Supports two patterns:
       // 1. Browser apps: export default function(app, ultralight) - renders UI in browser
       // 2. Server apps: export default async function handler(req) - handles HTTP requests
-      if (path.startsWith('/a/')) {
+      if (path.startsWith("/a/")) {
         // Extract appId (first segment after /a/)
-        const pathParts = path.slice(3).split('/');
+        const pathParts = path.slice(3).split("/");
         const appId = pathParts[0];
-        const subPath = '/' + pathParts.slice(1).join('/'); // Everything after appId
+        const subPath = "/" + pathParts.slice(1).join("/"); // Everything after appId
 
         // Handle MCP discovery endpoint: /a/:appId/.well-known/mcp.json
-        if (subPath === '/.well-known/mcp.json' && method === 'GET') {
+        if (subPath === "/.well-known/mcp.json" && method === "GET") {
           return handleMcpDiscovery(request, appId);
         }
 
         // SPA routes for app detail sidebar sections
         if (
-          ['/permissions', '/environment', '/payments', '/logs'].includes(
+          ["/permissions", "/environment", "/payments", "/logs"].includes(
             subPath,
-          ) && method === 'GET'
+          ) && method === "GET"
         ) {
           const { app } = await resolvePublicFacingApp(request, appId, {
             allowPrivateOwner: true,
           });
           if (!app) {
-            return json({ error: 'App not found' }, 404);
+            return json({ error: "App not found" }, 404);
           }
           return new Response(
-            renderLayoutHTML({ initialView: 'app', activeAppId: appId }),
+            renderLayoutHTML({ initialView: "app", activeAppId: appId }),
             {
               headers: {
-                'Content-Type': 'text/html',
-                'Cache-Control': 'no-store',
+                "Content-Type": "text/html",
+                "Cache-Control": "no-store",
               },
             },
           );
@@ -1218,7 +1277,7 @@ export function createApp() {
             allowPrivateOwner: true,
           });
           if (!app) {
-            return json({ error: 'App not found' }, 404);
+            return json({ error: "App not found" }, 404);
           }
 
           // Generate ETag and check for conditional request (304)
@@ -1242,7 +1301,8 @@ export function createApp() {
             { id: appId, storage_key: storageKey },
             {
               codeCache,
-              onCacheHit: () => console.log(`App runner: code cache HIT for app ${appId}`),
+              onCacheHit: () =>
+                console.log(`App runner: code cache HIT for app ${appId}`),
               onFileLoaded: (entryFile) =>
                 console.log(`App runner: loaded ${entryFile} for app ${appId}`),
             },
@@ -1252,7 +1312,7 @@ export function createApp() {
             console.error(
               `App runner: no entry file found for app ${appId}, storageKey: ${storageKey}`,
             );
-            return json({ error: 'App code not found' }, 404);
+            return json({ error: "App code not found" }, 404);
           }
 
           // Determine app type: HTTP server or MCP-only
@@ -1273,16 +1333,16 @@ export function createApp() {
 
           // Cache headers for all app HTML responses
           const cacheHeaders = addCacheHeaders(
-            { 'Content-Type': 'text/html' },
+            { "Content-Type": "text/html" },
             etag,
           );
 
           if (isHttpServerApp) {
             // HTTP Server app - execute handler function
-            const isEmbed = url.searchParams.get('embed') === '1';
+            const isEmbed = url.searchParams.get("embed") === "1";
 
             if (
-              isEmbed || method !== 'GET' || (subPath !== '/' && subPath !== '')
+              isEmbed || method !== "GET" || (subPath !== "/" && subPath !== "")
             ) {
               return await executeServerApp(code, request, appId, subPath);
             } else {
@@ -1290,7 +1350,7 @@ export function createApp() {
                 renderLayoutHTML({
                   title: app.name || app.slug,
                   activeAppId: appId,
-                  initialView: 'app',
+                  initialView: "app",
                   appName: app.name || app.slug,
                 }),
                 {
@@ -1300,7 +1360,7 @@ export function createApp() {
             }
           } else {
             // MCP-only app - show info page with available tools
-            const isEmbed = url.searchParams.get('embed') === '1';
+            const isEmbed = url.searchParams.get("embed") === "1";
 
             if (isEmbed) {
               const contractResolution = resolveAppFunctionContracts(app, {
@@ -1313,7 +1373,7 @@ export function createApp() {
                 ownerId: app.owner_id,
                 appSlug: app.slug,
                 runtime: app.runtime,
-                surface: 'app_embed_info',
+                surface: "app_embed_info",
                 source: contractResolution.source,
                 legacySourceDetected: contractResolution.legacySourceDetected,
                 functionCount: contractResolution.functions.length,
@@ -1330,7 +1390,7 @@ export function createApp() {
                 {
                   headers: {
                     ...cacheHeaders,
-                    'Content-Security-Policy':
+                    "Content-Security-Policy":
                       "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'none'",
                   },
                 },
@@ -1341,7 +1401,7 @@ export function createApp() {
                 renderLayoutHTML({
                   title: app.name || app.slug,
                   activeAppId: appId,
-                  initialView: 'app',
+                  initialView: "app",
                   appName: app.name || app.slug,
                 }),
                 {
@@ -1351,13 +1411,13 @@ export function createApp() {
             }
           }
         } catch (err) {
-          console.error('Error loading app:', err);
-          return json({ error: 'Failed to load app' }, 500);
+          console.error("Error loading app:", err);
+          return json({ error: "Failed to load app" }, 500);
         }
       }
 
       // 404
-      return json({ error: 'Not found' }, 404);
+      return json({ error: "Not found" }, 404);
     },
   };
 }
@@ -1390,8 +1450,10 @@ async function executeServerApp(
     // Deno can import TypeScript directly via data URLs!
     // Use application/typescript MIME type for TypeScript code
     // This completely eliminates the need for any transpilation or regex hacks
-    const mimeType = 'application/typescript';
-    const dataUrl = `data:${mimeType};base64,${btoa(unescape(encodeURIComponent(code)))}`;
+    const mimeType = "application/typescript";
+    const dataUrl = `data:${mimeType};base64,${
+      btoa(unescape(encodeURIComponent(code)))
+    }`;
 
     // Import the module - Deno handles TypeScript natively
     const module = await import(dataUrl);
@@ -1399,10 +1461,11 @@ async function executeServerApp(
     // Find the handler function
     const handlerFn = module.handler || module.default;
 
-    if (typeof handlerFn !== 'function') {
+    if (typeof handlerFn !== "function") {
       return json({
-        error: 'No handler function found',
-        message: 'Server apps must export a function named "handler" or use export default',
+        error: "No handler function found",
+        message:
+          'Server apps must export a function named "handler" or use export default',
       }, 500);
     }
 
@@ -1411,14 +1474,14 @@ async function executeServerApp(
 
     // Validate response
     if (!(response instanceof Response)) {
-      return json({ error: 'Handler must return a Response object' }, 500);
+      return json({ error: "Handler must return a Response object" }, 500);
     }
 
     return response;
   } catch (err) {
-    console.error('Server app execution error:', err);
+    console.error("Server app execution error:", err);
     return json({
-      error: 'App execution failed',
+      error: "App execution failed",
       message: err instanceof Error ? err.message : String(err),
     }, 500);
   }
@@ -1430,7 +1493,7 @@ async function executeServerApp(
  */
 function buildLegacyContractNotice(resolution: AppContractResolution): string {
   if (!resolution.migrationRequired || !resolution.message) {
-    return '';
+    return "";
   }
 
   return `
@@ -1451,9 +1514,13 @@ function getMcpAppInfoHTML(
     ? tools.map((s) => `
       <div class="tool-item">
         <div class="tool-name">${escapeHtml(s.name)}</div>
-        ${s.description ? `<div class="tool-desc">${escapeHtml(s.description)}</div>` : ''}
+        ${
+      s.description
+        ? `<div class="tool-desc">${escapeHtml(s.description)}</div>`
+        : ""
+    }
       </div>
-    `).join('')
+    `).join("")
     : '<p class="no-tools">No documentation published yet. Generate docs in app settings when you are ready.</p>';
 
   return `<!DOCTYPE html>
@@ -1563,7 +1630,7 @@ function getMcpAppInfoHTML(
     <div class="section">
       <div class="section-title">MCP Endpoint</div>
       <div class="mcp-url">${
-    typeof location !== 'undefined' ? location.origin : ''
+    typeof location !== "undefined" ? location.origin : ""
   }/mcp/${appId}</div>
       <a href="/http/${appId}/_ui" style="display:inline-flex;align-items:center;gap:0.5rem;margin-top:0.75rem;background:rgba(99,102,241,.15);color:#a78bfa;padding:0.5rem 1rem;border-radius:8px;text-decoration:none;font-weight:500;font-size:0.8125rem;transition:background 0.15s;">&#9881; Open Dashboard</a>
       <p class="info-text" style="margin-top: 0.75rem;">
@@ -1620,7 +1687,7 @@ async function resolvePublicFacingApp(
   const ownerApp = await appsService.findById(appId);
   if (
     !ownerApp || ownerApp.owner_id !== userId ||
-    ownerApp.visibility !== 'private'
+    ownerApp.visibility !== "private"
   ) {
     return { app: null, isOwner: false };
   }
@@ -1645,7 +1712,7 @@ async function handleGenericDashboard(
       allowPrivateOwner: true,
     });
     if (!app) {
-      return json({ error: 'App not found' }, 404);
+      return json({ error: "App not found" }, 404);
     }
 
     const appName = escapeHtml(app.name || app.slug);
@@ -1659,7 +1726,7 @@ async function handleGenericDashboard(
       ownerId: app.owner_id,
       appSlug: app.slug,
       runtime: app.runtime,
-      surface: 'app_generic_dashboard',
+      surface: "app_generic_dashboard",
       source: contractResolution.source,
       legacySourceDetected: contractResolution.legacySourceDetected,
       functionCount: contractResolution.functions.length,
@@ -1676,14 +1743,14 @@ async function handleGenericDashboard(
       : generateLegacyContractDashboardHTML(appId, appName, contractResolution);
     return new Response(html, {
       headers: {
-        'Content-Type': 'text/html',
-        'Content-Security-Policy':
+        "Content-Type": "text/html",
+        "Content-Security-Policy":
           "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'",
       },
     });
   } catch (err) {
-    console.error('[Dashboard] Error:', err);
-    return json({ error: 'Failed to load dashboard' }, 500);
+    console.error("[Dashboard] Error:", err);
+    return json({ error: "Failed to load dashboard" }, 500);
   }
 }
 
@@ -1699,7 +1766,7 @@ function generateGenericDashboardHTML(
   // Build tool definitions as JSON for the client-side JS
   const toolDefs = JSON.stringify(functions.map((fn) => ({
     name: fn.name,
-    description: fn.description || '',
+    description: fn.description || "",
     parameters: fn.parameters || {},
   })));
 
@@ -2023,9 +2090,9 @@ function generateLegacyContractDashboardHTML(
     ? `<ul style="margin-top:12px;padding-left:20px;color:#a1a1aa;">${
       resolution.functions.map((fn) =>
         `<li><code>${escapeHtml(fn.name)}</code>${
-          fn.description ? ` - ${escapeHtml(fn.description)}` : ''
+          fn.description ? ` - ${escapeHtml(fn.description)}` : ""
         }</li>`
-      ).join('')
+      ).join("")
     }</ul>`
     : '<p style="margin-top:12px;color:#a1a1aa;">No function metadata was detected outside <code>manifest.json</code>.</p>';
 
@@ -2055,7 +2122,7 @@ code{font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;col
       <p>${
     escapeHtml(
       resolution.message ||
-        'This app needs a manifest-backed contract before the generic dashboard can execute tools safely.',
+        "This app needs a manifest-backed contract before the generic dashboard can execute tools safely.",
     )
   }</p>
       <div class="section">
@@ -2125,10 +2192,14 @@ async function fetchPublicMarketplaceSummary(
     return null;
   }
 
-  const listings = listingRes.ok ? await listingRes.json() as PublicMarketplaceListingRow[] : [];
+  const listings = listingRes.ok
+    ? await listingRes.json() as PublicMarketplaceListingRow[]
+    : [];
   const bids = bidsRes.ok
     ? (await bidsRes.json() as PublicMarketplaceBidRow[])
-      .filter((bid): bid is { amount_light: number } => typeof bid.amount_light === 'number')
+      .filter((bid): bid is { amount_light: number } =>
+        typeof bid.amount_light === "number"
+      )
     : [];
   const eligibilityRows = eligibilityRes.ok
     ? await eligibilityRes.json() as PublicMarketplaceEligibilityRow[]
@@ -2158,12 +2229,12 @@ async function handlePublicAppPage(
     const appsService = createAppsService();
     const app = await appsService.findPublicServingById(appId);
     if (!app) {
-      return new Response('Not found', { status: 404 });
+      return new Response("Not found", { status: 404 });
     }
 
     const baseUrl = getBaseUrl(request);
     const urlObj = new URL(request.url);
-    const isEmbed = urlObj.searchParams.get('embed') === '1';
+    const isEmbed = urlObj.searchParams.get("embed") === "1";
 
     // Note: isOwner is NOT detected server-side. The page is cached with
     // `public, max-age=60` and must render identically for every viewer.
@@ -2173,22 +2244,22 @@ async function handlePublicAppPage(
 
     // Fire-and-forget impression counter (bot-filtered).
     // Must never block rendering or surface errors to the viewer.
-    const ua = request.headers.get('user-agent') || '';
+    const ua = request.headers.get("user-agent") || "";
     if (!BOT_UA_PATTERN.test(ua)) {
       void appsService.incrementImpression(app.id).catch((err) =>
-        console.warn('[impression] failed:', err)
+        console.warn("[impression] failed:", err)
       );
     }
 
     // Fetch owner display name
-    const SUPABASE_URL = getEnv('SUPABASE_URL');
-    const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+    const SUPABASE_URL = getEnv("SUPABASE_URL");
+    const SUPABASE_SERVICE_ROLE_KEY = getEnv("SUPABASE_SERVICE_ROLE_KEY");
     const dbHeaders = {
-      'apikey': SUPABASE_SERVICE_ROLE_KEY,
-      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      "apikey": SUPABASE_SERVICE_ROLE_KEY,
+      "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
     };
 
-    let ownerName = 'Unknown';
+    let ownerName = "Unknown";
     try {
       const userRes = await fetch(
         `${SUPABASE_URL}/rest/v1/users?id=eq.${app.owner_id}&select=display_name,email&limit=1`,
@@ -2199,7 +2270,7 @@ async function handlePublicAppPage(
           { display_name: string | null; email: string }
         >;
         if (users.length > 0) {
-          ownerName = users[0].display_name || users[0].email.split('@')[0];
+          ownerName = users[0].display_name || users[0].email.split("@")[0];
         }
       }
     } catch { /* best effort */ }
@@ -2212,25 +2283,31 @@ async function handlePublicAppPage(
         dbHeaders,
       );
     } catch (err) {
-      console.warn('[PublicAppPage] Failed to fetch marketplace summary:', err);
+      console.warn("[PublicAppPage] Failed to fetch marketplace summary:", err);
     }
 
-    const trustCard = sanitizeGpuTrustCard(buildAppTrustCard({ ...app, env_schema: {} }));
+    const trustCard = sanitizeGpuTrustCard(
+      buildAppTrustCard({ ...app, env_schema: {} }),
+    );
     const html = getPublicAppPageHTML(app, ownerName, baseUrl, {
       isEmbed,
       trustCard,
       marketplaceSummary,
-      referralClaimToken: sanitizeReferralClaimQuery(urlObj.searchParams.get('ref_claim')),
+      referralClaimToken: sanitizeReferralClaimQuery(
+        urlObj.searchParams.get("ref_claim"),
+      ),
     });
     return new Response(html, {
       headers: {
-        'Content-Type': 'text/html; charset=utf-8',
-        'Cache-Control': urlObj.searchParams.has('ref_claim') ? 'no-store' : 'public, max-age=60',
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": urlObj.searchParams.has("ref_claim")
+          ? "no-store"
+          : "public, max-age=60",
       },
     });
   } catch (err) {
-    console.error('[PublicAppPage] Error:', err);
-    return new Response('Internal server error', { status: 500 });
+    console.error("[PublicAppPage] Error:", err);
+    return new Response("Internal server error", { status: 500 });
   }
 }
 
@@ -2265,43 +2342,54 @@ function getPublicAppPageHTML(
 ): string {
   const { isEmbed } = opts;
   const appName = escapeHtml(app.name || app.slug);
-  const rawDescription = app.description || '';
+  const rawDescription = app.description || "";
   const description = escapeHtml(rawDescription);
-  const version = app.current_version ? escapeHtml(app.current_version) : '1.0';
+  const version = app.current_version ? escapeHtml(app.current_version) : "1.0";
   const mcpEndpoint = `${baseUrl}/mcp/${app.id}`;
   const shareUrl = appStoreUrl(app.id);
-  const deepLink = deepLinkAppUrl(app.id, opts.referralClaimToken ? {
-    refClaim: opts.referralClaimToken,
-  } : undefined);
+  const deepLink = deepLinkAppUrl(
+    app.id,
+    opts.referralClaimToken
+      ? {
+        refClaim: opts.referralClaimToken,
+      }
+      : undefined,
+  );
   const dlUrl = downloadUrl({ app: app.id });
   const likes = Number(app.likes ?? 0);
   const runs = Number(app.total_runs ?? 0);
-  const category = app.category ? escapeHtml(app.category) : '';
-  const isUnlisted = app.visibility === 'unlisted';
+  const category = app.category ? escapeHtml(app.category) : "";
+  const isUnlisted = app.visibility === "unlisted";
   const ownerProfileUrl = `/u/${escapeHtml(app.owner_id)}`;
   const tags = Array.isArray(app.tags)
-    ? app.tags.filter((t) => typeof t === 'string').slice(0, 5)
+    ? app.tags.filter((t) => typeof t === "string").slice(0, 5)
     : [];
 
   const screenshots: string[] = Array.isArray(app.screenshots)
-    ? app.screenshots.filter((s): s is string => typeof s === 'string')
+    ? app.screenshots.filter((s): s is string => typeof s === "string")
     : [];
   const hasScreenshots = screenshots.length > 0;
-  const longDescriptionMd = typeof app.long_description === 'string' ? app.long_description : '';
-  const longDescriptionHtml = longDescriptionMd ? markdownToHtml(longDescriptionMd) : '';
+  const longDescriptionMd = typeof app.long_description === "string"
+    ? app.long_description
+    : "";
+  const longDescriptionHtml = longDescriptionMd
+    ? markdownToHtml(longDescriptionMd)
+    : "";
   const trustCard = opts.trustCard;
   const trustCapabilities = trustCard
     ? [
-      trustCard.capability_summary.ai ? 'AI' : '',
-      trustCard.capability_summary.network ? 'Network' : '',
-      trustCard.capability_summary.storage ? 'Storage' : '',
-      trustCard.capability_summary.memory ? 'Memory' : '',
-      isGpuSupportEnabled() && trustCard.capability_summary.gpu ? 'GPU' : '',
+      trustCard.capability_summary.ai ? "AI" : "",
+      trustCard.capability_summary.network ? "Network" : "",
+      trustCard.capability_summary.storage ? "Storage" : "",
+      trustCard.capability_summary.memory ? "Memory" : "",
+      isGpuSupportEnabled() && trustCard.capability_summary.gpu ? "GPU" : "",
     ].filter(Boolean)
     : [];
   const trustPermissions = trustCard
     ? trustCard.permissions
-      .filter((permission) => isGpuSupportEnabled() || permission !== 'gpu:execute')
+      .filter((permission) =>
+        isGpuSupportEnabled() || permission !== "gpu:execute"
+      )
       .slice(0, 8)
     : [];
   const trustSecretLabels = trustCard
@@ -2311,42 +2399,46 @@ function getPublicAppPageHTML(
     ].slice(0, 8)
     : [];
   const trustShortHash = (value: string | null | undefined) =>
-    value ? value.slice(0, 12) : 'Not available';
+    value ? value.slice(0, 12) : "Not available";
   const trustChipHtml = (labels: string[], empty: string) =>
     labels.length > 0
-      ? labels.map((label) => `<span class="trust-chip">${escapeHtml(label)}</span>`).join('')
+      ? labels.map((label) =>
+        `<span class="trust-chip">${escapeHtml(label)}</span>`
+      ).join("")
       : `<span class="trust-chip">${escapeHtml(empty)}</span>`;
   const marketplace = opts.marketplaceSummary;
-  const hasMarketAsk = typeof marketplace?.ask_price_light === 'number';
-  const hasMarketBid = typeof marketplace?.highest_bid_light === 'number';
+  const hasMarketAsk = typeof marketplace?.ask_price_light === "number";
+  const hasMarketBid = typeof marketplace?.highest_bid_light === "number";
   const showMarketplace = !!marketplace && (
-    marketplace.status !== 'unlisted' || marketplace.active_bid_count > 0
+    marketplace.status !== "unlisted" || marketplace.active_bid_count > 0
   );
-  const marketStatusLabel = marketplace?.status === 'sold'
-    ? 'Acquired'
-    : marketplace?.status === 'ineligible'
-    ? 'Not tradable'
+  const marketStatusLabel = marketplace?.status === "sold"
+    ? "Acquired"
+    : marketplace?.status === "ineligible"
+    ? "Not tradable"
     : hasMarketAsk
-    ? marketplace?.instant_buy ? 'Acquire now' : 'Listed'
+    ? marketplace?.instant_buy ? "Acquire now" : "Listed"
     : hasMarketBid
-    ? 'Active bids'
-    : marketplace?.status === 'open_to_offers'
-    ? 'Open to offers'
-    : 'Marketplace';
+    ? "Active bids"
+    : marketplace?.status === "open_to_offers"
+    ? "Open to offers"
+    : "Marketplace";
   const marketAskDisplay = hasMarketAsk
     ? formatLight(marketplace!.ask_price_light!)
-    : marketplace?.status === 'open_to_offers'
-    ? 'Open to offers'
-    : 'No ask';
+    : marketplace?.status === "open_to_offers"
+    ? "Open to offers"
+    : "No ask";
   const marketBidDisplay = hasMarketBid
     ? formatLight(marketplace!.highest_bid_light!)
-    : 'No active bids';
-  const marketPayoutDisplay = typeof marketplace?.seller_payout_at_ask_light === 'number'
-    ? formatLight(marketplace.seller_payout_at_ask_light)
-    : 'Set by bid';
-  const marketFeeDisplay = typeof marketplace?.platform_fee_at_ask_light === 'number'
-    ? `Platform fee ${formatLight(marketplace.platform_fee_at_ask_light)}`
-    : 'No platform fee until acquisition';
+    : "No active bids";
+  const marketPayoutDisplay =
+    typeof marketplace?.seller_payout_at_ask_light === "number"
+      ? formatLight(marketplace.seller_payout_at_ask_light)
+      : "Set by bid";
+  const marketFeeDisplay =
+    typeof marketplace?.platform_fee_at_ask_light === "number"
+      ? `Platform fee ${formatLight(marketplace.platform_fee_at_ask_light)}`
+      : "No platform fee until acquisition";
   const marketplaceHtml = showMarketplace
     ? `
     <section class="section market-section">
@@ -2355,59 +2447,78 @@ function getPublicAppPageHTML(
           <div class="section-title">Marketplace</div>
           <div class="market-title">${escapeHtml(marketStatusLabel)}</div>
         </div>
-        <span class="market-status ${marketplace?.instant_buy ? 'buy' : ''}">${
+        <span class="market-status ${marketplace?.instant_buy ? "buy" : ""}">${
       escapeHtml(
-        marketplace?.instant_buy ? 'Instant acquisition' : marketStatusLabel,
+        marketplace?.instant_buy ? "Instant acquisition" : marketStatusLabel,
       )
     }</span>
       </div>
       <div class="market-grid">
-        <div><span>Ask</span><strong>${escapeHtml(marketAskDisplay)}</strong></div>
-        <div><span>Highest Bid</span><strong>${escapeHtml(marketBidDisplay)}</strong></div>
-        <div><span>Seller Payout</span><strong>${escapeHtml(marketPayoutDisplay)}</strong></div>
+        <div><span>Ask</span><strong>${
+      escapeHtml(marketAskDisplay)
+    }</strong></div>
+        <div><span>Highest Bid</span><strong>${
+      escapeHtml(marketBidDisplay)
+    }</strong></div>
+        <div><span>Seller Payout</span><strong>${
+      escapeHtml(marketPayoutDisplay)
+    }</strong></div>
       </div>
       <div class="market-foot">
         <span>${escapeHtml(marketFeeDisplay)}</span>
         <a href="${escapeHtml(deepLink)}">${
-      marketplace?.instant_buy ? 'Acquire' : 'Open to bid'
+      marketplace?.instant_buy ? "Acquire" : "Open to bid"
     } &rarr;</a>
       </div>
       ${
       marketplace?.listing_note
         ? `<p class="market-note">${escapeHtml(marketplace.listing_note)}</p>`
-        : ''
+        : ""
     }
     </section>
   `
-    : '';
-  const trustRuntime = trustCard && !isGpuSupportEnabled() && trustCard.runtime === 'gpu'
-    ? 'deno'
-    : trustCard?.runtime || 'deno';
+    : "";
+  const trustRuntime =
+    trustCard && !isGpuSupportEnabled() && trustCard.runtime === "gpu"
+      ? "deno"
+      : trustCard?.runtime || "deno";
   const trustCardHtml = trustCard
     ? `
     <section class="section trust-section">
       <div class="trust-header">
         <div class="section-title">Trust & Runtime</div>
-        <span class="trust-status ${trustCard.signed_manifest ? 'ok' : 'warn'}">${
-      trustCard.signed_manifest ? 'Signed Manifest' : 'Unsigned Legacy'
+        <span class="trust-status ${
+      trustCard.signed_manifest ? "ok" : "warn"
+    }">${
+      trustCard.signed_manifest ? "Signed Manifest" : "Unsigned Legacy"
     }</span>
       </div>
       <div class="trust-grid">
-        <div><span>Runtime</span><strong>${escapeHtml(trustRuntime)}</strong></div>
-        <div><span>Version</span><strong>${escapeHtml(trustCard.version || version)}</strong></div>
-        <div><span>Manifest Hash</span><code title="${escapeHtml(trustCard.manifest_hash || '')}">${
-      escapeHtml(trustShortHash(trustCard.manifest_hash))
-    }</code></div>
+        <div><span>Runtime</span><strong>${
+      escapeHtml(trustRuntime)
+    }</strong></div>
+        <div><span>Version</span><strong>${
+      escapeHtml(trustCard.version || version)
+    }</strong></div>
+        <div><span>Manifest Hash</span><code title="${
+      escapeHtml(trustCard.manifest_hash || "")
+    }">${escapeHtml(trustShortHash(trustCard.manifest_hash))}</code></div>
         <div><span>Receipt Field</span><strong>${
-      trustCard.execution_receipts.enabled ? 'receipt_id' : 'Disabled'
+      trustCard.execution_receipts.enabled ? "receipt_id" : "Disabled"
     }</strong></div>
       </div>
-      <div class="trust-chip-row">${trustChipHtml(trustCapabilities, 'No broad access')}</div>
-      <div class="trust-chip-row">${trustChipHtml(trustPermissions, 'No permission scopes')}</div>
-      <div class="trust-chip-row">${trustChipHtml(trustSecretLabels, 'No required secrets')}</div>
+      <div class="trust-chip-row">${
+      trustChipHtml(trustCapabilities, "No broad access")
+    }</div>
+      <div class="trust-chip-row">${
+      trustChipHtml(trustPermissions, "No permission scopes")
+    }</div>
+      <div class="trust-chip-row">${
+      trustChipHtml(trustSecretLabels, "No required secrets")
+    }</div>
     </section>
   `
-    : '';
+    : "";
 
   // OpenGraph prefers the first screenshot over the icon — richer previews
   // in Slack/iMessage/Twitter when apps have visual content.
@@ -2416,7 +2527,7 @@ function getPublicAppPageHTML(
     : `${baseUrl}/api/apps/${app.id}/icon`;
 
   // Render skills documentation (unchanged)
-  let skillsHtml = '';
+  let skillsHtml = "";
   if (app.skills_md) {
     skillsHtml = markdownToHtml(app.skills_md);
   } else if (app.skills_parsed) {
@@ -2427,10 +2538,14 @@ function getPublicAppPageHTML(
       }).functions || []);
     if (skills.length > 0) {
       skillsHtml = skills.map((s) =>
-        `<div class="fn-item"><span class="fn-name">${escapeHtml(s.name)}</span>${
-          s.description ? `<span class="fn-desc">${escapeHtml(s.description)}</span>` : ''
+        `<div class="fn-item"><span class="fn-name">${
+          escapeHtml(s.name)
+        }</span>${
+          s.description
+            ? `<span class="fn-desc">${escapeHtml(s.description)}</span>`
+            : ""
         }</div>`
-      ).join('');
+      ).join("");
     } else {
       skillsHtml = '<p class="no-docs">No documentation yet.</p>';
     }
@@ -2440,7 +2555,7 @@ function getPublicAppPageHTML(
 
   // Short meta description for <meta> + OG (trim to ~160 chars)
   const metaDesc = rawDescription.length > 160
-    ? rawDescription.slice(0, 157) + '...'
+    ? rawDescription.slice(0, 157) + "..."
     : rawDescription;
   const metaDescEscaped = escapeHtml(
     metaDesc || `${app.name || app.slug} on Ultralight — MCP app store`,
@@ -2453,7 +2568,7 @@ function getPublicAppPageHTML(
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${appName} — Ultralight</title>
 <meta name="description" content="${metaDescEscaped}">
-${isEmbed ? '<meta name="robots" content="noindex">' : ''}
+${isEmbed ? '<meta name="robots" content="noindex">' : ""}
 
 <!-- OpenGraph / social share previews -->
 <meta property="og:type" content="website">
@@ -3264,20 +3379,20 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
         <a href="${ownerProfileUrl}">by ${escapeHtml(ownerName)}</a>
         <span class="sep">·</span>
         <span class="badge">v${version}</span>
-        ${isUnlisted ? '<span class="badge unlisted">Unlisted</span>' : ''}
-        ${category ? `<span class="badge category">${category}</span>` : ''}
+        ${isUnlisted ? '<span class="badge unlisted">Unlisted</span>' : ""}
+        ${category ? `<span class="badge category">${category}</span>` : ""}
       </div>
       <div class="hero-stats">
         <span>&#128077; ${likes.toLocaleString()}</span>
         <span class="sep">·</span>
-        <span>${runs.toLocaleString()} ${runs === 1 ? 'run' : 'runs'}</span>
+        <span>${runs.toLocaleString()} ${runs === 1 ? "run" : "runs"}</span>
       </div>
       ${
     tags.length > 0
       ? `<div class="tag-row">${
-        tags.map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join('')
+        tags.map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join("")
       }</div>`
-      : ''
+      : ""
   }
     </div>
   </div>
@@ -3287,7 +3402,7 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
        class="cta-area"
        data-app-id="${escapeHtml(app.id)}"
       data-app-name="${escapeHtml(app.name || app.slug)}"
-      data-is-embed="${isEmbed ? 'true' : 'false'}">
+      data-is-embed="${isEmbed ? "true" : "false"}">
     <div class="cta-row">
       <button class="btn btn-primary btn-lg" disabled>
         <span class="spinner"></span> Loading install status...
@@ -3299,7 +3414,7 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
 
   <section id="overviewPanel" class="tab-panel">
     <!-- Description -->
-    ${description ? `<p class="app-desc">${description}</p>` : ''}
+    ${description ? `<p class="app-desc">${description}</p>` : ""}
 
     ${marketplaceHtml}
 
@@ -3316,15 +3431,15 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
           <a class="screenshot-item" href="/api/apps/${
           escapeHtml(app.id)
         }/screenshots/${idx}" target="_blank" rel="noopener">
-            <img src="/api/apps/${escapeHtml(app.id)}/screenshots/${idx}" alt="Screenshot ${
-          idx + 1
-        }" loading="lazy">
+            <img src="/api/apps/${
+          escapeHtml(app.id)
+        }/screenshots/${idx}" alt="Screenshot ${idx + 1}" loading="lazy">
           </a>
-        `).join('')
+        `).join("")
       }
       </div>
     </section>`
-      : ''
+      : ""
   }
 
     <!-- Long description -->
@@ -3334,7 +3449,7 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
     <section class="section app-long-desc">
       <div class="docs-content">${longDescriptionHtml}</div>
     </section>`
-      : ''
+      : ""
   }
 
     <!-- Functions -->
@@ -3384,7 +3499,7 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ''}
   var SHARE_URL = ${JSON.stringify(shareUrl)};
   var DEEP_LINK = ${JSON.stringify(deepLink)};
   var DOWNLOAD_URL = ${JSON.stringify(dlUrl)};
-  var IS_EMBED_SSR = ${isEmbed ? 'true' : 'false'};
+  var IS_EMBED_SSR = ${isEmbed ? "true" : "false"};
 
   var ctaEl = document.getElementById('appStoreCTA');
   var ownerBannerEl = document.getElementById('ownerBanner');
@@ -4180,18 +4295,20 @@ async function renderTermsHTML(): Promise<string> {
   const billingConfig = await getBillingConfig();
   const publicConfig = toPublicBillingConfig(billingConfig);
   const copy = publicConfig.policy_copy;
-  const platformFeePercent = `${Math.round(billingConfig.platformFeeRate * 100)}%`;
+  const platformFeePercent = `${
+    Math.round(billingConfig.platformFeeRate * 100)
+  }%`;
 
   const sections = [
     {
-      title: 'Light',
+      title: "Light",
       body: [
         copy.purchasedLight,
         copy.fundingTerms,
       ],
     },
     {
-      title: 'Creator Earnings And Payouts',
+      title: "Creator Earnings And Payouts",
       body: [
         copy.creatorEarnings,
         billingConfig.payoutPolicyCopy,
@@ -4199,7 +4316,7 @@ async function renderTermsHTML(): Promise<string> {
       ],
     },
     {
-      title: 'Platform Fees And Waivers',
+      title: "Platform Fees And Waivers",
       body: [
         `Ultralight's standard internal platform fee on eligible creator revenue is ${platformFeePercent}.`,
         copy.feeWaivers,
@@ -4208,7 +4325,7 @@ async function renderTermsHTML(): Promise<string> {
       ],
     },
     {
-      title: 'Cloud Usage',
+      title: "Cloud Usage",
       body: [
         copy.cloudUsage,
         copy.storagePolicy,
@@ -4254,12 +4371,18 @@ async function renderTermsHTML(): Promise<string> {
   <h1>Light Economy Terms</h1>
   <p class="updated">Last updated May 18, 2026</p>
   <p>These terms summarize the payment, creator earnings, payout, and platform fee rules used by Ultralight. Additional product or marketplace terms may apply to specific workflows.</p>
-  ${sections.map((section) => `
+  ${
+    sections.map((section) => `
     <section>
       <h2>${escapeHtml(section.title)}</h2>
-      ${section.body.map((paragraph) => `<p>${escapeHtml(paragraph)}</p>`).join('')}
+      ${
+      section.body.map((paragraph) => `<p>${escapeHtml(paragraph)}</p>`).join(
+        "",
+      )
+    }
     </section>
-  `).join('')}
+  `).join("")
+  }
   <a class="back" href="/wallet">Back to wallet</a>
 </main>
 </body>
@@ -4275,11 +4398,11 @@ async function handlePublicUserProfile(
   profileUserId: string,
 ): Promise<Response> {
   try {
-    const SUPABASE_URL = getEnv('SUPABASE_URL');
-    const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+    const SUPABASE_URL = getEnv("SUPABASE_URL");
+    const SUPABASE_SERVICE_ROLE_KEY = getEnv("SUPABASE_SERVICE_ROLE_KEY");
     const dbHeaders = {
-      'apikey': SUPABASE_SERVICE_ROLE_KEY,
-      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      "apikey": SUPABASE_SERVICE_ROLE_KEY,
+      "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
     };
     const baseUrl = getBaseUrl(request);
 
@@ -4302,7 +4425,7 @@ async function handlePublicUserProfile(
     } catch { /* */ }
 
     if (!user) {
-      return new Response('Not found', { status: 404 });
+      return new Response("Not found", { status: 404 });
     }
 
     // Fetch public apps
@@ -4374,7 +4497,9 @@ async function handlePublicUserProfile(
         if (assessments.length > 0) {
           const gapIds = [...new Set(assessments.map((a) => a.gap_id))];
           const gapsRes = await fetch(
-            `${SUPABASE_URL}/rest/v1/gaps?id=in.(${gapIds.join(',')})&select=id,title`,
+            `${SUPABASE_URL}/rest/v1/gaps?id=in.(${
+              gapIds.join(",")
+            })&select=id,title`,
             { headers: dbHeaders },
           );
           const gapsMap = new Map<string, string>();
@@ -4388,7 +4513,7 @@ async function handlePublicUserProfile(
             }
           }
           fulfilledGaps = assessments.map((a) => ({
-            gap_title: gapsMap.get(a.gap_id) || 'Unknown gap',
+            gap_title: gapsMap.get(a.gap_id) || "Unknown gap",
             awarded_points: a.awarded_points,
             reviewed_at: a.reviewed_at,
           }));
@@ -4407,13 +4532,13 @@ async function handlePublicUserProfile(
     );
     return new Response(html, {
       headers: {
-        'Content-Type': 'text/html; charset=utf-8',
-        'Cache-Control': 'public, max-age=60',
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "public, max-age=60",
       },
     });
   } catch (err) {
-    console.error('[PublicUserProfile] Error:', err);
-    return new Response('Internal server error', { status: 500 });
+    console.error("[PublicUserProfile] Error:", err);
+    return new Response("Internal server error", { status: 500 });
   }
 }
 
@@ -4444,10 +4569,10 @@ function getPublicUserProfileHTML(
     { gap_title: string; awarded_points: number; reviewed_at: string }
   > = [],
 ): string {
-  const displayName = escapeHtml(user.display_name || user.email.split('@')[0]);
-  const memberSince = new Date(user.created_at).toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'long',
+  const displayName = escapeHtml(user.display_name || user.email.split("@")[0]);
+  const memberSince = new Date(user.created_at).toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
   });
 
   const appCards = apps.length > 0
@@ -4456,24 +4581,28 @@ function getPublicUserProfileHTML(
         <div class="card-icon">&#9889;</div>
         <div class="card-body">
           <div class="card-title">${escapeHtml(a.name || a.slug)}</div>
-          ${a.description ? `<div class="card-desc">${escapeHtml(a.description)}</div>` : ''}
+          ${
+      a.description
+        ? `<div class="card-desc">${escapeHtml(a.description)}</div>`
+        : ""
+    }
           <div class="card-meta">
             ${
       a.current_version
         ? `<span class="version-badge">v${escapeHtml(a.current_version)}</span>`
-        : ''
+        : ""
     }
             <span class="card-date">${
-      new Date(a.updated_at).toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric',
+      new Date(a.updated_at).toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
       })
     }</span>
           </div>
         </div>
       </a>
-    `).join('')
+    `).join("")
     : '<p class="empty-text">No public MCP servers yet.</p>';
 
   const pageCards = pages.length > 0
@@ -4486,23 +4615,23 @@ function getPublicUserProfileHTML(
       p.tags && p.tags.length > 0
         ? `<div class="card-tags">${
           p.tags.map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join(
-            '',
+            "",
           )
         }</div>`
-        : ''
+        : ""
     }
           <div class="card-meta">
             <span class="card-date">${
-      new Date(p.updated_at).toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric',
+      new Date(p.updated_at).toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
       })
     }</span>
           </div>
         </div>
       </a>
-    `).join('')
+    `).join("")
     : '<p class="empty-text">No published pages yet.</p>';
 
   return `<!DOCTYPE html>
@@ -4655,7 +4784,7 @@ function getPublicUserProfileHTML(
       ${
     totalPoints > 0
       ? `<div class="points-badge">&#127942; ${totalPoints.toLocaleString()} points</div>`
-      : ''
+      : ""
   }
     </div>
   </div>
@@ -4682,18 +4811,18 @@ function getPublicUserProfileHTML(
         <span>
           <span class="gap-pts">${g.awarded_points} pts</span>
           <span class="gap-date">${
-          new Date(g.reviewed_at).toLocaleDateString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            year: 'numeric',
+          new Date(g.reviewed_at).toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
           })
         }</span>
         </span>
       </div>
-    `).join('')
+    `).join("")
       }
   </div>`
-      : ''
+      : ""
   }
 
   <div class="footer-bar">
@@ -4709,27 +4838,27 @@ function getPublicUserProfileHTML(
 // ============================================
 
 async function handleHomepageApi(request: Request): Promise<Response> {
-  const SUPABASE_URL = getEnv('SUPABASE_URL');
-  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+  const SUPABASE_URL = getEnv("SUPABASE_URL");
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv("SUPABASE_SERVICE_ROLE_KEY");
   const headers = {
-    'apikey': SUPABASE_SERVICE_ROLE_KEY,
-    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    "apikey": SUPABASE_SERVICE_ROLE_KEY,
+    "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
   };
 
   const url = new URL(request.url);
-  const type = url.searchParams.get('type') || 'apps';
-  const status = url.searchParams.get('status') || 'open';
+  const type = url.searchParams.get("type") || "apps";
+  const status = url.searchParams.get("status") || "open";
   const limitParam = Math.min(
-    parseInt(url.searchParams.get('limit') || '10'),
+    parseInt(url.searchParams.get("limit") || "10"),
     50,
   );
 
   try {
     // Return different data based on type parameter
-    if (type === 'gaps') {
+    if (type === "gaps") {
       let query =
         `${SUPABASE_URL}/rest/v1/gaps?select=id,title,description,severity,points_value,season,status,created_at`;
-      if (status !== 'all') query += `&status=eq.${status}`;
+      if (status !== "all") query += `&status=eq.${status}`;
       query += `&order=points_value.desc,created_at.desc&limit=${limitParam}`;
       const res = await fetch(query, { headers });
       const gaps = res.ok
@@ -4747,7 +4876,7 @@ async function handleHomepageApi(request: Request): Promise<Response> {
       return json({ results: gaps, total: gaps.length });
     }
 
-    if (type === 'leaderboard') {
+    if (type === "leaderboard") {
       // Get active season
       let season: { id: number; name: string } | null = null;
       try {
@@ -4764,7 +4893,8 @@ async function handleHomepageApi(request: Request): Promise<Response> {
       } catch {}
 
       // Aggregate points
-      let pointsQuery = `${SUPABASE_URL}/rest/v1/points_ledger?select=user_id,amount`;
+      let pointsQuery =
+        `${SUPABASE_URL}/rest/v1/points_ledger?select=user_id,amount`;
       if (season) pointsQuery += `&season=eq.${season.id}`;
       pointsQuery += `&order=created_at.desc&limit=1000`;
       const pRes = await fetch(pointsQuery, { headers });
@@ -4786,7 +4916,9 @@ async function handleHomepageApi(request: Request): Promise<Response> {
       if (sorted.length > 0) {
         const uids = sorted.map((s) => s[0]);
         const uRes = await fetch(
-          `${SUPABASE_URL}/rest/v1/users?id=in.(${uids.join(',')})&select=id,display_name,email`,
+          `${SUPABASE_URL}/rest/v1/users?id=in.(${
+            uids.join(",")
+          })&select=id,display_name,email`,
           { headers },
         );
         const uMap = new Map<string, string>();
@@ -4796,12 +4928,12 @@ async function handleHomepageApi(request: Request): Promise<Response> {
               { id: string; display_name: string | null; email: string }
             >
           ) {
-            uMap.set(u.id, u.display_name || u.email.split('@')[0]);
+            uMap.set(u.id, u.display_name || u.email.split("@")[0]);
           }
         }
         entries = sorted.map(([uid, pts]) => ({
           user_id: uid,
-          display_name: uMap.get(uid) || 'Anonymous',
+          display_name: uMap.get(uid) || "Anonymous",
           total_points: pts,
         }));
       }
@@ -4827,7 +4959,7 @@ async function handleHomepageApi(request: Request): Promise<Response> {
       : [];
     return json({ results: apps, total: apps.length });
   } catch (err) {
-    console.error('[HOMEPAGE API]', err);
+    console.error("[HOMEPAGE API]", err);
     return json({ results: [], total: 0 });
   }
 }
@@ -4837,14 +4969,14 @@ async function handleHomepageApi(request: Request): Promise<Response> {
 // ============================================
 
 function handleSharedPageEntry(path: string): Response {
-  const parts = path.slice('/share/p/'.length).split('/');
+  const parts = path.slice("/share/p/".length).split("/");
   if (parts.length < 2) {
-    return new Response('Not found', { status: 404 });
+    return new Response("Not found", { status: 404 });
   }
 
   const ownerId = parts[0];
-  let slug = parts.slice(1).join('/');
-  if (slug.endsWith('.md')) slug = slug.slice(0, -3);
+  let slug = parts.slice(1).join("/");
+  if (slug.endsWith(".md")) slug = slug.slice(0, -3);
 
   const pagePath = `/p/${ownerId}/${slug}`;
   const config = JSON.stringify({
@@ -4852,7 +4984,7 @@ function handleSharedPageEntry(path: string): Response {
     slug,
     pagePath,
     signInPath: `/auth/login?return_to=${encodeURIComponent(pagePath)}`,
-  }).replace(/</g, '\\u003c');
+  }).replace(/</g, "\\u003c");
 
   return new Response(
     `<!DOCTYPE html>
@@ -4943,8 +5075,8 @@ function handleSharedPageEntry(path: string): Response {
     {
       status: 200,
       headers: {
-        'Content-Type': 'text/html; charset=utf-8',
-        'Cache-Control': 'no-store',
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
       },
     },
   );
@@ -4955,26 +5087,26 @@ async function handlePublishedPage(
   path: string,
 ): Promise<Response> {
   // Parse /p/{userId}/{slug} or /p/{userId}/{slug}.md
-  const parts = path.slice(3).split('/'); // Remove '/p/'
+  const parts = path.slice(3).split("/"); // Remove '/p/'
   if (parts.length < 2) {
-    return new Response('Not found', { status: 404 });
+    return new Response("Not found", { status: 404 });
   }
   const userId = parts[0];
-  let slug = parts.slice(1).join('/');
+  let slug = parts.slice(1).join("/");
   // Strip .md extension if present in URL
-  if (slug.endsWith('.md')) slug = slug.slice(0, -3);
+  if (slug.endsWith(".md")) slug = slug.slice(0, -3);
 
   // Check content table for visibility/access control
-  const SUPABASE_URL = getEnv('SUPABASE_URL');
-  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+  const SUPABASE_URL = getEnv("SUPABASE_URL");
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv("SUPABASE_SERVICE_ROLE_KEY");
   const dbHeaders = {
-    'apikey': SUPABASE_SERVICE_ROLE_KEY,
-    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    "apikey": SUPABASE_SERVICE_ROLE_KEY,
+    "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
   };
 
   interface PublishedContentRow {
     id: string;
-    visibility: 'private' | 'shared' | 'public' | string;
+    visibility: "private" | "shared" | "public" | string;
     access_token: string | null;
     title: string | null;
     tags: string[] | null;
@@ -5003,21 +5135,21 @@ async function handlePublishedPage(
     if (contentRow.hosting_suspended) {
       return new Response(
         `<!DOCTYPE html><html><head><title>Page Suspended</title><style>body{font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f8f9fa}div{text-align:center;max-width:480px;padding:2rem}.icon{font-size:3rem;margin-bottom:1rem}h1{margin:0 0 .5rem;font-size:1.5rem}p{color:#666;line-height:1.6}</style></head><body><div><div class="icon">&#9888;</div><h1>Page Suspended</h1><p>This page has been taken offline because the owner's Light balance has been depleted. The owner can restore it by adding Light.</p></div></body></html>`,
-        { status: 402, headers: { 'Content-Type': 'text/html' } },
+        { status: 402, headers: { "Content-Type": "text/html" } },
       );
     }
     // Check paid page access: if price_light > 0, charge the viewer
     if (contentRow.price_light && contentRow.price_light > 0) {
       let viewerUserId: string | null = null;
       try {
-        const { authenticate } = await import('./auth.ts');
+        const { authenticate } = await import("./auth.ts");
         const viewer = await authenticate(request);
         viewerUserId = viewer.id;
       } catch {
         // Not authenticated — show a paywall message
         return new Response(
           `<!DOCTYPE html><html><head><title>Paid Content</title><style>body{font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f8f9fa}div{text-align:center;max-width:480px;padding:2rem}.icon{font-size:3rem;margin-bottom:1rem}h1{margin:0 0 .5rem;font-size:1.5rem}p{color:#666;line-height:1.6}.price{font-size:1.25rem;font-weight:600;color:#333;margin:1rem 0}</style></head><body><div><div class="icon">&#128176;</div><h1>Paid Page</h1><p class="price">✦${contentRow.price_light} per view</p><p>Sign in and have enough Light to view this page. The fee is transferred directly to the page owner.</p></div></body></html>`,
-          { status: 402, headers: { 'Content-Type': 'text/html' } },
+          { status: 402, headers: { "Content-Type": "text/html" } },
         );
       }
 
@@ -5027,17 +5159,17 @@ async function handlePublishedPage(
           const transferRes = await fetch(
             `${SUPABASE_URL}/rest/v1/rpc/transfer_light`,
             {
-              method: 'POST',
-              headers: { ...dbHeaders, 'Content-Type': 'application/json' },
+              method: "POST",
+              headers: { ...dbHeaders, "Content-Type": "application/json" },
               body: JSON.stringify({
                 p_from_user: viewerUserId,
                 p_to_user: userId,
                 p_amount_light: contentRow.price_light,
-                p_reason: 'page_view',
+                p_reason: "page_view",
                 p_content_id: contentRow.id,
                 p_metadata: {
                   content_slug: slug,
-                  content_type: 'page',
+                  content_type: "page",
                 },
               }),
             },
@@ -5051,7 +5183,7 @@ async function handlePublishedPage(
               // Insufficient balance
               return new Response(
                 `<!DOCTYPE html><html><head><title>Insufficient Balance</title><style>body{font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f8f9fa}div{text-align:center;max-width:480px;padding:2rem}.icon{font-size:3rem;margin-bottom:1rem}h1{margin:0 0 .5rem;font-size:1.5rem}p{color:#666;line-height:1.6}.price{font-size:1.25rem;font-weight:600;color:#333;margin:1rem 0}</style></head><body><div><div class="icon">&#9888;</div><h1>Insufficient Balance</h1><p class="price">This page costs ✦${contentRow.price_light}</p><p>Add Light from Wallet to view this page.</p></div></body></html>`,
-                { status: 402, headers: { 'Content-Type': 'text/html' } },
+                { status: 402, headers: { "Content-Type": "text/html" } },
               );
             }
           }
@@ -5062,18 +5194,18 @@ async function handlePublishedPage(
       }
     }
 
-    if (contentRow.visibility === 'private') {
+    if (contentRow.visibility === "private") {
       // Only the owner can view private pages
       try {
-        const { authenticate } = await import('./auth.ts');
+        const { authenticate } = await import("./auth.ts");
         const user = await authenticate(request);
         if (user.id !== userId) {
-          return new Response('Not found', { status: 404 });
+          return new Response("Not found", { status: 404 });
         }
       } catch {
-        return new Response('Not found', { status: 404 });
+        return new Response("Not found", { status: 404 });
       }
-    } else if (contentRow.visibility === 'shared') {
+    } else if (contentRow.visibility === "shared") {
       let authorized = await hasValidPageShareSession(request, {
         contentId: contentRow.id,
         ownerId: userId,
@@ -5084,7 +5216,7 @@ async function handlePublishedPage(
       // Check if authenticated user has a share
       if (!authorized) {
         try {
-          const { authenticate } = await import('./auth.ts');
+          const { authenticate } = await import("./auth.ts");
           const user = await authenticate(request);
 
           // Owner always has access
@@ -5109,7 +5241,7 @@ async function handlePublishedPage(
       }
 
       if (!authorized) {
-        return new Response('Not found', { status: 404 });
+        return new Response("Not found", { status: 404 });
       }
     }
     // visibility === 'public' falls through to serve normally
@@ -5121,20 +5253,21 @@ async function handlePublishedPage(
   try {
     content = await r2Service.fetchTextFile(`users/${userId}/pages/${slug}.md`);
   } catch {
-    return new Response('Page not found', { status: 404 });
+    return new Response("Page not found", { status: 404 });
   }
 
   const pageUrl = new URL(request.url);
-  const cacheControl = contentRow?.visibility === 'private' || contentRow?.visibility === 'shared'
-    ? 'private, no-cache'
-    : 'public, max-age=60';
+  const cacheControl =
+    contentRow?.visibility === "private" || contentRow?.visibility === "shared"
+      ? "private, no-cache"
+      : "public, max-age=60";
 
   // Raw markdown API — agents can fetch ?format=raw for programmatic access
-  if (pageUrl.searchParams.get('format') === 'raw') {
+  if (pageUrl.searchParams.get("format") === "raw") {
     return new Response(content, {
       headers: {
-        'Content-Type': 'text/markdown; charset=utf-8',
-        'Cache-Control': cacheControl,
+        "Content-Type": "text/markdown; charset=utf-8",
+        "Cache-Control": cacheControl,
       },
     });
   }
@@ -5156,7 +5289,7 @@ async function handlePublishedPage(
         { display_name: string | null; email: string }
       >;
       if (users.length > 0) {
-        authorName = users[0].display_name || users[0].email.split('@')[0];
+        authorName = users[0].display_name || users[0].email.split("@")[0];
       }
     }
   } catch { /* best effort */ }
@@ -5171,8 +5304,8 @@ async function handlePublishedPage(
   });
   return new Response(html, {
     headers: {
-      'Content-Type': 'text/html; charset=utf-8',
-      'Cache-Control': cacheControl,
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": cacheControl,
     },
   });
 }
@@ -5182,16 +5315,16 @@ async function handlePublishedPage(
  */
 function getBaseUrl(request: Request): string {
   const url = new URL(request.url);
-  const host = request.headers.get('x-forwarded-host') ||
-    request.headers.get('host') || url.host;
-  const proto = request.headers.get('x-forwarded-proto') ||
-    (host.includes('localhost') ? 'http' : 'https');
+  const host = request.headers.get("x-forwarded-host") ||
+    request.headers.get("host") || url.host;
+  const proto = request.headers.get("x-forwarded-proto") ||
+    (host.includes("localhost") ? "http" : "https");
   return `${proto}://${host}`;
 }
 
 function getClientIp(request: Request): string | null {
-  return request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-    request.headers.get('x-real-ip') ||
+  return request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    request.headers.get("x-real-ip") ||
     null;
 }
 
@@ -5205,7 +5338,9 @@ function sanitizeReferralClaimQuery(value: string | null): string | null {
   return /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value) ? value : null;
 }
 
-async function getOptionalReferralUserId(request: Request): Promise<string | null> {
+async function getOptionalReferralUserId(
+  request: Request,
+): Promise<string | null> {
   try {
     const user = await authenticate(request);
     return user.id;
@@ -5214,8 +5349,14 @@ async function getOptionalReferralUserId(request: Request): Promise<string | nul
   }
 }
 
-async function handleReferralLanding(request: Request, slug: string): Promise<Response> {
-  const visitorId = getCookieValueFromRequest(request, REFERRAL_VISITOR_COOKIE_NAME);
+async function handleReferralLanding(
+  request: Request,
+  slug: string,
+): Promise<Response> {
+  const visitorId = getCookieValueFromRequest(
+    request,
+    REFERRAL_VISITOR_COOKIE_NAME,
+  );
   const userId = await getOptionalReferralUserId(request);
   const landing = await recordReferralLanding({
     slug,
@@ -5223,14 +5364,14 @@ async function handleReferralLanding(request: Request, slug: string): Promise<Re
     userId,
     metadata: {
       ipHash: await hashHeaderValue(getClientIp(request)),
-      userAgentHash: await hashHeaderValue(request.headers.get('user-agent')),
+      userAgentHash: await hashHeaderValue(request.headers.get("user-agent")),
       landingUrl: request.url,
-      referrerUrl: request.headers.get('referer'),
+      referrerUrl: request.headers.get("referer"),
     },
   });
 
-  if (landing.status === 'not_found') {
-    return new Response('Referral link not found', { status: 404 });
+  if (landing.status === "not_found") {
+    return new Response("Referral link not found", { status: 404 });
   }
 
   let claimToken: string | null = null;
@@ -5242,15 +5383,15 @@ async function handleReferralLanding(request: Request, slug: string): Promise<Re
   }
 
   const redirectUrl = new URL(
-    landing.appId ? `/app/${encodeURIComponent(landing.appId)}` : '/',
+    landing.appId ? `/app/${encodeURIComponent(landing.appId)}` : "/",
     request.url,
   );
   if (claimToken) {
-    redirectUrl.searchParams.set('ref_claim', claimToken);
+    redirectUrl.searchParams.set("ref_claim", claimToken);
   }
   const headers = new Headers({
-    'Location': redirectUrl.pathname + redirectUrl.search,
-    'Cache-Control': 'no-store',
+    "Location": redirectUrl.pathname + redirectUrl.search,
+    "Cache-Control": "no-store",
   });
 
   if (landing.visitorId) {
@@ -5273,43 +5414,44 @@ function markdownToHtml(markdown: string): string {
   // Code blocks (``` ... ```) — must be before inline code
   html = html.replace(
     /```(\w*)\n([\s\S]*?)```/g,
-    (_m, lang, code) => `<pre><code class="language-${lang}">${code.trim()}</code></pre>`,
+    (_m, lang, code) =>
+      `<pre><code class="language-${lang}">${code.trim()}</code></pre>`,
   );
   // Inline code
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
   // Headers
-  html = html.replace(/^######\s+(.+)$/gm, '<h6>$1</h6>');
-  html = html.replace(/^#####\s+(.+)$/gm, '<h5>$1</h5>');
-  html = html.replace(/^####\s+(.+)$/gm, '<h4>$1</h4>');
-  html = html.replace(/^###\s+(.+)$/gm, '<h3>$1</h3>');
-  html = html.replace(/^##\s+(.+)$/gm, '<h2>$1</h2>');
-  html = html.replace(/^#\s+(.+)$/gm, '<h1>$1</h1>');
+  html = html.replace(/^######\s+(.+)$/gm, "<h6>$1</h6>");
+  html = html.replace(/^#####\s+(.+)$/gm, "<h5>$1</h5>");
+  html = html.replace(/^####\s+(.+)$/gm, "<h4>$1</h4>");
+  html = html.replace(/^###\s+(.+)$/gm, "<h3>$1</h3>");
+  html = html.replace(/^##\s+(.+)$/gm, "<h2>$1</h2>");
+  html = html.replace(/^#\s+(.+)$/gm, "<h1>$1</h1>");
   // Bold + italic
-  html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  html = html.replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>");
+  html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  html = html.replace(/\*(.+?)\*/g, "<em>$1</em>");
   // Links
   html = html.replace(
     /\[([^\]]+)\]\(([^)]+)\)/g,
     '<a href="$2" target="_blank" rel="noopener">$1</a>',
   );
   // Horizontal rules
-  html = html.replace(/^---+$/gm, '<hr>');
+  html = html.replace(/^---+$/gm, "<hr>");
   // Unordered lists
-  html = html.replace(/^[-*]\s+(.+)$/gm, '<li>$1</li>');
+  html = html.replace(/^[-*]\s+(.+)$/gm, "<li>$1</li>");
   html = html.replace(/(<li>.*<\/li>\n?)+/g, (m) => `<ul>${m}</ul>`);
   // Ordered lists
-  html = html.replace(/^\d+\.\s+(.+)$/gm, '<li>$1</li>');
+  html = html.replace(/^\d+\.\s+(.+)$/gm, "<li>$1</li>");
   // Blockquotes
-  html = html.replace(/^>\s+(.+)$/gm, '<blockquote>$1</blockquote>');
+  html = html.replace(/^>\s+(.+)$/gm, "<blockquote>$1</blockquote>");
   // Paragraphs (double newlines)
-  html = html.replace(/\n\n+/g, '</p><p>');
+  html = html.replace(/\n\n+/g, "</p><p>");
   html = `<p>${html}</p>`;
   // Clean up empty paragraphs around block elements
-  html = html.replace(/<p>\s*(<h[1-6]|<pre|<ul|<ol|<hr|<blockquote)/g, '$1');
+  html = html.replace(/<p>\s*(<h[1-6]|<pre|<ul|<ol|<hr|<blockquote)/g, "$1");
   html = html.replace(
     /(<\/h[1-6]>|<\/pre>|<\/ul>|<\/ol>|<hr>|<\/blockquote>)\s*<\/p>/g,
-    '$1',
+    "$1",
   );
 
   return html;
@@ -5337,33 +5479,37 @@ function renderMarkdownPage(
     <div class="page-meta">
       ${
       meta.authorName
-        ? `<span class="meta-author">by <a href="/u/${escapeHtml(meta.authorId || '')}">${
-          escapeHtml(meta.authorName)
-        }</a></span>`
-        : ''
+        ? `<span class="meta-author">by <a href="/u/${
+          escapeHtml(meta.authorId || "")
+        }">${escapeHtml(meta.authorName)}</a></span>`
+        : ""
     }
       ${
       meta.updatedAt
         ? `<span class="meta-date">${
-          new Date(meta.updatedAt).toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric',
+          new Date(meta.updatedAt).toLocaleDateString("en-US", {
+            year: "numeric",
+            month: "long",
+            day: "numeric",
           })
         }</span>`
-        : ''
+        : ""
     }
       ${
       meta.tags && meta.tags.length > 0
         ? `<span class="meta-tags">${
           meta.tags.map((t) => `<span class="tag">${escapeHtml(t)}</span>`)
-            .join('')
+            .join("")
         }</span>`
-        : ''
+        : ""
     }
-      ${meta.rawUrl ? `<a href="${escapeHtml(meta.rawUrl)}" class="meta-raw">View Raw</a>` : ''}
+      ${
+      meta.rawUrl
+        ? `<a href="${escapeHtml(meta.rawUrl)}" class="meta-raw">View Raw</a>`
+        : ""
+    }
     </div>`
-    : '';
+    : "";
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -5480,18 +5626,18 @@ ${html}
 
 function escapeHtml(str: string): string {
   return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 // ============================================
 // DOWNLOAD PAGE
 // ============================================
 
-const DESKTOP_VERSION = '0.1.0';
+const DESKTOP_VERSION = "0.1.0";
 const DESKTOP_DMG_URL =
-  'https://github.com/evrydayimruslin/ultralight/releases/download/v0.1.0/Ultralight_0.1.0_x64.dmg';
+  "https://github.com/evrydayimruslin/ultralight/releases/download/v0.1.0/Ultralight_0.1.0_x64.dmg";
 
 function getDownloadPageHTML(): string {
   return `<!DOCTYPE html>

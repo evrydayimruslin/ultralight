@@ -8,6 +8,10 @@ import {
   CAPABILITY_SUGGESTION_EVENT_TYPES,
   type CapabilitySuggestionEventType,
 } from "./capability-suggestion-telemetry.ts";
+import {
+  isSuggestionTarget,
+  type SuggestionTarget,
+} from "../../shared/contracts/suggestions.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -55,6 +59,20 @@ function normalizeMetadata(value: unknown): JsonRecord | undefined {
   return value as JsonRecord;
 }
 
+function normalizeMetadataTarget(
+  metadata: JsonRecord | undefined,
+): SuggestionTarget | undefined {
+  if (!metadata || metadata.target === undefined || metadata.target === null) {
+    return undefined;
+  }
+  if (!isSuggestionTarget(metadata.target)) {
+    throw new RequestValidationError(
+      "metadata.target must be a valid suggestion target",
+    );
+  }
+  return metadata.target;
+}
+
 export async function validateCapabilitySuggestionEventRequest(
   request: Request,
 ): Promise<CapabilitySuggestionEventPayload> {
@@ -89,7 +107,15 @@ export async function validateCapabilitySuggestionEventRequest(
     body.install_on_accept,
     "install_on_accept",
   );
-  if (eventType === "accepted" && installOnAccept !== false && !appId) {
+  const metadata = normalizeMetadata(body.metadata);
+  const target = normalizeMetadataTarget(metadata);
+  const appInstallTarget = !target || target.kind === "app";
+  if (
+    eventType === "accepted" &&
+    installOnAccept !== false &&
+    appInstallTarget &&
+    !appId
+  ) {
     throw new RequestValidationError("app_id is required when accepting a suggestion");
   }
 
@@ -109,6 +135,6 @@ export async function validateCapabilitySuggestionEventRequest(
       maxLength: 80,
     }),
     installOnAccept,
-    metadata: normalizeMetadata(body.metadata),
+    metadata,
   };
 }

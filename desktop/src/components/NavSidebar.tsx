@@ -1,6 +1,7 @@
 // NavSidebar — Claude Code-inspired navigation sidebar.
-// Sections: Command, Tools, New Chat, Agents (time-grouped list),
-// and bottom profile menu (Profile/Wallet/Settings).
+// Sections: Command, Tools, New Chat, Chats (time-grouped list),
+// and bottom profile menu (Profile/Wallet/Settings). Canonical system
+// agents are hidden here; Command delegates to them internally.
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { CirclePlus, Compass, Package, Wallet, Settings, User, Wrench, Store, HelpCircle } from 'lucide-react';
@@ -9,7 +10,7 @@ import type { AppView } from '../hooks/useAppState';
 import type { PopoutView } from '../lib/multiWindow';
 import type { OnboardingHighlight } from './OnboardingWizard';
 import { fetchFromApi, getToken } from '../lib/storage';
-import { SYSTEM_AGENTS, SYSTEM_AGENT_ORDER, type SystemAgentType } from '../lib/systemAgents';
+import { SYSTEM_AGENTS, type SystemAgentType } from '../lib/systemAgents';
 
 // ── Props ──
 
@@ -96,6 +97,11 @@ function groupAgentsByTime(agents: Agent[]): TimeGroup[] {
     .map(([label, list]) => ({ label, agents: list }));
 }
 
+function isUnstartedCanonicalSystemAgent(agent: Agent, config: { name: string }): boolean {
+  const updatedNearCreated = Math.abs(agent.updated_at - agent.created_at) < 1000;
+  return agent.name === config.name && !agent.initial_task && updatedNearCreated;
+}
+
 // ── localStorage helpers for collapse state ──
 
 function getCollapsed(key: string, defaultVal: boolean): boolean {
@@ -139,35 +145,6 @@ function NavItem({ icon, label, active, highlighted, onClick, onContextMenu }: {
       {icon}
       <span className="truncate">{label}</span>
     </button>
-  );
-}
-
-function CollapsibleSection({ title, expanded, onToggle, trailing, children }: {
-  title: string;
-  expanded: boolean;
-  onToggle: () => void;
-  trailing?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="mt-1">
-      <div className="flex items-center px-3 py-1.5">
-        <button
-          onClick={onToggle}
-          className="flex items-center gap-1 text-caption font-medium text-ul-text-muted uppercase tracking-wider hover:text-ul-text-secondary transition-colors"
-        >
-          {title}
-          <svg
-            width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
-            className={`transition-transform ${expanded ? '' : '-rotate-90'}`}
-          >
-            <path d="M3 4.5L6 7.5L9 4.5" />
-          </svg>
-        </button>
-        {trailing && <div className="ml-auto">{trailing}</div>}
-      </div>
-      {expanded && <div className="px-1">{children}</div>}
-    </div>
   );
 }
 
@@ -215,7 +192,6 @@ export default function NavSidebar({
 }: NavSidebarProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
-  const [systemAgentsExpanded, setSystemAgentsExpanded] = useState(() => !getCollapsed('ul_nav_system_agents_collapsed', false));
   const [agentsExpanded, setAgentsExpanded] = useState(() => !getCollapsed('ul_nav_agents_collapsed', false));
   const [contextMenu, setContextMenu] = useState<{ agentId: string; x: number; y: number } | null>(null);
   const [navContextMenu, setNavContextMenu] = useState<{ view: PopoutView; x: number; y: number } | null>(null);
@@ -278,14 +254,6 @@ export default function NavSidebar({
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, [profileMenuOpen]);
-
-  const toggleSystemAgents = useCallback(() => {
-    setSystemAgentsExpanded(v => {
-      const next = !v;
-      setCollapsed('ul_nav_system_agents_collapsed', !next);
-      return next;
-    });
-  }, []);
 
   const toggleAgents = useCallback(() => {
     setAgentsExpanded(v => {
@@ -377,20 +345,20 @@ export default function NavSidebar({
 
   if (!isOpen) return null;
 
-  // Partition: canonical system agents (one per type, oldest) vs the rest
-  const canonicalByType = new Map<string, Agent>();
-  for (const a of agents) {
-    if (a.is_system !== 1 || !SYSTEM_AGENTS.some(c => c.type === a.system_agent_type)) continue;
-    const prev = canonicalByType.get(a.system_agent_type!);
-    if (!prev || a.created_at < prev.created_at) canonicalByType.set(a.system_agent_type!, a);
+  // Hide only untouched canonical system-agent records. Command now surfaces
+  // those as internal delegation targets; any system-agent record with chat
+  // activity remains visible in Chats so existing users keep their history.
+  const canonicalIds = new Set<string>();
+  for (const config of SYSTEM_AGENTS) {
+    const hiddenCandidate = agents
+      .filter(a =>
+        a.is_system === 1 &&
+        a.system_agent_type === config.type &&
+        isUnstartedCanonicalSystemAgent(a, config)
+      )
+      .sort((a, b) => a.created_at - b.created_at)[0];
+    if (hiddenCandidate) canonicalIds.add(hiddenCandidate.id);
   }
-  const canonicalIds = new Set([...canonicalByType.values()].map(a => a.id));
-
-  const systemAgents = [...canonicalByType.values()]
-    .sort((a, b) =>
-      SYSTEM_AGENT_ORDER.indexOf(a.system_agent_type as SystemAgentType) -
-      SYSTEM_AGENT_ORDER.indexOf(b.system_agent_type as SystemAgentType)
-    );
 
   // Chat agents: regular chats + system agent instances (non-canonical)
   const chatAgents = agents.filter(a => !canonicalIds.has(a.id));
@@ -417,7 +385,7 @@ export default function NavSidebar({
           icon={CommandIcon}
           label="Command"
           active={!onboardingHighlight || onboardingHighlight === 'none' ? activeView.kind === 'home' : false}
-          highlighted={onboardingHighlight === 'chat-command'}
+          highlighted={onboardingHighlight === 'chat-command' || onboardingHighlight === 'agents'}
           onClick={onNavigateHome}
           onContextMenu={e => handleNavContextMenu(e, { kind: 'home' })}
         />
@@ -444,48 +412,6 @@ export default function NavSidebar({
         />
       </nav>
 
-      {/* System Agents — sticky, not scrollable */}
-      {systemAgents.length > 0 && (
-        <div className="flex-shrink-0 px-0 overflow-visible">
-          <div className="h-2.5" />
-          <CollapsibleSection
-            title="Agents"
-            expanded={systemAgentsExpanded}
-            onToggle={toggleSystemAgents}
-          >
-            {systemAgents.map(agent => {
-              const isAgentHighlighted = onboardingHighlight === 'agents' &&
-                (agent.system_agent_type === 'tool_builder' || agent.system_agent_type === 'tool_marketer');
-              return (
-              <button
-                key={agent.id}
-                onClick={() => onSelectAgent(agent.id)}
-                onContextMenu={e => handleContextMenu(e, agent.id)}
-                className={`w-full text-left px-3 py-1.5 rounded-md transition-all mx-1 relative
-                  ${isAgentHighlighted
-                    ? 'bg-white'
-                    : activeAgentId === agent.id
-                      ? 'bg-ul-bg-active'
-                      : 'hover:bg-ul-bg-hover'
-                  }`}
-                style={{ width: 'calc(100% - 8px)' }}
-              >
-                {isAgentHighlighted && (
-                  <span className="absolute -right-7 top-1/2 -translate-y-1/2 z-50 pointer-events-none text-ul-text">
-                    <svg width="8" height="12" viewBox="0 0 8 12" fill="currentColor"><path d="M0 6L8 12V0z"/></svg>
-                  </span>
-                )}
-                <div className="flex items-center gap-2">
-                  <SystemAgentIcon type={agent.system_agent_type} />
-                  <span className="text-small text-ul-text truncate flex-1">{agent.name}</span>
-                </div>
-              </button>
-              );
-            })}
-          </CollapsibleSection>
-        </div>
-      )}
-
       {/* Chats header — sticky */}
       <div className="flex-shrink-0 mt-1">
         <div className="flex items-center px-3 py-1.5">
@@ -501,12 +427,12 @@ export default function NavSidebar({
               <path d="M3 4.5L6 7.5L9 4.5" />
             </svg>
           </button>
-          {agents.length > 0 && (
+          {chatAgents.length > 0 && (
             <div className="ml-auto">
               <button
                 onClick={e => { e.stopPropagation(); setSearchOpen(true); }}
                 className="p-0.5 rounded hover:bg-ul-bg-hover text-ul-text-muted hover:text-ul-text-secondary transition-colors"
-                title="Search agents"
+                title="Search chats"
               >
                 <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                   <circle cx="7" cy="7" r="4.5" />
@@ -524,7 +450,7 @@ export default function NavSidebar({
           {/* Time-grouped agent list */}
           {timeGroups.length === 0 ? (
             <div className="px-3 py-4 text-center text-caption text-ul-text-muted">
-              No agents yet
+              No chats yet
             </div>
           ) : (
             timeGroups.map(group => (
@@ -651,7 +577,7 @@ export default function NavSidebar({
                 type="text"
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                placeholder="Search agents..."
+                placeholder="Search chats..."
                 className="flex-1 text-sm outline-none bg-transparent text-ul-text placeholder:text-ul-text-muted"
                 autoFocus
                 onKeyDown={e => { if (e.key === 'Escape') { setSearchOpen(false); setSearchQuery(''); } }}
@@ -673,7 +599,7 @@ export default function NavSidebar({
                 (a.initial_task && a.initial_task.toLowerCase().includes(searchQuery.toLowerCase()))
               ).length === 0 ? (
                 <div className="px-4 py-6 text-center text-sm text-ul-text-muted">
-                  No agents found
+                  No chats found
                 </div>
               ) : (
                 sorted

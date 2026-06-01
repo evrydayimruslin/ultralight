@@ -1,3 +1,9 @@
+import type {
+  CommandSuggestion,
+  SuggestionSource,
+  SuggestionTarget,
+} from '../../../shared/contracts/suggestions.ts';
+
 export interface AmbientTrustCard {
   signed_manifest?: boolean;
   runtime?: string | null;
@@ -30,23 +36,17 @@ export interface AmbientMarketplaceSummary {
   seller_payout_at_ask_light?: number | null;
 }
 
-export interface AmbientSuggestion {
-  id: string;
-  slug: string;
-  name: string;
-  description: string;
+export type AmbientSuggestionSource = SuggestionSource | 'shared';
+export type AmbientSuggestionType = 'app' | 'skill' | SuggestionTarget['kind'];
+
+export interface AmbientSuggestion
+  extends Omit<CommandSuggestion, 'source' | 'target' | 'type'> {
+  slug?: string;
+  source: AmbientSuggestionSource;
+  type: AmbientSuggestionType;
   icon_url?: string | null;
-  similarity?: number;
-  intent_id?: string;
-  suggestion_set_id?: string;
-  suggestion_id?: string;
-  rank?: number;
-  conversation_id?: string;
-  message_id?: string;
-  trace_id?: string;
-  source: 'library' | 'shared' | 'marketplace';
-  type: 'app' | 'skill';
   connected: boolean;
+  target?: SuggestionTarget;
   runtime?: string;
   trust_card?: AmbientTrustCard;
   marketplace?: AmbientMarketplaceSummary | null;

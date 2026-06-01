@@ -52,19 +52,19 @@ interface ChatInputProps {
   ambientSuggestions?: AmbientSuggestion[];
   /** When true, the Tool Selection pill shows an animated halo to signal a fresh signal. */
   ambientHasNew?: boolean;
-  /** Whether the in-chat ambient panel is currently open. Drives the pill's
+  /** Whether the in-chat suggestions panel is currently open. Drives the pill's
    *  "active" state and routes clicks: click while panel-open closes the panel. */
-  toolDealerPanelOpen?: boolean;
-  /** Open the in-chat ambient panel (also marks the signal as viewed). */
-  onOpenToolDealerPanel?: () => void;
-  /** Close the in-chat ambient panel. */
-  onCloseToolDealerPanel?: () => void;
+  suggestionsPanelOpen?: boolean;
+  /** Open the in-chat suggestions panel (also marks the signal as viewed). */
+  onOpenSuggestionsPanel?: () => void;
+  /** Close the in-chat suggestions panel. */
+  onCloseSuggestionsPanel?: () => void;
   /** Mark the popover suggestions as viewed without opening the full panel. */
-  onViewToolSuggestions?: () => void;
+  onViewSuggestions?: () => void;
   /** Accept one ambient suggestion into the active chat/library. */
-  onAcceptToolSuggestion?: (suggestion: AmbientSuggestion) => void;
+  onAcceptSuggestion?: (suggestion: AmbientSuggestion) => void;
   /** Dismiss one ambient suggestion. */
-  onDismissToolSuggestion?: (suggestion: AmbientSuggestion) => void;
+  onDismissSuggestion?: (suggestion: AmbientSuggestion) => void;
   /** Number of messages waiting in the runner queue. Drives the queue-mode
    *  meta strip below the composer (A2). */
   queuedCount?: number;
@@ -77,6 +77,8 @@ interface ChatInputProps {
    *  once — the lazy initial state ignores later changes so the user's
    *  typing isn't clobbered. */
   initialDraft?: string;
+  /** Imperative draft replacement used by agentic next-step suggestions. */
+  draftOverride?: { id: string; text: string } | null;
 }
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -120,15 +122,16 @@ export default function ChatInput({
   agents,
   ambientSuggestions = [],
   ambientHasNew = false,
-  toolDealerPanelOpen = false,
-  onOpenToolDealerPanel,
-  onCloseToolDealerPanel,
-  onViewToolSuggestions,
-  onAcceptToolSuggestion,
-  onDismissToolSuggestion,
+  suggestionsPanelOpen = false,
+  onOpenSuggestionsPanel,
+  onCloseSuggestionsPanel,
+  onViewSuggestions,
+  onAcceptSuggestion,
+  onDismissSuggestion,
   queuedCount = 0,
   onEditCustomInstructions,
   initialDraft,
+  draftOverride,
 }: ChatInputProps) {
   const [value, setValue] = useState(() => initialDraft ?? '');
   const [files, setFiles] = useState<ChatFile[]>([]);
@@ -217,6 +220,12 @@ export default function ChatInput({
   useEffect(() => {
     textareaRef.current?.focus();
   }, []);
+
+  useEffect(() => {
+    if (!draftOverride) return;
+    setValue(draftOverride.text);
+    setTimeout(() => textareaRef.current?.focus(), 0);
+  }, [draftOverride?.id]);
 
   const hasContent = value.trim().length > 0 || files.length > 0;
 
@@ -585,8 +594,8 @@ export default function ChatInput({
             <div className="flex items-center justify-between px-2 pb-2 gap-2">
               <div className="flex items-center gap-1">
                 {/* Tool selection pill — pill is a strict toggle:
-                    • popover open  → close everything (popover + dealer panel)
-                    • dealer panel open → close panel (no popover)
+                    • popover open  → close everything (popover + suggestions panel)
+                    • suggestions panel open → close panel (no popover)
                     • neither open  → open the popover */}
                 <div className="relative">
                   <button
@@ -594,16 +603,16 @@ export default function ChatInput({
                     onClick={() => {
                       if (popover === 'tools') {
                         setPopover(null);
-                        onCloseToolDealerPanel?.();
-                      } else if (toolDealerPanelOpen) {
-                        onCloseToolDealerPanel?.();
+                        onCloseSuggestionsPanel?.();
+                      } else if (suggestionsPanelOpen) {
+                        onCloseSuggestionsPanel?.();
                       } else {
-                        onViewToolSuggestions?.();
+                        onViewSuggestions?.();
                         setPopover('tools');
                       }
                     }}
                     className={`inline-flex items-center gap-1.5 h-7 px-3 rounded-full text-caption font-medium transition-colors text-ul-text-muted-strong ${
-                      popover === 'tools' || toolDealerPanelOpen ? 'bg-ul-accent-soft' : 'bg-transparent hover:bg-ul-bg-hover'
+                      popover === 'tools' || suggestionsPanelOpen ? 'bg-ul-accent-soft' : 'bg-transparent hover:bg-ul-bg-hover'
                     }`}
                   >
                     {ambientHasNew ? (
@@ -629,12 +638,12 @@ export default function ChatInput({
                     onClose={() => setPopover(null)}
                     anchorRef={toolsBtnRef}
                     suggestions={ambientSuggestions}
-                    onOpenPanel={onOpenToolDealerPanel}
+                    onOpenPanel={onOpenSuggestionsPanel}
                     onAcceptSuggestion={(suggestion) => {
-                      onAcceptToolSuggestion?.(suggestion);
+                      onAcceptSuggestion?.(suggestion);
                       setPopover(null);
                     }}
-                    onDismissSuggestion={onDismissToolSuggestion}
+                    onDismissSuggestion={onDismissSuggestion}
                   />
                 </div>
               </div>
