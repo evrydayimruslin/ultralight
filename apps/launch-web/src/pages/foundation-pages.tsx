@@ -1,4 +1,4 @@
-import { useState, type ReactElement, type ReactNode } from "react";
+import { useEffect, useState, type ReactElement, type ReactNode } from "react";
 
 import {
   LAUNCH_SCOPE_CONTRACT,
@@ -361,6 +361,9 @@ const adminTabs = [
 ] as const;
 
 type AdminTabId = typeof adminTabs[number][0];
+type LibraryView = "installed" | "owned";
+type StoreKindFilter = "all" | ToolFixture["kind"];
+type ToolPageTabId = "details" | "functions" | "widgets";
 
 const visibilityOptions = [
   ["public", "Public", "Listed in the Store, embeddable widgets, installable by anyone."],
@@ -578,9 +581,22 @@ export function InstallFoundationPage(_props: LaunchPageProps): ReactElement {
   );
 }
 
-export function StoreFoundationPage({ navigate }: LaunchPageProps): ReactElement {
-  const [query, setQuery] = useState("");
-  const [kind, setKind] = useState("all");
+export function StoreFoundationPage({ location, navigate }: LaunchPageProps): ReactElement {
+  const [query, setQuery] = useState(storeQueryFromSearch());
+  const [kind, setKind] = useState<StoreKindFilter>(storeKindFromSearch());
+  useEffect(() => {
+    setQuery(storeQueryFromSearch());
+    setKind(storeKindFromSearch());
+  }, [location.search]);
+
+  const updateQuery = (nextQuery: string) => {
+    setQuery(nextQuery);
+    syncSearchParams({ q: nextQuery.trim() || null });
+  };
+  const updateKind = (nextKind: StoreKindFilter) => {
+    setKind(nextKind);
+    syncSearchParams({ kind: nextKind === "all" ? null : nextKind });
+  };
   const filteredTools = discoverTools.filter((tool) =>
     (kind === "all" || tool.kind === kind) &&
     (!query ||
@@ -593,13 +609,13 @@ export function StoreFoundationPage({ navigate }: LaunchPageProps): ReactElement
     <div className="launch-page-narrow store-page">
       <section className="store-heading">
         <h1>Tools your agent can call.</h1>
-        <SearchControls query={query} setQuery={setQuery} />
+        <SearchControls query={query} setQuery={updateQuery} />
         <div className="kind-tabs" aria-label="Tool kinds">
-          {["all", "mcp", "http"].map((option) => (
+          {(["all", "mcp", "http"] as const).map((option) => (
             <button
               className={kind === option ? "active" : ""}
               key={option}
-              onClick={() => setKind(option)}
+              onClick={() => updateKind(option)}
               type="button"
             >
               {option === "all" ? "All" : option.toUpperCase()}
@@ -623,7 +639,7 @@ export function StoreFoundationPage({ navigate }: LaunchPageProps): ReactElement
                   <StoreToolCard tool={tool} />
                 </button>
               ))
-              : <NoResults onClear={() => setQuery("")} />}
+              : <NoResults onClear={() => updateQuery("")} />}
           </div>
         </section>
         <aside className="store-sidebar">
@@ -636,30 +652,49 @@ export function StoreFoundationPage({ navigate }: LaunchPageProps): ReactElement
   );
 }
 
-export function ToolFoundationPage({ navigate, route }: LaunchPageProps): ReactElement {
+export function ToolFoundationPage({ location, navigate, route }: LaunchPageProps): ReactElement {
   const slug = route.params.slug || "get_weather";
   const tool = toolDetails[slug];
-  const widgetId = new URLSearchParams(window.location.search).get("widget");
+  const widgetId = new URLSearchParams(location.search).get("widget");
 
   if (!tool) return <ToolNotFoundPage navigate={navigate} slug={slug} />;
-  if (widgetId) return <WidgetOpenSurface navigate={navigate} tool={tool} widgetId={widgetId} />;
-  return <ToolDetailSurface navigate={navigate} tool={tool} />;
+  if (widgetId) {
+    return (
+      <WidgetOpenSurface
+        locationSearch={location.search}
+        navigate={navigate}
+        tool={tool}
+        widgetId={widgetId}
+      />
+    );
+  }
+  return <ToolDetailSurface locationSearch={location.search} navigate={navigate} tool={tool} />;
 }
 
 function ToolDetailSurface({
+  locationSearch,
   navigate,
   tool,
 }: {
+  locationSearch: string;
   navigate: (to: string) => void;
   tool: ToolDetailFixture;
 }): ReactElement {
   const hasWidgets = tool.widgetList.length > 0;
   const [installed, setInstalled] = useState(false);
-  const [tab, setTab] = useState<"widgets" | "functions" | "details">(
-    hasWidgets ? "widgets" : "functions",
-  );
+  const [tab, setTab] = useState<ToolPageTabId>(() => toolTabFromSearch(hasWidgets));
   const [selectedWidgetId, setSelectedWidgetId] = useState(tool.widgetList[0]?.id || "");
   const [selectedFunctionName, setSelectedFunctionName] = useState(tool.functions[0]?.name || "");
+  useEffect(() => {
+    setTab(toolTabFromSearch(hasWidgets));
+  }, [hasWidgets, locationSearch]);
+
+  const activateToolTab = (nextTab: ToolPageTabId) => {
+    setTab(nextTab);
+    syncSearchParams({
+      tab: nextTab === (hasWidgets ? "widgets" : "functions") ? null : nextTab,
+    });
+  };
 
   return (
     <div className="launch-page-narrow tool-page">
@@ -711,14 +746,14 @@ function ToolDetailSurface({
 
       <div className="tool-tabs" role="tablist" aria-label="Tool page sections">
         {hasWidgets ? (
-          <button className={tab === "widgets" ? "active" : ""} onClick={() => setTab("widgets")} type="button">
+          <button className={tab === "widgets" ? "active" : ""} onClick={() => activateToolTab("widgets")} type="button">
             Widgets
           </button>
         ) : null}
-        <button className={tab === "functions" ? "active" : ""} onClick={() => setTab("functions")} type="button">
+        <button className={tab === "functions" ? "active" : ""} onClick={() => activateToolTab("functions")} type="button">
           Functions
         </button>
-        <button className={tab === "details" ? "active" : ""} onClick={() => setTab("details")} type="button">
+        <button className={tab === "details" ? "active" : ""} onClick={() => activateToolTab("details")} type="button">
           Details
         </button>
       </div>
@@ -1003,10 +1038,12 @@ function ToolTrustRail({ tool }: { tool: ToolDetailFixture }): ReactElement {
 type WidgetState = "ready" | "loading" | "error" | "setup";
 
 function WidgetOpenSurface({
+  locationSearch,
   navigate,
   tool,
   widgetId,
 }: {
+  locationSearch: string;
   navigate: (to: string) => void;
   tool: ToolDetailFixture;
   widgetId: string;
@@ -1014,7 +1051,7 @@ function WidgetOpenSurface({
   const widget = tool.widgetList.find((item) => item.id === widgetId) || tool.widgetList[0];
   const [state, setState] = useState<WidgetState>("ready");
 
-  if (!widget) return <ToolDetailSurface navigate={navigate} tool={tool} />;
+  if (!widget) return <ToolDetailSurface locationSearch={locationSearch} navigate={navigate} tool={tool} />;
 
   return (
     <div className="launch-page-narrow widget-open-page">
@@ -1309,11 +1346,19 @@ function ToolNotFoundPage({
   );
 }
 
-export function LibraryFoundationPage({ navigate }: LaunchPageProps): ReactElement {
-  const [view, setView] = useState<"installed" | "owned">("installed");
+export function LibraryFoundationPage({ location, navigate }: LaunchPageProps): ReactElement {
+  const [view, setView] = useState<LibraryView>(libraryViewFromSearch());
   const installedTools = installedLibrarySlugs.map((slug) => toolDetails[slug]).filter(Boolean);
   const ownedTools = ownedLibrarySlugs.map((slug) => toolDetails[slug]).filter(Boolean);
   const count = view === "installed" ? installedTools.length : ownedTools.length;
+  useEffect(() => {
+    setView(libraryViewFromSearch());
+  }, [location.search]);
+
+  const selectView = (nextView: LibraryView) => {
+    setView(nextView);
+    syncSearchParams({ view: nextView === "installed" ? null : nextView });
+  };
 
   return (
     <div className="launch-page-narrow library-page">
@@ -1321,14 +1366,14 @@ export function LibraryFoundationPage({ navigate }: LaunchPageProps): ReactEleme
         <div className="library-picker">
           <button
             className={view === "installed" ? "active" : ""}
-            onClick={() => setView("installed")}
+            onClick={() => selectView("installed")}
             type="button"
           >
             Installed tools
           </button>
           <button
             className={view === "owned" ? "active" : ""}
-            onClick={() => setView("owned")}
+            onClick={() => selectView("owned")}
             type="button"
           >
             Tools you own
@@ -1379,11 +1424,19 @@ export function LibraryFoundationPage({ navigate }: LaunchPageProps): ReactEleme
   );
 }
 
-export function AdminFoundationPage({ navigate, route }: LaunchPageProps): ReactElement {
+export function AdminFoundationPage({ location, navigate, route }: LaunchPageProps): ReactElement {
   const tool = adminToolFromRoute(route.params.id);
   const initialTab = adminTabFromSearch();
   const [tab, setTab] = useState<AdminTabId>(initialTab);
   const [visibility, setVisibility] = useState<ToolDetailFixture["visibility"]>(tool.visibility);
+  useEffect(() => {
+    setTab(adminTabFromSearch());
+  }, [location.search, route.params.id]);
+
+  const selectTab = (nextTab: AdminTabId) => {
+    setTab(nextTab);
+    syncSearchParams({ tab: nextTab === "edit" ? null : nextTab });
+  };
 
   return (
     <div className="launch-page-narrow admin-page">
@@ -1393,7 +1446,7 @@ export function AdminFoundationPage({ navigate, route }: LaunchPageProps): React
           <button
             className={tab === id ? "active" : ""}
             key={id}
-            onClick={() => setTab(id)}
+            onClick={() => selectTab(id)}
             type="button"
           >
             {label}
@@ -1784,9 +1837,17 @@ function AdminField({
   );
 }
 
-export function WalletFoundationPage(_props: LaunchPageProps): ReactElement {
+export function WalletFoundationPage({ location }: LaunchPageProps): ReactElement {
   const [tab, setTab] = useState<WalletTabId>(walletTabFromSearch());
   const showEarnings = tab === "earnings";
+  useEffect(() => {
+    setTab(walletTabFromSearch());
+  }, [location.search]);
+
+  const selectTab = (nextTab: WalletTabId) => {
+    setTab(nextTab);
+    syncSearchParams({ tab: nextTab === "balance" ? null : nextTab });
+  };
 
   return (
     <div className="launch-page-narrow wallet-page">
@@ -1802,7 +1863,7 @@ export function WalletFoundationPage(_props: LaunchPageProps): ReactElement {
               <Button>Transfer to Balance</Button>
             </>
           ) : tab === "topup" ? null : (
-            <Button icon="wallet" onClick={() => setTab("topup")}>Add Light</Button>
+            <Button icon="wallet" onClick={() => selectTab("topup")}>Add Light</Button>
           )}
         </div>
       </div>
@@ -1817,7 +1878,7 @@ export function WalletFoundationPage(_props: LaunchPageProps): ReactElement {
           <button
             className={tab === id ? "active" : ""}
             key={id}
-            onClick={() => setTab(id as WalletTabId)}
+            onClick={() => selectTab(id as WalletTabId)}
             type="button"
           >
             {label}
@@ -2814,14 +2875,47 @@ function adminToolFromRoute(id?: string): ToolDetailFixture {
   return Object.values(toolDetails).find((tool) => tool.id === id || tool.slug === id) || toolDetails.get_weather;
 }
 
+function queryParam(name: string): string {
+  return new URLSearchParams(window.location.search).get(name) || "";
+}
+
+function syncSearchParams(updates: Record<string, string | null>): void {
+  const next = new URL(window.location.href);
+  Object.entries(updates).forEach(([key, value]) => {
+    if (value) next.searchParams.set(key, value);
+    else next.searchParams.delete(key);
+  });
+  window.history.replaceState(null, "", `${next.pathname}${next.search}${next.hash}`);
+}
+
+function storeQueryFromSearch(): string {
+  return queryParam("q");
+}
+
+function storeKindFromSearch(): StoreKindFilter {
+  const kind = queryParam("kind");
+  return kind === "http" || kind === "mcp" ? kind : "all";
+}
+
+function libraryViewFromSearch(): LibraryView {
+  return queryParam("view") === "owned" ? "owned" : "installed";
+}
+
+function toolTabFromSearch(hasWidgets: boolean): ToolPageTabId {
+  const tab = queryParam("tab");
+  if (tab === "details" || tab === "functions") return tab;
+  if (tab === "widgets" && hasWidgets) return tab;
+  return hasWidgets ? "widgets" : "functions";
+}
+
 function adminTabFromSearch(): AdminTabId {
-  const tab = new URLSearchParams(window.location.search).get("tab");
+  const tab = queryParam("tab");
   return adminTabs.some(([id]) => id === tab) ? tab as AdminTabId : "edit";
 }
 
 function walletTabFromSearch(): WalletTabId {
-  const tab = new URLSearchParams(window.location.search).get("tab");
-  return ["balance", "earnings", "receipts", "topup"].includes(tab || "")
+  const tab = queryParam("tab");
+  return ["balance", "earnings", "receipts", "topup"].includes(tab)
     ? tab as WalletTabId
     : "balance";
 }

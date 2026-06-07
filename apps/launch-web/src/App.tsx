@@ -19,12 +19,13 @@ import {
 } from "./pages/foundation-pages";
 import { LaunchShell } from "./components/launch-chrome";
 
-interface LocationState {
+export interface LocationState {
   pathname: string;
   search: string;
 }
 
 export interface LaunchPageProps {
+  location: LocationState;
   route: ResolvedLaunchRoute;
   navigate: (to: string) => void;
 }
@@ -75,29 +76,29 @@ export function App(): ReactElement {
       primaryRoutes={primaryRoutes()}
       title={routeTitles[route.definition.key]}
     >
-      <RouteSwitch route={route} navigate={navigate} />
+      <RouteSwitch location={location} route={route} navigate={navigate} />
     </LaunchShell>
   );
 }
 
-function RouteSwitch({ route, navigate }: LaunchPageProps): ReactElement {
+function RouteSwitch({ location, route, navigate }: LaunchPageProps): ReactElement {
   switch (route.definition.key) {
     case "home":
-      return <HomeFoundationPage route={route} navigate={navigate} />;
+      return <HomeFoundationPage location={location} route={route} navigate={navigate} />;
     case "install":
-      return <InstallFoundationPage route={route} navigate={navigate} />;
+      return <InstallFoundationPage location={location} route={route} navigate={navigate} />;
     case "library":
-      return <LibraryFoundationPage route={route} navigate={navigate} />;
+      return <LibraryFoundationPage location={location} route={route} navigate={navigate} />;
     case "store":
-      return <StoreFoundationPage route={route} navigate={navigate} />;
+      return <StoreFoundationPage location={location} route={route} navigate={navigate} />;
     case "tool":
-      return <ToolFoundationPage route={route} navigate={navigate} />;
+      return <ToolFoundationPage location={location} route={route} navigate={navigate} />;
     case "wallet":
-      return <WalletFoundationPage route={route} navigate={navigate} />;
+      return <WalletFoundationPage location={location} route={route} navigate={navigate} />;
     case "settings":
-      return <SettingsFoundationPage route={route} navigate={navigate} />;
+      return <SettingsFoundationPage location={location} route={route} navigate={navigate} />;
     case "adminTool":
-      return <AdminFoundationPage route={route} navigate={navigate} />;
+      return <AdminFoundationPage location={location} route={route} navigate={navigate} />;
   }
 }
 
