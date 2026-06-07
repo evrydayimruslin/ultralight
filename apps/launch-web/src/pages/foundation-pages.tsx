@@ -388,6 +388,71 @@ const adminLogs = [
   { fn: "historical", ms: 280, status: "ok", when: "1h" },
 ] as const;
 
+type WalletTabId = "balance" | "earnings" | "receipts" | "topup";
+type PaymentMethod = "ach" | "card" | "earnings";
+
+interface LedgerRow {
+  amount: number;
+  detail: string;
+  kind: "call" | "earning" | "payout" | "topup" | "transfer";
+  when: string;
+}
+
+interface ReceiptRowFixture {
+  fn: string;
+  latency: number;
+  light: number;
+  status: "error" | "ok";
+  tool: string;
+  when: string;
+}
+
+interface ApiKeyFixture {
+  created: string;
+  lastUsed: string;
+  name: string;
+  prefix: string;
+  scopes: string;
+}
+
+const walletSummary = {
+  deposited: 815.0,
+  earned: 4820.402,
+  escrow: 26.0,
+  spendable: 1240.402,
+};
+
+const walletLedger: LedgerRow[] = [
+  { amount: -0.012, detail: "get_weather · forecast", kind: "call", when: "2m" },
+  { amount: -0.002, detail: "currency_convert · convert", kind: "call", when: "14m" },
+  { amount: 2500, detail: "Top up · card", kind: "topup", when: "3h" },
+  { amount: -0.018, detail: "pdf.parse · extract", kind: "call", when: "6h" },
+  { amount: 2500, detail: "Earnings → Balance", kind: "transfer", when: "1d" },
+  { amount: -0.008, detail: "maps.route · route", kind: "call", when: "1d" },
+  { amount: -50000, detail: "Payout · Bank (ACH) ···4821", kind: "payout", when: "4d" },
+];
+
+const walletEarnings: LedgerRow[] = [
+  { amount: 248.0, detail: "get_weather · forecast", kind: "earning", when: "5h" },
+  { amount: 120.4, detail: "tweet.draft · compose", kind: "earning", when: "8h" },
+  { amount: 40.0, detail: "radar.tile · render", kind: "earning", when: "1d" },
+  { amount: 192.0, detail: "get_weather · now", kind: "earning", when: "1d" },
+  { amount: 40.0, detail: "radar.tile · render", kind: "earning", when: "3d" },
+];
+
+const walletReceipts: ReceiptRowFixture[] = [
+  { fn: "forecast", latency: 142, light: 0.012, status: "ok", tool: "get_weather", when: "2m" },
+  { fn: "convert", latency: 84, light: 0.002, status: "ok", tool: "currency_convert", when: "14m" },
+  { fn: "extract", latency: 480, light: 0.018, status: "ok", tool: "pdf.parse", when: "1d" },
+  { fn: "route", latency: 195, light: 0.008, status: "error", tool: "maps.route", when: "2d" },
+];
+
+const apiKeys: ApiKeyFixture[] = [
+  { created: "12 Apr", lastUsed: "2m", name: "Claude Code · laptop", prefix: "ulk_live_••••4xN4", scopes: "mcp · api" },
+  { created: "3 Mar", lastUsed: "1d", name: "CI deploy", prefix: "ulk_live_••••9aQ2", scopes: "cli" },
+  { created: "28 Feb", lastUsed: "6d", name: "Cursor", prefix: "ulk_live_••••7bX1", scopes: "mcp" },
+];
+
 export function HomeFoundationPage({ navigate }: LaunchPageProps): ReactElement {
   return (
     <div className="launch-page-narrow home-page">
@@ -1720,69 +1785,429 @@ function AdminField({
 }
 
 export function WalletFoundationPage(_props: LaunchPageProps): ReactElement {
+  const [tab, setTab] = useState<WalletTabId>(walletTabFromSearch());
+  const showEarnings = tab === "earnings";
+
   return (
-    <>
-      <PageHeader
-        actions={<Button icon="wallet" size="lg">Add Light</Button>}
-        eyebrow="Wallet"
-        intro="Spendable balance, top-ups, transactions, receipts, earnings, and payouts."
-        title="Light balance and creator earnings."
-      />
-      <Section title="Balance">
-        <div className="wallet-metrics">
-          <Metric label="Spendable" value="1,240 Light" />
-          <Metric label="Purchased" value="1,000 Light" />
-          <Metric label="Earned" value="240 Light" />
-          <Metric label="Escrow" value="0 Light" />
+    <div className="launch-page-narrow wallet-page">
+      <div className="wallet-hero">
+        <WalletAmount
+          label={showEarnings ? "Earned Light" : "Spendable Light"}
+          value={showEarnings ? walletSummary.earned : walletSummary.spendable}
+        />
+        <div className="wallet-hero-actions">
+          {showEarnings ? (
+            <>
+              <Button variant="secondary">Withdraw</Button>
+              <Button>Transfer to Balance</Button>
+            </>
+          ) : tab === "topup" ? null : (
+            <Button icon="wallet" onClick={() => setTab("topup")}>Add Light</Button>
+          )}
         </div>
-      </Section>
-      <Section title="Top-up quote">
-        <Card>
-          <div className="split-card">
-            <div>
-              <Pill>100:1</Pill>
-              <h3>Users choose Light amount.</h3>
-              <p>Stripe processing fees are passed through with true gross-up for card or Bank (ACH).</p>
-            </div>
-            <div className="quote-box">
-              <span>10,000 Light</span>
-              <strong>$103.30 card</strong>
-              <small>$100.00 base + $3.30 processing</small>
-            </div>
-          </div>
-        </Card>
-      </Section>
-    </>
+      </div>
+
+      <div className="wallet-tabs" role="tablist" aria-label="Wallet sections">
+        {[
+          ["balance", "Balance"],
+          ["topup", "Top up"],
+          ["receipts", "Receipts"],
+          ["earnings", "Earnings"],
+        ].map(([id, label]) => (
+          <button
+            className={tab === id ? "active" : ""}
+            key={id}
+            onClick={() => setTab(id as WalletTabId)}
+            type="button"
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "balance" ? <WalletBalancePanel /> : null}
+      {tab === "topup" ? <WalletTopUpPanel /> : null}
+      {tab === "receipts" ? <WalletReceiptsPanel /> : null}
+      {tab === "earnings" ? <WalletEarningsPanel /> : null}
+    </div>
   );
 }
 
-export function SettingsFoundationPage(_props: LaunchPageProps): ReactElement {
+export function SettingsFoundationPage({ navigate }: LaunchPageProps): ReactElement {
+  const [newKeyVisible, setNewKeyVisible] = useState(false);
+  const [newToolPermission, setNewToolPermission] = useState<"always" | "ask" | "never">("ask");
+  const [installedPermission, setInstalledPermission] = useState<"always" | "ask" | "never">("ask");
+
   return (
-    <>
-      <PageHeader
-        eyebrow="Profile"
-        intro="Account settings, API key lifecycle, and external-agent permission defaults."
-        title="Launch-safe preferences."
-      />
-      <Section title="Agent access">
-        <div className="two-column">
-          <Card>
-            <h3>API key</h3>
-            <p>Create, copy once, rotate, or revoke scoped launch tokens.</p>
-            <CodeBlock>{apiKeyMask}</CodeBlock>
-          </Card>
-          <Card>
-            <h3>Default permission</h3>
-            <p>New external-agent function calls default to ask until explicitly allowed.</p>
-            <div className="segmented">
-              <span>Always</span>
-              <span className="active">Ask</span>
-              <span>Never</span>
-            </div>
-          </Card>
+    <div className="launch-page-narrow settings-page">
+      <div className="profile-strip">
+        <Avatar color="#0a0a0a" name="@you" />
+        <div>
+          <h1>Ada Lovelace</h1>
+          <p>ada@analytical.engine · @you</p>
         </div>
-      </Section>
-    </>
+        <Button size="sm" variant="secondary">Sign out</Button>
+      </div>
+
+      <SettingsCard
+        action={<Button onClick={() => setNewKeyVisible(true)} size="sm">Create key</Button>}
+        subtitle="Tokens your agents use to call Ultralight. New keys reveal once."
+        title="API keys"
+      >
+        <div className="api-key-primary">
+          <Icon name="key" />
+          <Mono>{apiKeyMask}</Mono>
+          <Button size="sm" variant="secondary">Copy</Button>
+          <Button onClick={() => setNewKeyVisible(true)} size="sm" variant="secondary">
+            Rotate & copy
+          </Button>
+        </div>
+        <p className="settings-help">Rotating issues a new key and revokes the old one. Connected agents must be updated.</p>
+        <div className="api-key-list">
+          {apiKeys.map((key) => <ApiKeyRow key={key.prefix} apiKey={key} />)}
+        </div>
+      </SettingsCard>
+
+      <SettingsCard subtitle="Launch-safe defaults only. No BYOK or web-search controls in this MVP." title="Preferences">
+        <PreferenceRow
+          control={<PermissionSelect onChange={setNewToolPermission} value={newToolPermission} />}
+          description="How agents may call functions on tools you deploy."
+          title="Default new tool permissions"
+        />
+        <PreferenceRow
+          control={<PermissionSelect onChange={setInstalledPermission} value={installedPermission} />}
+          description="How agents may call functions on tools you install."
+          title="Default installed tool permissions"
+        />
+      </SettingsCard>
+
+      <div className="connect-agent-callout">
+        <span className="target-icon"><Icon name="copy" /></span>
+        <div>
+          <strong>Connecting an agent?</strong>
+          <p>Use Add to agent. It bundles your API key into install instructions without passing it to widgets.</p>
+        </div>
+        <RouteButton icon="copy" navigate={navigate} to="/install" variant="secondary">
+          Add to agent
+        </RouteButton>
+      </div>
+
+      {newKeyVisible ? <NewApiKeyModal onClose={() => setNewKeyVisible(false)} /> : null}
+    </div>
+  );
+}
+
+function WalletAmount({ label, value }: { label: string; value: number }): ReactElement {
+  const [whole, fraction] = value.toFixed(3).split(".");
+  return (
+    <div className="wallet-amount">
+      <span>{label}</span>
+      <strong>
+        <small>✦</small>
+        {Number(whole).toLocaleString()}
+        <em>.{fraction}</em>
+      </strong>
+    </div>
+  );
+}
+
+function WalletBalancePanel(): ReactElement {
+  return (
+    <div className="wallet-panel">
+      <div className="wallet-metric-grid">
+        <MetricTile label="Deposited" value={`✦${formatNumber(walletSummary.deposited)}`} />
+        <MetricTile label="Earned" value={`✦${formatNumber(walletSummary.earned)}`} />
+        <MetricTile label="Escrow" value={`✦${formatNumber(walletSummary.escrow)}`} />
+      </div>
+      <Card className="wallet-ledger-card">
+        <div className="wallet-section-head">
+          <h2>Balance ledger</h2>
+          <Pill>infinite scroll</Pill>
+        </div>
+        <div className="wallet-ledger">
+          {walletLedger.map((row, index) => <WalletLedgerRow first={index === 0} key={`${row.detail}-${row.when}`} row={row} />)}
+          <WalletLoadingFooter />
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function WalletTopUpPanel(): ReactElement {
+  const [method, setMethod] = useState<PaymentMethod>("card");
+  const [lightAmount, setLightAmount] = useState(10000);
+  const quote = quoteTopUp(lightAmount, method);
+  const presets = method === "earnings"
+    ? [1000, 2500, 10000, 25000, Math.floor(walletSummary.earned)]
+    : [1000, 2500, 10000, 25000, 50000];
+
+  return (
+    <div className="wallet-topup-grid">
+      <Card className="wallet-topup-card">
+        <p className="section-label">Light amount</p>
+        <div className="light-input-shell">
+          <span>✦</span>
+          <strong>{lightAmount.toLocaleString()}</strong>
+          <small>Light</small>
+        </div>
+        <div className="amount-presets">
+          {presets.map((amount) => (
+            <button
+              className={lightAmount === amount ? "active" : ""}
+              key={amount}
+              onClick={() => setLightAmount(amount)}
+              type="button"
+            >
+              {amount === Math.floor(walletSummary.earned) && method === "earnings" ? "Max" : amount.toLocaleString()}
+            </button>
+          ))}
+        </div>
+        <div className="payment-methods">
+          <button className={method === "card" ? "active" : ""} onClick={() => setMethod("card")} type="button">
+            <strong>Card</strong>
+            <span>2.9% + $0.30 gross-up</span>
+          </button>
+          <button className={method === "ach" ? "active" : ""} onClick={() => setMethod("ach")} type="button">
+            <strong>Bank (ACH)</strong>
+            <span>0.8% gross-up, capped at $5</span>
+          </button>
+          <button className={method === "earnings" ? "active" : ""} onClick={() => setMethod("earnings")} type="button">
+            <strong>Transfer from earnings</strong>
+            <span>Instant, no fee</span>
+          </button>
+        </div>
+      </Card>
+
+      <Card className="wallet-quote-card">
+        <p className="section-label">{method === "earnings" ? "Transfer summary" : "Order summary"}</p>
+        <QuoteLine label={method === "earnings" ? "From earnings" : "Base value"} value={formatCurrency(quote.baseDollars)} />
+        <QuoteLine label="Processing fee" muted={quote.feeNote} value={formatCurrency(quote.feeDollars)} />
+        <QuoteLine label="Rate" value={method === "earnings" ? "1:1 · no fee" : "✦100 / $1"} />
+        <div className="quote-total">
+          <span>{method === "earnings" ? "Transfer" : "Total"}</span>
+          <strong>{formatCurrency(quote.totalDollars)}</strong>
+        </div>
+        <div className="quote-receive">
+          <span>You receive</span>
+          <strong>✦{lightAmount.toLocaleString()}</strong>
+        </div>
+        <Button size="lg">
+          {method === "earnings" ? `Transfer ✦${lightAmount.toLocaleString()}` : `Pay ${formatCurrency(quote.totalDollars)}`}
+        </Button>
+        <div className="secure-note">
+          <Icon name="shield" size={12} />
+          <span>{method === "earnings" ? "Instant internal transfer" : "Secure checkout · Stripe"}</span>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function WalletReceiptsPanel(): ReactElement {
+  return (
+    <Card className="wallet-table-card">
+      <div className="wallet-section-head">
+        <h2>Receipts</h2>
+        <Pill>tool calls</Pill>
+      </div>
+      <div className="wallet-receipt-table">
+        <div className="wallet-table-head">
+          <span>Tool</span>
+          <span>Light</span>
+          <span>Latency</span>
+          <span>Status</span>
+          <span>When</span>
+        </div>
+        {walletReceipts.map((receipt) => <WalletReceiptRow key={`${receipt.tool}-${receipt.when}`} receipt={receipt} />)}
+      </div>
+    </Card>
+  );
+}
+
+function WalletEarningsPanel(): ReactElement {
+  return (
+    <div className="wallet-panel">
+      <Card className="payout-banner">
+        <span className="target-icon"><Icon name="shield" /></span>
+        <div>
+          <h3>Payouts ready</h3>
+          <p>Stripe Connect payouts are enabled. Withdraw earned Light to your bank or transfer to spendable balance.</p>
+        </div>
+        <Button size="sm">Withdraw earnings</Button>
+      </Card>
+      <Card className="wallet-ledger-card">
+        <div className="wallet-section-head">
+          <h2>Earnings ledger</h2>
+          <Pill>creator income</Pill>
+        </div>
+        <div className="wallet-ledger">
+          {walletEarnings.map((row, index) => <WalletLedgerRow first={index === 0} key={`${row.detail}-${row.when}`} row={row} />)}
+          <WalletLoadingFooter />
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function WalletLedgerRow({ first, row }: { first: boolean; row: LedgerRow }): ReactElement {
+  const positive = row.amount > 0;
+  const glyphs: Record<LedgerRow["kind"], string> = {
+    call: "→",
+    earning: "✦",
+    payout: "↑",
+    topup: "+",
+    transfer: "⇄",
+  };
+  return (
+    <div className={first ? "wallet-ledger-row first" : "wallet-ledger-row"}>
+      <Mono>{glyphs[row.kind]}</Mono>
+      <span>{row.detail}</span>
+      <Mono>{row.when}</Mono>
+      <span className={positive ? "mono positive" : "mono"}>
+        {positive ? "+" : "-"}✦{Math.abs(row.amount).toLocaleString(undefined, { maximumFractionDigits: 3, minimumFractionDigits: 3 })}
+      </span>
+    </div>
+  );
+}
+
+function WalletReceiptRow({ receipt }: { receipt: ReceiptRowFixture }): ReactElement {
+  return (
+    <div className="wallet-receipt-row">
+      <span className="status-cell">
+        <span className={receipt.status === "error" ? "error" : ""} />
+        <Mono>{receipt.tool}<em>·{receipt.fn}</em></Mono>
+      </span>
+      <Mono>✦{receipt.light.toFixed(3)}</Mono>
+      <Mono>{receipt.latency}ms</Mono>
+      <span className={receipt.status === "error" ? "mono error" : "mono positive"}>{receipt.status}</span>
+      <Mono>{receipt.when}</Mono>
+    </div>
+  );
+}
+
+function WalletLoadingFooter(): ReactElement {
+  return (
+    <div className="wallet-loading-footer">
+      <span className="widget-spinner" />
+      <span>Loading more...</span>
+    </div>
+  );
+}
+
+function QuoteLine({ label, muted, value }: { label: string; muted?: string; value: string }): ReactElement {
+  return (
+    <div className="quote-line">
+      <span>{label}{muted ? <small> · {muted}</small> : null}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function SettingsCard({
+  action,
+  children,
+  subtitle,
+  title,
+}: {
+  action?: ReactNode;
+  children: ReactNode;
+  subtitle?: string;
+  title: string;
+}): ReactElement {
+  return (
+    <Card className="settings-card">
+      <div className="settings-card-head">
+        <div>
+          <h2>{title}</h2>
+          {subtitle ? <p>{subtitle}</p> : null}
+        </div>
+        {action}
+      </div>
+      <div className="settings-card-body">{children}</div>
+    </Card>
+  );
+}
+
+function ApiKeyRow({ apiKey }: { apiKey: ApiKeyFixture }): ReactElement {
+  return (
+    <div className="api-key-row">
+      <Icon name="key" />
+      <div>
+        <strong>{apiKey.name}</strong>
+        <Mono>{apiKey.prefix} · {apiKey.scopes}</Mono>
+      </div>
+      <div>
+        <span>Last used</span>
+        <Mono>{apiKey.lastUsed}</Mono>
+      </div>
+      <button type="button">Revoke</button>
+    </div>
+  );
+}
+
+function PreferenceRow({
+  control,
+  description,
+  title,
+}: {
+  control: ReactNode;
+  description: string;
+  title: string;
+}): ReactElement {
+  return (
+    <div className="preference-row">
+      <div>
+        <strong>{title}</strong>
+        <span>{description}</span>
+      </div>
+      {control}
+    </div>
+  );
+}
+
+function PermissionSelect({
+  onChange,
+  value,
+}: {
+  onChange: (value: "always" | "ask" | "never") => void;
+  value: "always" | "ask" | "never";
+}): ReactElement {
+  const labels = { always: "Always", ask: "Always ask", never: "Never" } as const;
+  return (
+    <div className="permission-select">
+      {(["always", "ask", "never"] as const).map((option) => (
+        <button
+          className={value === option ? "active" : ""}
+          key={option}
+          onClick={() => onChange(option)}
+          type="button"
+        >
+          {labels[option]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function NewApiKeyModal({ onClose }: { onClose: () => void }): ReactElement {
+  return (
+    <div className="settings-modal-backdrop">
+      <Card className="new-key-modal">
+        <div className="modal-title-row">
+          <span className="target-icon"><Icon name="key" /></span>
+          <h2>API key created</h2>
+        </div>
+        <p>Copy it now. For your security, you will not be able to see it again.</p>
+        <div className="new-key-value">
+          <Mono>ulk_live_7Qp2sR9vK3mD8xN4</Mono>
+          <Button icon="copy" size="sm" variant="secondary">Copy</Button>
+        </div>
+        <div className="modal-actions">
+          <Button onClick={onClose} size="sm" variant="secondary">Add to install config</Button>
+          <Button onClick={onClose} size="sm">Done</Button>
+        </div>
+      </Card>
+    </div>
   );
 }
 
@@ -2392,6 +2817,46 @@ function adminToolFromRoute(id?: string): ToolDetailFixture {
 function adminTabFromSearch(): AdminTabId {
   const tab = new URLSearchParams(window.location.search).get("tab");
   return adminTabs.some(([id]) => id === tab) ? tab as AdminTabId : "edit";
+}
+
+function walletTabFromSearch(): WalletTabId {
+  const tab = new URLSearchParams(window.location.search).get("tab");
+  return ["balance", "earnings", "receipts", "topup"].includes(tab || "")
+    ? tab as WalletTabId
+    : "balance";
+}
+
+function quoteTopUp(lightAmount: number, method: PaymentMethod): {
+  baseDollars: number;
+  feeDollars: number;
+  feeNote: string;
+  totalDollars: number;
+} {
+  const baseDollars = lightAmount / 100;
+  if (method === "earnings") {
+    return { baseDollars, feeDollars: 0, feeNote: "none", totalDollars: baseDollars };
+  }
+  if (method === "ach") {
+    const uncappedTotal = baseDollars / 0.992;
+    const totalDollars = uncappedTotal > 625 ? baseDollars + 5 : uncappedTotal;
+    return {
+      baseDollars,
+      feeDollars: totalDollars - baseDollars,
+      feeNote: "0.8%, max $5",
+      totalDollars,
+    };
+  }
+  const totalDollars = (baseDollars + 0.3) / 0.971;
+  return {
+    baseDollars,
+    feeDollars: totalDollars - baseDollars,
+    feeNote: "2.9% + $0.30",
+    totalDollars,
+  };
+}
+
+function formatCurrency(value: number): string {
+  return `$${value.toFixed(2)}`;
 }
 
 function argDefault(arg: string): string {
