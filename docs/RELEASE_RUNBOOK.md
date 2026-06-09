@@ -11,11 +11,15 @@ Before running this flow, make sure:
 - the staging and production Workers.dev origins point at the right Worker
   deployments; if replacing them with custom domains, confirm the domains are
   project-owned first
+- the `ultralight-launch-web` Cloudflare Pages project exists, with production
+  branch `main` and staging preview branch `staging`
 - GitHub environment secrets are configured for:
   - staging database deploy
   - production database deploy
   - staging API deploy
   - production API deploy
+  - staging launch-web Pages deploy
+  - production launch-web Pages deploy
   - desktop macOS signing / notarization
   - desktop Windows signing
   - Tauri updater signing + public key
@@ -60,8 +64,12 @@ The canonical launch runtime is:
 
 - main API: Cloudflare Worker from
   [api/src/worker-entry.ts](../api/src/worker-entry.ts)
+- launch website: Cloudflare Pages static SPA from
+  [apps/launch-web](../apps/launch-web)
 - deployment path: Wrangler plus
   [.github/workflows/api-deploy.yml](../.github/workflows/api-deploy.yml)
+  and
+  [.github/workflows/launch-web-deploy.yml](../.github/workflows/launch-web-deploy.yml)
 - schema path: [supabase/migrations/](../supabase/migrations)
 
 Important scope note:
@@ -243,6 +251,7 @@ scorecard should move only after a real restore has been executed and validated.
    - `Launch Guardrails`
    - `Supabase DB` staging deploy
    - `API Deploy` staging deploy
+   - `Launch Web Deploy` staging deploy
    - `Desktop Build`
    - `Staging Launch Gate`
 3. Locally or in CI, confirm the Wave 1 guardrail baseline still matches:
@@ -268,6 +277,24 @@ scorecard should move only after a real restore has been executed and validated.
      --supabase-url https://vonlzcnwxbwaxlbngjre.supabase.co \
      --exercise-chat
    ```
+   Then run the staging launch-web Pages smoke:
+
+   ```bash
+   ULTRALIGHT_TOKEN=... \
+   node scripts/smoke/launch-web-pages-smoke.mjs \
+     --target staging \
+     --pages-url https://staging.ultralight-launch-web.pages.dev \
+     --api-url https://ultralight-api-staging.rgn4jz429m.workers.dev \
+     --tool-slug <known-public-tool-slug> \
+     --admin-tool-id <owned-staging-tool-id> \
+     --output-dir "$UL_LAUNCH_EVIDENCE_DIR"
+   ```
+
+   This writes `smoke/launch-web-pages.json` and
+   `smoke/launch-web-pages.md`. The Pages route probes should return the SPA
+   shell, the public launch API probes should return valid JSON, and the API
+   CORS probe should allow
+   `https://staging.ultralight-launch-web.pages.dev`.
 5. If staging fails, fix forward on `main`. Do not tag a known-bad commit.
 6. Confirm the desktop version is correct in:
    - `desktop/package.json`
@@ -285,6 +312,7 @@ scorecard should move only after a real restore has been executed and validated.
 8. Watch the tag-triggered production workflows:
    - `Supabase Production DB`
    - `API Deploy`
+   - `Launch Web Deploy`
    - `Desktop Release`
    - `Production Launch Gate`
    Then initialize the production packet if it does not already exist:
@@ -309,6 +337,22 @@ scorecard should move only after a real restore has been executed and validated.
      --supabase-url https://uavjzycsltdnwblwutmb.supabase.co \
      --exercise-chat
    ```
+   Then run the production launch-web Pages smoke:
+
+   ```bash
+   ULTRALIGHT_TOKEN=... \
+   node scripts/smoke/launch-web-pages-smoke.mjs \
+     --target production \
+     --pages-url https://ultralight-launch-web.pages.dev \
+     --api-url https://ultralight-api.rgn4jz429m.workers.dev \
+     --tool-slug <known-public-tool-slug> \
+     --admin-tool-id <owned-production-tool-id> \
+     --output-dir "$UL_LAUNCH_EVIDENCE_DIR"
+   ```
+
+   The Pages probes should return the SPA shell, the API probes should return
+   valid launch JSON, and the API CORS probe should allow
+   `https://ultralight-launch-web.pages.dev`.
    The production gate summary should reference the same candidate SHA that
    already passed `Staging Launch Gate`, plus the required production workflow
    run links for the release tag. Record those URLs and the resulting smoke
@@ -351,6 +395,17 @@ That creates the minimum rehearsal artifacts:
 - Fix forward with a new patch release.
 - Do not move or reuse the existing tag.
 - Cut a new tag such as `v0.1.1` from a revert or hotfix commit.
+
+### Launch website rollback
+
+- Cloudflare Pages deployments are independent from the API Worker. If a
+  launch-web-only deploy is bad, roll the `ultralight-launch-web` project back
+  to the previous successful deployment in Cloudflare Pages, then record the
+  deployment ID in the release packet.
+- If rollback needs to happen from source instead, revert the launch-web change
+  on `main` for staging or cut a patch tag for production. Do not point staging
+  Pages at production API or production Pages at staging API to work around a
+  bad build.
 
 ### Database caution
 

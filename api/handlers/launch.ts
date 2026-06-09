@@ -16,7 +16,10 @@ import {
 import { buildAppTrustCard } from "../services/trust.ts";
 import { RequestValidationError } from "../services/request-validation.ts";
 import { createEmbeddingService } from "../services/embedding.ts";
-import { getRecentCalls } from "../services/call-logger.ts";
+import {
+  createExecutionReceiptId,
+  getRecentCalls,
+} from "../services/call-logger.ts";
 import {
   type ApiToken,
   createToken,
@@ -56,12 +59,16 @@ import {
   type LaunchPricingSummary,
   type LaunchPublicRoute,
   type LaunchRelevanceSummary,
+  type LaunchSemanticSubjectType,
+  type LaunchSkillPullResponse,
+  type LaunchSkillSummary,
   type LaunchToolAdminSummary,
   type LaunchToolFunctionsResponse,
   type LaunchToolInstallContext,
   type LaunchToolKind,
   type LaunchToolOwnerSummary,
   type LaunchToolRelationship,
+  type LaunchToolSkillsResponse,
   type LaunchToolSummary,
   type LaunchToolVisibility,
   type LaunchTrustCard,
@@ -101,10 +108,17 @@ import {
   normalizeLaunchFundingMethod,
   quoteLaunchWalletFunding,
 } from "../services/stripe-processing-fees.ts";
+import { getBillingConfig } from "../services/billing-config.ts";
 import {
   listAgentFunctionPermissions,
   updateAgentFunctionPermissions,
 } from "../services/agent-function-permissions.ts";
+import {
+  listAppSkills,
+  pullSkillContext,
+  SkillPullBillingError,
+} from "../services/skill-pulls.ts";
+import { resolveManifestAccessPolicy } from "../services/access-policy.ts";
 
 const APP_SELECT = [
   "id",
@@ -118,9 +132,12 @@ const APP_SELECT = [
   "current_version",
   "manifest",
   "exports",
+  "skills_md",
   "pricing_config",
   "gpu_pricing_config",
   "runtime",
+  "app_type",
+  "storage_key",
   "gpu_status",
   "gpu_type",
   "version_metadata",
@@ -165,9 +182,12 @@ interface LaunchAppRow {
   current_version?: string | null;
   manifest?: unknown;
   exports?: string[] | null;
+  skills_md?: string | null;
   pricing_config?: unknown;
   gpu_pricing_config?: unknown;
   runtime?: string | null;
+  app_type?: string | null;
+  storage_key?: string | null;
   gpu_status?: string | null;
   gpu_type?: string | null;
   version_metadata?: unknown;
@@ -257,6 +277,17 @@ interface BuilderLeaderboardRpcRow {
 
 interface SemanticAppMatchRow {
   id: string;
+  similarity?: number | null;
+}
+
+interface ToolSemanticEmbeddingMatchRow {
+  embedding_id: string;
+  app_id: string | null;
+  app_version: string;
+  subject_type: LaunchSemanticSubjectType;
+  subject_id: string;
+  subject_label?: string | null;
+  embedding_text_hash: string;
   similarity?: number | null;
 }
 
@@ -432,6 +463,17 @@ export async function handleLaunch(request: Request): Promise<Response> {
       );
     }
 
+    const skillPullMatch = path.match(
+      /^\/api\/launch\/tools\/([^/]+)\/skills\/([^/]+)\/pull$/,
+    );
+    if (skillPullMatch && method === "POST") {
+      return await handleLaunchSkillPull(
+        request,
+        skillPullMatch[1],
+        skillPullMatch[2],
+      );
+    }
+
     const widgetRenderMatch = path.match(
       /^\/api\/launch\/tools\/([^/]+)\/widgets\/([^/]+)\/render$/,
     );
@@ -521,6 +563,13 @@ export async function handleLaunch(request: Request): Promise<Response> {
       return await handleLaunchToolFunctions(request, functionsMatch[1]);
     }
 
+    const skillsMatch = path.match(
+      /^\/api\/launch\/tools\/([^/]+)\/skills$/,
+    );
+    if (skillsMatch) {
+      return await handleLaunchToolSkills(request, skillsMatch[1]);
+    }
+
     const widgetDetailMatch = path.match(
       /^\/api\/launch\/tools\/([^/]+)\/widgets\/([^/]+)$/,
     );
@@ -583,6 +632,8 @@ function buildLaunchStatus(request: Request): Record<string, unknown> {
       widgetRender: "/api/launch/tools/{id}/widgets/{widgetId}/render",
       toolFunctions: "/api/launch/tools/{id}/functions",
       functionRun: "/api/launch/tools/{id}/functions/{functionName}/run",
+      toolSkills: "/api/launch/tools/{id}/skills",
+      skillPull: "/api/launch/tools/{id}/skills/{skillId}/pull",
       agentPermissions: "/api/launch/tools/{id}/agent-permissions",
       platformPrimitives: "/api/launch/platform-primitives?q={query}",
       leaderboard: "/api/launch/leaderboard?kind=builder&period=30d",
@@ -1125,6 +1176,66 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
           },
         },
       },
+      "/api/launch/tools/{id}/skills": {
+        get: {
+          operationId: "getLaunchToolSkills",
+          summary: "List monetizable skills for a tool",
+          description:
+            "Returns skill context metadata and pull pricing. Pulling a full skill brings context into an agent prompt and does not execute the tool Worker.",
+          parameters: [{
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+            description: "Tool id or slug",
+          }],
+          responses: {
+            "200": {
+              description: "Tool skill summaries",
+              content: jsonContent({
+                $ref: "#/components/schemas/ToolSkillsResponse",
+              }),
+            },
+            "404": { description: "Tool not found" },
+          },
+        },
+      },
+      "/api/launch/tools/{id}/skills/{skillId}/pull": {
+        post: {
+          operationId: "pullLaunchToolSkill",
+          summary: "Pull full skill context into an agent prompt",
+          description:
+            "Authenticated account-session endpoint. Charges configured skill context pricing and returns the full skill content plus receipt economics.",
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: "id",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+              description: "Tool id or slug",
+            },
+            {
+              name: "skillId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+              description: "Skill id from the tool skills endpoint",
+            },
+          ],
+          responses: {
+            "200": {
+              description: "Skill content and receipt economics",
+              content: jsonContent({
+                $ref: "#/components/schemas/SkillPullResponse",
+              }),
+            },
+            "401": { description: "Authentication required" },
+            "402": { description: "Light balance required by skill pricing" },
+            "404": { description: "Tool or skill not found" },
+          },
+        },
+      },
       "/api/launch/tools/{id}/agent-permissions": {
         get: {
           operationId: "getLaunchToolAgentPermissions",
@@ -1576,8 +1687,35 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
                 { type: "null" },
               ],
             },
+            defaultSkillPullPrice: {
+              oneOf: [
+                {
+                  type: "object",
+                  properties: {
+                    light: { type: "number" },
+                    display: { type: "string" },
+                  },
+                },
+                { type: "null" },
+              ],
+            },
             freeToInstall: { type: "boolean" },
             paidFunctionsCount: { type: "integer" },
+            paidSkillsCount: { type: "integer" },
+          },
+        },
+        AccessPolicySummary: {
+          type: "object",
+          required: ["configured", "mode", "module", "exportName", "execution"],
+          properties: {
+            configured: { type: "boolean" },
+            mode: { type: "string", enum: ["static", "module"] },
+            module: { type: ["string", "null"] },
+            exportName: { type: "string" },
+            execution: {
+              type: "string",
+              enum: ["static_pricing", "runtime_policy"],
+            },
           },
         },
         FunctionSummary: {
@@ -1595,6 +1733,12 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
               additionalProperties: true,
             },
             pricing: { $ref: "#/components/schemas/PricingSummary" },
+            accessPolicy: {
+              oneOf: [
+                { $ref: "#/components/schemas/AccessPolicySummary" },
+                { type: "null" },
+              ],
+            },
             widgetIds: { type: "array", items: { type: "string" } },
             agentPermission: {
               oneOf: [
@@ -1631,6 +1775,81 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
             result: {},
             receiptId: { type: ["string", "null"] },
             warnings: { type: "array", items: { type: "object" } },
+            error: {
+              type: ["object", "null"],
+              properties: {
+                type: { type: "string" },
+                message: { type: "string" },
+                details: {},
+              },
+            },
+            generatedAt: { type: "string", format: "date-time" },
+          },
+        },
+        SkillSummary: {
+          type: "object",
+          required: ["id", "name", "semanticDescription", "pullUrl"],
+          properties: {
+            id: { type: "string" },
+            name: { type: "string" },
+            description: { type: ["string", "null"] },
+            semanticDescription: { type: "string" },
+            pricing: {
+              type: ["object", "null"],
+              properties: {
+                pullPrice: {
+                  oneOf: [
+                    {
+                      type: "object",
+                      properties: {
+                        light: { type: "number" },
+                        display: { type: "string" },
+                      },
+                    },
+                    { type: "null" },
+                  ],
+                },
+                freePulls: { type: "integer" },
+                monetized: { type: "boolean" },
+              },
+            },
+            accessPolicy: {
+              oneOf: [
+                { $ref: "#/components/schemas/AccessPolicySummary" },
+                { type: "null" },
+              ],
+            },
+            pullUrl: { type: "string" },
+          },
+        },
+        ToolSkillsResponse: {
+          type: "object",
+          required: ["tool", "skills", "generatedAt"],
+          properties: {
+            tool: { type: "object" },
+            skills: {
+              type: "array",
+              items: { $ref: "#/components/schemas/SkillSummary" },
+            },
+            generatedAt: { type: "string", format: "date-time" },
+          },
+        },
+        SkillPullResponse: {
+          type: "object",
+          required: ["success", "tool", "skill", "generatedAt"],
+          properties: {
+            success: { type: "boolean" },
+            tool: { type: "object" },
+            skill: { $ref: "#/components/schemas/SkillSummary" },
+            content: { type: "string" },
+            receiptId: { type: ["string", "null"] },
+            charged: { $ref: "#/components/schemas/MoneyAmount" },
+            developerRevenue: { $ref: "#/components/schemas/MoneyAmount" },
+            platformFee: { $ref: "#/components/schemas/MoneyAmount" },
+            freePull: { type: "boolean" },
+            freePullCount: { type: ["integer", "null"] },
+            freePullLimit: { type: "integer" },
+            waiverSource: { type: ["string", "null"] },
             error: {
               type: ["object", "null"],
               properties: {
@@ -1888,6 +2107,11 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
             infraCharge: { $ref: "#/components/schemas/MoneyAmount" },
             platformFee: { $ref: "#/components/schemas/MoneyAmount" },
             developerNet: { $ref: "#/components/schemas/MoneyAmount" },
+            billingConfigVersion: { type: ["integer", "null"], minimum: 1 },
+            billingConfigVersions: {
+              type: "array",
+              items: { type: "integer", minimum: 1 },
+            },
             createdAt: { type: ["string", "null"], format: "date-time" },
             receiptUrl: { type: ["string", "null"] },
           },
@@ -1979,6 +2203,20 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
             },
             score: { type: ["number", "null"] },
             signals: { type: "array", items: { type: "string" } },
+            subjectType: {
+              type: "string",
+              enum: [
+                "app",
+                "function",
+                "skill",
+                "widget",
+                "platform_primitive",
+              ],
+            },
+            subjectId: { type: ["string", "null"] },
+            subjectLabel: { type: ["string", "null"] },
+            appVersion: { type: ["string", "null"] },
+            embeddingTextHash: { type: ["string", "null"] },
           },
         },
       },
@@ -2304,6 +2542,34 @@ async function handleLaunchToolFunctions(
   );
 }
 
+async function handleLaunchToolSkills(
+  request: Request,
+  encodedLocator: string,
+): Promise<Response> {
+  const viewer = await tryAuthenticate(request);
+  const resolved = viewer
+    ? await resolveLaunchRunnableTool(viewer, encodedLocator)
+    : await resolvePublicLaunchTool(encodedLocator);
+  if (!resolved) return error("Tool not found", 404);
+  const { row, installedIds } = resolved;
+
+  const owners = await fetchOwnerMap([row.owner_id]);
+  const tool = toLaunchToolSummary(row, {
+    owners,
+    viewerId: viewer?.id,
+    installedIds,
+    includeWidgets: false,
+  });
+
+  return json(
+    {
+      tool: toLaunchToolHandle(tool),
+      skills: buildLaunchSkillSummaries(row),
+      generatedAt: new Date().toISOString(),
+    } satisfies LaunchToolSkillsResponse,
+  );
+}
+
 async function handleLaunchFunctionRun(
   request: Request,
   encodedLocator: string,
@@ -2373,6 +2639,108 @@ async function handleLaunchFunctionRun(
       generatedAt: new Date().toISOString(),
     } satisfies LaunchFunctionRunResponse,
   );
+}
+
+async function handleLaunchSkillPull(
+  request: Request,
+  encodedLocator: string,
+  encodedSkillId: string,
+): Promise<Response> {
+  const user = await requireLaunchUser(request);
+  requireAccountSessionForFunctionRun(user);
+  const resolved = await resolveLaunchRunnableTool(user, encodedLocator);
+  if (!resolved) return error("Tool not found", 404);
+  const { row } = resolved;
+  const skillId = parseSkillId(encodedSkillId);
+  const operationId = request.headers.get("Idempotency-Key")?.trim() ||
+    request.headers.get("X-Idempotency-Key")?.trim() ||
+    createExecutionReceiptId();
+
+  try {
+    const result = await pullSkillContext({
+      app: row,
+      userId: user.id,
+      skillId,
+      operationId,
+      metadata: {
+        launch_route: `/api/launch/tools/${
+          row.slug || row.id
+        }/skills/${skillId}/pull`,
+        operation_id: operationId,
+      },
+    });
+    const skill = toLaunchSkillSummary(row, result.skill);
+    const tool = {
+      id: row.id,
+      slug: row.slug || row.id,
+      name: row.name || row.slug || row.id,
+    };
+
+    return json(
+      {
+        success: true,
+        tool,
+        skill,
+        content: result.content,
+        receiptId: result.receipt.id,
+        charged: result.chargedLight > 0 ? money(result.chargedLight) : null,
+        developerRevenue: result.developerRevenueLight > 0
+          ? money(result.developerRevenueLight)
+          : null,
+        platformFee: result.platformFeeLight > 0
+          ? money(result.platformFeeLight)
+          : null,
+        freePull: result.freePull,
+        freePullCount: result.freePullCount,
+        freePullLimit: result.freePullLimit,
+        waiverSource: result.waiverSource,
+        error: null,
+        generatedAt: new Date().toISOString(),
+      } satisfies LaunchSkillPullResponse,
+    );
+  } catch (err) {
+    const status = err instanceof SkillPullBillingError
+      ? err.status
+      : err instanceof Error && err.message === "Skill not found"
+      ? 404
+      : 500;
+    return json(
+      {
+        success: false,
+        tool: {
+          id: row.id,
+          slug: row.slug || row.id,
+          name: row.name || row.slug || row.id,
+        },
+        skill: buildLaunchSkillSummaries(row).find((skill) =>
+          skill.id === skillId
+        ) || {
+          id: skillId,
+          name: skillId,
+          description: null,
+          semanticDescription: skillId,
+          pricing: null,
+          pullUrl: `/api/launch/tools/${
+            encodeURIComponent(row.slug || row.id)
+          }/skills/${encodeURIComponent(skillId)}/pull`,
+        },
+        receiptId: null,
+        charged: null,
+        error: {
+          type: err instanceof SkillPullBillingError
+            ? err.code === "access_policy_denied"
+              ? "access_policy_denied"
+              : err.code === "access_policy_error"
+              ? "access_policy_error"
+              : "caller_light_required"
+            : "skill_pull_failed",
+          message: err instanceof Error ? err.message : "Skill pull failed",
+        },
+        generatedAt: new Date().toISOString(),
+      } satisfies LaunchSkillPullResponse,
+      status,
+    );
+  }
 }
 
 async function handleLaunchWidgetDetail(
@@ -2602,21 +2970,23 @@ async function handleLaunchToolAgentPermissionsUpdate(
 async function handleLaunchWallet(request: Request): Promise<Response> {
   const user = await requireLaunchUser(request);
   const db = getDbConfig();
-  const [rows, transactions, receipts, earnings, payouts] = await Promise.all([
-    dbGet<WalletRow>(
-      db,
-      "users",
-      {
-        id: `eq.${user.id}`,
-        select: USER_BALANCE_SELECT,
-        limit: "1",
-      },
-    ),
-    fetchWalletTransactions(user.id),
-    fetchWalletReceipts(user.id),
-    fetchWalletEarnings(user.id),
-    fetchWalletPayouts(user.id),
-  ]);
+  const [rows, transactions, receipts, earnings, payouts, billingConfig] =
+    await Promise.all([
+      dbGet<WalletRow>(
+        db,
+        "users",
+        {
+          id: `eq.${user.id}`,
+          select: USER_BALANCE_SELECT,
+          limit: "1",
+        },
+      ),
+      fetchWalletTransactions(user.id),
+      fetchWalletReceipts(user.id),
+      fetchWalletEarnings(user.id),
+      fetchWalletPayouts(user.id),
+      getBillingConfig(),
+    ]);
   const row = rows[0] || {
     balance_light: 0,
     deposit_balance_light: 0,
@@ -2631,6 +3001,17 @@ async function handleLaunchWallet(request: Request): Promise<Response> {
     earnedBalance: money(numeric(row.earned_balance_light)),
     escrowBalance: money(numeric(row.escrow_light)),
     canTopUp: true,
+    publishRequirement: {
+      enabled: billingConfig.publishDepositEnabled,
+      requiredBalance: money(billingConfig.publisherMinPublishBalanceLight),
+      currentBalance: money(balance),
+      met: !billingConfig.publishDepositEnabled ||
+        balance >= billingConfig.publisherMinPublishBalanceLight,
+      nextAction: billingConfig.publishDepositEnabled &&
+          balance < billingConfig.publisherMinPublishBalanceLight
+        ? "Add Light from Wallet to go live."
+        : null,
+    },
     topUpUrl: "/wallet?tab=topup",
     transactionsUrl: "/wallet?tab=transactions",
     receiptsUrl: "/wallet?tab=receipts",
@@ -3081,6 +3462,8 @@ function toLaunchWalletReceipt(
     infraCharge: money(numeric(row.receipt.infra_light)),
     platformFee: money(numeric(row.receipt.platform_fee_light)),
     developerNet: money(numeric(row.receipt.developer_net_light)),
+    billingConfigVersion: row.receipt.billing_config_version ?? null,
+    billingConfigVersions: row.receipt.billing_config_versions ?? [],
     createdAt: row.created_at || null,
     receiptUrl: `/wallet?tab=receipts&receipt=${
       encodeURIComponent(row.receipt_id)
@@ -3382,6 +3765,111 @@ async function fetchSemanticPublicApps(options: {
   kind: LaunchToolKind | "all";
   limit: number;
 }): Promise<RankedLaunchAppRow[]> {
+  let subjectRows: RankedLaunchAppRow[] = [];
+  try {
+    subjectRows = await fetchSubjectSemanticPublicApps(options);
+  } catch (err) {
+    console.warn("[LAUNCH] Subject semantic search unavailable:", err);
+  }
+
+  if (subjectRows.length >= options.limit) {
+    return subjectRows.slice(0, options.limit);
+  }
+
+  let legacyRows: RankedLaunchAppRow[] = [];
+  try {
+    legacyRows = await fetchLegacySemanticPublicApps(options);
+  } catch (err) {
+    if (subjectRows.length > 0) return subjectRows.slice(0, options.limit);
+    throw err;
+  }
+
+  const seen = new Set(subjectRows.map((row) => row.id));
+  return [
+    ...subjectRows,
+    ...legacyRows.filter((row) => !seen.has(row.id)),
+  ].slice(0, options.limit);
+}
+
+async function fetchSubjectSemanticPublicApps(options: {
+  embedding: number[];
+  kind: LaunchToolKind | "all";
+  limit: number;
+}): Promise<RankedLaunchAppRow[]> {
+  const db = getDbConfig();
+  const response = await fetch(
+    `${db.baseUrl}/rest/v1/rpc/search_tool_semantic_embeddings`,
+    {
+      method: "POST",
+      headers: db.headers,
+      body: JSON.stringify({
+        p_query_embedding: vectorString(options.embedding),
+        p_match_threshold: SEMANTIC_DISCOVERY_THRESHOLD,
+        p_match_count: Math.min(
+          MAX_DISCOVERY_LIMIT,
+          Math.max(options.limit * 6, 60),
+        ),
+        p_subject_types: ["app", "function", "skill", "widget"],
+        p_app_version: null,
+        p_visibility: ["public", "unlisted"],
+        p_include_platform_primitives: false,
+      }),
+    },
+  );
+  const matches = await readRows<ToolSemanticEmbeddingMatchRow>(
+    response,
+    "Failed to search launch subject embeddings",
+  );
+
+  const bestByApp = new Map<string, ToolSemanticEmbeddingMatchRow>();
+  for (const match of matches) {
+    if (!match.app_id) continue;
+    const existing = bestByApp.get(match.app_id);
+    if (!existing || numeric(match.similarity) > numeric(existing.similarity)) {
+      bestByApp.set(match.app_id, match);
+    }
+  }
+
+  const orderedMatches = Array.from(bestByApp.values())
+    .sort((a, b) => numeric(b.similarity) - numeric(a.similarity));
+  const rowsById = new Map(
+    (await fetchAppsByIds(orderedMatches.map((match) => match.app_id!)))
+      .map((row) => [row.id, row]),
+  );
+
+  const rankedRows: RankedLaunchAppRow[] = [];
+  for (const match of orderedMatches) {
+    const row = match.app_id ? rowsById.get(match.app_id) : null;
+    if (!row) continue;
+    rankedRows.push({
+      ...row,
+      launchRelevance: {
+        source: "semantic",
+        score: roundScore(match.similarity),
+        signals: [`tool_semantic_embedding:${match.subject_type}`],
+        subjectType: match.subject_type,
+        subjectId: match.subject_id,
+        subjectLabel: match.subject_label || null,
+        appVersion: match.app_version,
+        embeddingTextHash: match.embedding_text_hash,
+      },
+    });
+  }
+
+  return rankedRows
+    .filter((row) => !shouldHideGpu(row))
+    .filter((row) => matchesKind(row, options.kind))
+    .filter((row) =>
+      numeric(row.launchRelevance?.score) >= SEMANTIC_DISCOVERY_THRESHOLD
+    )
+    .slice(0, options.limit);
+}
+
+async function fetchLegacySemanticPublicApps(options: {
+  embedding: number[];
+  kind: LaunchToolKind | "all";
+  limit: number;
+}): Promise<RankedLaunchAppRow[]> {
   const db = getDbConfig();
   const response = await fetch(`${db.baseUrl}/rest/v1/rpc/search_apps`, {
     method: "POST",
@@ -3583,6 +4071,7 @@ async function buildLaunchFunctionSummaries(
       permission,
     ]),
   );
+  const accessPolicy = accessPolicySummaryForTool(row);
 
   return names.map((name) => {
     const functionDef = asRecord(manifestFunctions[name]);
@@ -3592,10 +4081,56 @@ async function buildLaunchFunctionSummaries(
       inputSchema: inputSchemaForFunction(functionDef),
       outputSchema: outputSchemaForFunction(functionDef),
       pricing: pricingSummaryForFunction(row, name),
+      accessPolicy,
       widgetIds: widgetIdsByFunction.get(name) || [],
       agentPermission: permissionByFunction.get(name) || null,
     };
   });
+}
+
+function buildLaunchSkillSummaries(row: LaunchAppRow): LaunchSkillSummary[] {
+  return listAppSkills(row).map((skill) => toLaunchSkillSummary(row, skill));
+}
+
+function toLaunchSkillSummary(
+  row: LaunchAppRow,
+  skill: ReturnType<typeof listAppSkills>[number],
+): LaunchSkillSummary {
+  const locator = row.slug || row.id;
+  const accessPolicy = accessPolicySummaryForTool(row);
+  const pullPrice = skill.pricing.priceLight > 0
+    ? money(skill.pricing.priceLight)
+    : null;
+  return {
+    id: skill.id,
+    name: skill.name,
+    description: skill.description,
+    semanticDescription: skill.semanticDescription,
+    pricing: {
+      pullPrice,
+      freePulls: skill.pricing.freePulls,
+      monetized: skill.pricing.monetized,
+    },
+    accessPolicy,
+    pullUrl: `/api/launch/tools/${encodeURIComponent(locator)}/skills/${
+      encodeURIComponent(skill.id)
+    }/pull`,
+  };
+}
+
+function accessPolicySummaryForTool(
+  row: LaunchAppRow,
+): LaunchFunctionSummary["accessPolicy"] {
+  const policy = resolveManifestAccessPolicy({ manifest: row.manifest });
+  return {
+    configured: policy.configured,
+    mode: policy.mode,
+    module: policy.module,
+    exportName: policy.exportName,
+    execution: policy.configured && policy.mode === "module"
+      ? "runtime_policy"
+      : "static_pricing",
+  };
 }
 
 function toLaunchToolHandle(
@@ -3972,16 +4507,25 @@ function toWidgetRenderedPayload(
 function pricingSummary(row: LaunchAppRow): LaunchPricingSummary {
   const pricingConfig = asRecord(row.pricing_config);
   const defaultPrice = numeric(pricingConfig?.default_price_light);
+  const defaultSkillPullPrice = numeric(
+    pricingConfig?.default_skill_pull_price_light,
+  );
   const functionPrices = asRecord(pricingConfig?.functions);
   const paidFunctionsCount = functionPrices
     ? Object.values(functionPrices).filter((value) => functionPrice(value) > 0)
       .length
     : 0;
+  const paidSkillsCount =
+    listAppSkills(row).filter((skill) => skill.pricing.monetized).length;
 
   return {
     defaultCallPrice: defaultPrice > 0 ? money(defaultPrice) : null,
+    defaultSkillPullPrice: defaultSkillPullPrice > 0
+      ? money(defaultSkillPullPrice)
+      : null,
     freeToInstall: true,
     paidFunctionsCount,
+    paidSkillsCount,
   };
 }
 
@@ -3992,6 +4536,7 @@ function functionPrice(value: unknown): number {
 }
 
 function inferToolKind(row: LaunchAppRow): LaunchToolKind {
+  if (row.app_type === "skill") return "markdown";
   if (row.runtime === "gpu") return "gpu";
   const manifest = parseManifest(row.manifest);
   if (manifest?.http) return "http";
@@ -4512,6 +5057,14 @@ function parseFunctionName(encodedName: string): string {
     throw new RequestValidationError("Invalid function name");
   }
   return name;
+}
+
+function parseSkillId(encodedId: string): string {
+  const id = decodeURIComponent(encodedId).trim();
+  if (!/^[A-Za-z0-9._:-]{1,200}$/.test(id)) {
+    throw new RequestValidationError("Invalid skill id");
+  }
+  return id;
 }
 
 function parseKind(value: string | null): LaunchToolKind | "all" {

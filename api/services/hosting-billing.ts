@@ -11,6 +11,7 @@ import {
   STORAGE_LIGHT_PER_GB_MONTH,
 } from "../../shared/types/index.ts";
 import { DEFAULT_BILLING_CONFIG, getBillingConfig } from "./billing-config.ts";
+import { buildEconomicIdempotencyKey } from "./economic-idempotency.ts";
 import {
   type CloudUsageDebitResult,
   CloudUsageRpcError,
@@ -324,6 +325,14 @@ export async function processHostingBilling(): Promise<BillingResult> {
             cloudUnits: charge.storageGbMonths,
             amountLight: charge.amountLight,
             billingConfigVersion: billingConfig.version,
+            idempotencyKey: buildEconomicIdempotencyKey(
+              "storage_billing_debit",
+              [
+                user.id,
+                lastBilled.toISOString(),
+                nowIso,
+              ],
+            ),
             metadata: {
               billing_model: "storage_at_rest_gb_month",
               elapsed_ms: charge.elapsedMs,

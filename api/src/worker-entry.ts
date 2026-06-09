@@ -11,6 +11,10 @@ import { processNullEmbeddings } from '../services/embedding-processor.ts';
 import { processGpuBuilds } from '../services/gpu/benchmark.ts';
 import { runD1BillingCycle } from '../services/d1-billing.ts';
 import { cleanupStaleJobs } from '../services/async-jobs.ts';
+import {
+  releaseExpiredCloudUsageHolds,
+  type CloudUsageHoldReleaseJobResult,
+} from '../services/cloud-usage-reconciliation.ts';
 import { checkAndRunJobs as checkUserCronJobs } from '../services/cron.ts';
 import { runRoutineExecutorCycle } from '../services/routine-executor.ts';
 import { getEnv } from '../lib/env.ts';
@@ -201,6 +205,7 @@ async function runMinuteJobs(): Promise<void> {
 
   const results = await Promise.allSettled([
     cleanupStaleJobs(),
+    releaseExpiredCloudUsageHolds(),
     processNullEmbeddings(),
     processGpuBuilds(),
     checkUserCronJobs(baseUrl), // user-facing cron scheduler
@@ -211,6 +216,7 @@ async function runMinuteJobs(): Promise<void> {
     if (result.status === 'rejected') {
       const names = [
         'asyncJobCleanup',
+        'cloudUsageHoldRelease',
         'embeddingProcessor',
         'gpuBuildProcessor',
         'userCronScheduler',
@@ -220,8 +226,35 @@ async function runMinuteJobs(): Promise<void> {
         job: names[i],
         error: result.reason,
       });
+    } else {
+      const releaseResult = i === 1 && isCloudUsageHoldReleaseJobResult(result.value)
+        ? result.value
+        : null;
+      if (releaseResult && releaseResult.failed_count > 0) {
+        cronLogger.warn('Cloud usage hold release completed in degraded mode', {
+          job: 'cloudUsageHoldRelease',
+          failed_count: releaseResult.failed_count,
+          released_count: releaseResult.released_count,
+          skipped_count: releaseResult.skipped_count,
+          errors: releaseResult.errors,
+        });
+      } else if (releaseResult && releaseResult.released_count > 0) {
+        cronLogger.info('Released expired cloud usage holds', {
+          job: 'cloudUsageHoldRelease',
+          released_count: releaseResult.released_count,
+          skipped_count: releaseResult.skipped_count,
+          released_amount_light: releaseResult.released_amount_light,
+        });
+      }
     }
   }
+}
+
+function isCloudUsageHoldReleaseJobResult(value: unknown): value is CloudUsageHoldReleaseJobResult {
+  return typeof value === 'object' &&
+    value !== null &&
+    'released_count' in value &&
+    'failed_count' in value;
 }
 
 /**

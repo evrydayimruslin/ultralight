@@ -10,6 +10,7 @@ Deno.test("call receipts: combines app economics with cloud usage resource break
       app_charge_light: 20,
       platform_fee_light: 3,
       developer_net_light: 17,
+      billing_config_version: 24,
       cloud_payer_user_id: "caller-123",
       cloud_owner_sponsored: false,
       routine_id: "00000000-0000-4000-8000-000000000301",
@@ -26,6 +27,7 @@ Deno.test("call receipts: combines app economics with cloud usage resource break
         units: 375,
         cloud_units: 2,
         amount_light: 0.002,
+        billing_config_version: 24,
       },
       {
         id: "event-r2",
@@ -35,6 +37,7 @@ Deno.test("call receipts: combines app economics with cloud usage resource break
         units: 3,
         cloud_units: 3,
         amount_light: 0.003,
+        billing_config_version: 24,
       },
       {
         id: "event-d1-read",
@@ -44,6 +47,7 @@ Deno.test("call receipts: combines app economics with cloud usage resource break
         units: 250,
         cloud_units: 3,
         amount_light: 0.003,
+        billing_config_version: 24,
       },
     ],
   );
@@ -64,6 +68,8 @@ Deno.test("call receipts: combines app economics with cloud usage resource break
     "event-r2",
     "event-d1-read",
   ]);
+  assertEquals(receipt.billing_config_version, 24);
+  assertEquals(receipt.billing_config_versions, [24]);
   assertEquals(receipt.caller_infra_fallback, false);
   assertEquals(receipt.routine_id, "00000000-0000-4000-8000-000000000301");
   assertEquals(
@@ -97,6 +103,7 @@ Deno.test("call receipts: marks caller-funded infra fallback for free calls", ()
         units: 300,
         cloud_units: 2,
         amount_light: 0.002,
+        billing_config_version: 25,
         metadata: { caller_infra_fallback: true },
       },
     ],
@@ -108,4 +115,6 @@ Deno.test("call receipts: marks caller-funded infra fallback for free calls", ()
   assertEquals(receipt.total_light, 0.002);
   assertEquals(receipt.owner_sponsored_infra, false);
   assertEquals(receipt.caller_infra_fallback, true);
+  assertEquals(receipt.billing_config_version, 25);
+  assertEquals(receipt.billing_config_versions, [25]);
 });

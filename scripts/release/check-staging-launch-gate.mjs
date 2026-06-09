@@ -1,67 +1,76 @@
 #!/usr/bin/env node
 
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { ensureNode20, parseArgs, repoRoot } from '../analysis/_shared.mjs';
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { ensureNode20, parseArgs, repoRoot } from "../analysis/_shared.mjs";
 
 ensureNode20();
 
 const WORKFLOW_SPECS = [
   {
-    name: 'API CI',
+    name: "API CI",
     patterns: [
-      'api/**',
-      'apps/**',
-      'shared/**',
-      'scripts/checks/**',
-      'supabase/**',
-      'scripts/supabase/**',
-      'migration-*.sql',
-      '.github/workflows/api-ci.yml',
+      "api/**",
+      "apps/**",
+      "shared/**",
+      "scripts/checks/**",
+      "supabase/**",
+      "scripts/supabase/**",
+      "migration-*.sql",
+      ".github/workflows/api-ci.yml",
     ],
   },
   {
-    name: 'Launch Guardrails',
+    name: "Launch Guardrails",
     patterns: [
-      'api/**',
-      'desktop/**',
-      'shared/**',
-      'sdk/**',
-      'web/**',
-      'scripts/checks/**',
-      'migration-*.sql',
-      '.gitignore',
-      '.nvmrc',
-      '.github/workflows/launch-guardrails.yml',
+      "api/**",
+      "desktop/**",
+      "shared/**",
+      "sdk/**",
+      "web/**",
+      "scripts/checks/**",
+      "migration-*.sql",
+      ".gitignore",
+      ".nvmrc",
+      ".github/workflows/launch-guardrails.yml",
     ],
   },
   {
-    name: 'Supabase DB',
+    name: "Supabase DB",
     patterns: [
-      'supabase/**',
-      'scripts/supabase/**',
-      '.github/workflows/supabase-db.yml',
+      "supabase/**",
+      "scripts/supabase/**",
+      ".github/workflows/supabase-db.yml",
     ],
   },
   {
-    name: 'API Deploy',
+    name: "API Deploy",
     patterns: [
-      'api/**',
-      'shared/**',
-      '.github/workflows/api-deploy.yml',
+      "api/**",
+      "shared/**",
+      ".github/workflows/api-deploy.yml",
     ],
   },
   {
-    name: 'Desktop Build',
+    name: "Launch Web Deploy",
     patterns: [
-      'desktop/**',
-      '.github/workflows/desktop-build.yml',
+      "apps/launch-web/**",
+      "shared/contracts/launch.ts",
+      ".github/workflows/launch-web-deploy.yml",
+    ],
+  },
+  {
+    name: "Desktop Build",
+    patterns: [
+      "desktop/**",
+      ".github/workflows/desktop-build.yml",
     ],
   },
 ];
 
 function printHelp() {
-  console.log(`Usage: node scripts/release/check-staging-launch-gate.mjs [options]
+  console.log(
+    `Usage: node scripts/release/check-staging-launch-gate.mjs [options]
 
 Options:
   --repository <owner/name>           GitHub repository (required)
@@ -74,39 +83,48 @@ Options:
   --timeout-seconds <seconds>         Poll timeout in seconds (default: 1800)
   --poll-interval-seconds <seconds>   Poll interval in seconds (default: 20)
   --help                              Show this help
-`);
+`,
+  );
 }
 
 const args = parseArgs(process.argv.slice(2));
 
-if (args.has('--help')) {
+if (args.has("--help")) {
   printHelp();
   process.exit(0);
 }
 
-const repository = String(args.get('--repository') || '').trim();
-const candidateSha = String(args.get('--sha') || '').trim();
-const baseSha = String(args.get('--base') || '').trim() || null;
-const changedFilesFile = String(args.get('--changed-files-file') || '').trim();
-const outputJsonPath = typeof args.get('--write-json') === 'string'
-  ? resolve(repoRoot, args.get('--write-json'))
+const repository = String(args.get("--repository") || "").trim();
+const candidateSha = String(args.get("--sha") || "").trim();
+const baseSha = String(args.get("--base") || "").trim() || null;
+const changedFilesFile = String(args.get("--changed-files-file") || "").trim();
+const outputJsonPath = typeof args.get("--write-json") === "string"
+  ? resolve(repoRoot, args.get("--write-json"))
   : null;
-const outputMarkdownPath = typeof args.get('--write-md') === 'string'
-  ? resolve(repoRoot, args.get('--write-md'))
+const outputMarkdownPath = typeof args.get("--write-md") === "string"
+  ? resolve(repoRoot, args.get("--write-md"))
   : null;
-const pollUntilComplete = Boolean(args.has('--poll-until-complete'));
-const timeoutSeconds = Number.parseInt(String(args.get('--timeout-seconds') || '1800'), 10);
-const pollIntervalSeconds = Number.parseInt(String(args.get('--poll-interval-seconds') || '20'), 10);
+const pollUntilComplete = Boolean(args.has("--poll-until-complete"));
+const timeoutSeconds = Number.parseInt(
+  String(args.get("--timeout-seconds") || "1800"),
+  10,
+);
+const pollIntervalSeconds = Number.parseInt(
+  String(args.get("--poll-interval-seconds") || "20"),
+  10,
+);
 const githubToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
 
 if (!repository || !candidateSha || !changedFilesFile) {
   printHelp();
-  console.error('Missing required arguments.');
+  console.error("Missing required arguments.");
   process.exit(1);
 }
 
 if (!githubToken) {
-  console.error('GITHUB_TOKEN (or GH_TOKEN) must be set before running the staging launch gate check.');
+  console.error(
+    "GITHUB_TOKEN (or GH_TOKEN) must be set before running the staging launch gate check.",
+  );
   process.exit(1);
 }
 
@@ -119,12 +137,12 @@ function normalizeChangedFiles(text) {
 }
 
 function matchesPattern(file, pattern) {
-  if (pattern.endsWith('/**')) {
+  if (pattern.endsWith("/**")) {
     const prefix = pattern.slice(0, -3);
     return file.startsWith(`${prefix}/`);
   }
 
-  if (pattern === 'migration-*.sql') {
+  if (pattern === "migration-*.sql") {
     return /^migration-[^/]+\.sql$/.test(file);
   }
 
@@ -132,7 +150,9 @@ function matchesPattern(file, pattern) {
 }
 
 function workflowExpected(spec, changedFiles) {
-  return changedFiles.some((file) => spec.patterns.some((pattern) => matchesPattern(file, pattern)));
+  return changedFiles.some((file) =>
+    spec.patterns.some((pattern) => matchesPattern(file, pattern))
+  );
 }
 
 function sleep(ms) {
@@ -140,22 +160,27 @@ function sleep(ms) {
 }
 
 async function fetchWorkflowRuns() {
-  const url = new URL(`https://api.github.com/repos/${repository}/actions/runs`);
-  url.searchParams.set('head_sha', candidateSha);
-  url.searchParams.set('event', 'push');
-  url.searchParams.set('branch', 'main');
-  url.searchParams.set('per_page', '100');
+  const url = new URL(
+    `https://api.github.com/repos/${repository}/actions/runs`,
+  );
+  url.searchParams.set("head_sha", candidateSha);
+  url.searchParams.set("event", "push");
+  url.searchParams.set("branch", "main");
+  url.searchParams.set("per_page", "100");
 
   const response = await fetch(url, {
     headers: {
       Authorization: `Bearer ${githubToken}`,
-      Accept: 'application/vnd.github+json',
-      'User-Agent': 'ultralight-staging-launch-gate',
+      Accept: "application/vnd.github+json",
+      "User-Agent": "ultralight-staging-launch-gate",
     },
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to fetch workflow runs: ${response.status} ${await response.text()}`);
+    throw new Error(
+      `Failed to fetch workflow runs: ${response.status} ${await response
+        .text()}`,
+    );
   }
 
   const payload = await response.json();
@@ -180,11 +205,11 @@ function classifyRun(spec, run, expected) {
     return {
       workflow: spec.name,
       expected: false,
-      status: 'not_required',
+      status: "not_required",
       conclusion: null,
       html_url: null,
       run_id: null,
-      note: 'not triggered by this candidate file set',
+      note: "not triggered by this candidate file set",
     };
   }
 
@@ -192,19 +217,19 @@ function classifyRun(spec, run, expected) {
     return {
       workflow: spec.name,
       expected: true,
-      status: 'waiting',
+      status: "waiting",
       conclusion: null,
       html_url: null,
       run_id: null,
-      note: 'expected workflow run not found yet',
+      note: "expected workflow run not found yet",
     };
   }
 
-  if (run.status !== 'completed') {
+  if (run.status !== "completed") {
     return {
       workflow: spec.name,
       expected: true,
-      status: 'waiting',
+      status: "waiting",
       conclusion: run.status,
       html_url: run.html_url,
       run_id: run.id,
@@ -212,94 +237,117 @@ function classifyRun(spec, run, expected) {
     };
   }
 
-  if (run.conclusion === 'success') {
+  if (run.conclusion === "success") {
     return {
       workflow: spec.name,
       expected: true,
-      status: 'passed',
+      status: "passed",
       conclusion: run.conclusion,
       html_url: run.html_url,
       run_id: run.id,
-      note: 'workflow completed successfully',
+      note: "workflow completed successfully",
     };
   }
 
   return {
     workflow: spec.name,
     expected: true,
-    status: 'failed',
+    status: "failed",
     conclusion: run.conclusion,
     html_url: run.html_url,
     run_id: run.id,
-    note: `workflow concluded with ${run.conclusion || 'unknown'}`,
+    note: `workflow concluded with ${run.conclusion || "unknown"}`,
   };
 }
 
 function summarizeMarkdown({ changedFiles, gateResults, generatedAt }) {
   const lines = [
-    '# Staging Launch Gate Summary',
-    '',
+    "# Staging Launch Gate Summary",
+    "",
     `- candidate_sha: \`${candidateSha}\``,
-    `- base_sha: \`${baseSha || 'unknown'}\``,
+    `- base_sha: \`${baseSha || "unknown"}\``,
     `- repository: \`${repository}\``,
     `- generated_at: \`${generatedAt}\``,
-    '',
-    '## Changed Files',
-    '',
+    "",
+    "## Changed Files",
+    "",
   ];
 
   if (changedFiles.length === 0) {
-    lines.push('- none detected');
+    lines.push("- none detected");
   } else {
     for (const file of changedFiles) {
       lines.push(`- \`${file}\``);
     }
   }
 
-  lines.push('', '## Workflow Status', '', '| Workflow | Expected | Status | Conclusion | Run | Note |', '| --- | --- | --- | --- | --- | --- |');
+  lines.push(
+    "",
+    "## Workflow Status",
+    "",
+    "| Workflow | Expected | Status | Conclusion | Run | Note |",
+    "| --- | --- | --- | --- | --- | --- |",
+  );
 
   for (const result of gateResults) {
-    const runLink = result.html_url ? `[run](${result.html_url})` : '-';
+    const runLink = result.html_url ? `[run](${result.html_url})` : "-";
     lines.push(
-      `| ${result.workflow} | ${result.expected ? 'yes' : 'no'} | ${result.status} | ${result.conclusion || '-'} | ${runLink} | ${result.note} |`,
+      `| ${result.workflow} | ${
+        result.expected ? "yes" : "no"
+      } | ${result.status} | ${
+        result.conclusion || "-"
+      } | ${runLink} | ${result.note} |`,
     );
   }
 
-  return `${lines.join('\n')}\n`;
+  return `${lines.join("\n")}\n`;
 }
 
 function writeOutputs(summary) {
   if (outputJsonPath) {
     mkdirSync(dirname(outputJsonPath), { recursive: true });
-    writeFileSync(outputJsonPath, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
+    writeFileSync(
+      outputJsonPath,
+      `${JSON.stringify(summary, null, 2)}\n`,
+      "utf8",
+    );
   }
 
   if (outputMarkdownPath) {
     mkdirSync(dirname(outputMarkdownPath), { recursive: true });
-    writeFileSync(outputMarkdownPath, summary.markdown, 'utf8');
+    writeFileSync(outputMarkdownPath, summary.markdown, "utf8");
   }
 }
 
-const changedFilesText = await import('node:fs/promises').then(({ readFile }) => readFile(changedFilesFile, 'utf8'));
+const changedFilesText = await import("node:fs/promises").then(({ readFile }) =>
+  readFile(changedFilesFile, "utf8")
+);
 const changedFiles = normalizeChangedFiles(changedFilesText);
-const expectedWorkflows = WORKFLOW_SPECS.filter((spec) => workflowExpected(spec, changedFiles));
+const expectedWorkflows = WORKFLOW_SPECS.filter((spec) =>
+  workflowExpected(spec, changedFiles)
+);
 
 try {
-
   const startedAt = Date.now();
   let runs = [];
   let gateResults = [];
 
   while (true) {
     runs = await fetchWorkflowRuns();
-    gateResults = WORKFLOW_SPECS.map((spec) => classifyRun(
-      spec,
-      pickLatestRun(runs, spec.name),
-      expectedWorkflows.some((expected) => expected.name === spec.name),
-    ));
+    gateResults = WORKFLOW_SPECS.map((spec) =>
+      classifyRun(
+        spec,
+        pickLatestRun(runs, spec.name),
+        expectedWorkflows.some((expected) => expected.name === spec.name),
+      )
+    );
 
-    const waitingResults = gateResults.filter((result) => result.status === 'waiting');
-    const failedResults = gateResults.filter((result) => result.status === 'failed');
+    const waitingResults = gateResults.filter((result) =>
+      result.status === "waiting"
+    );
+    const failedResults = gateResults.filter((result) =>
+      result.status === "failed"
+    );
 
     if (failedResults.length > 0) {
       break;
@@ -319,16 +367,24 @@ try {
 
   const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
   const generatedAt = new Date().toISOString();
-  const failedResults = gateResults.filter((result) => result.status === 'failed');
-  const waitingResults = gateResults.filter((result) => result.status === 'waiting');
-  const passedResults = gateResults.filter((result) => result.status === 'passed');
-  const notRequiredResults = gateResults.filter((result) => result.status === 'not_required');
+  const failedResults = gateResults.filter((result) =>
+    result.status === "failed"
+  );
+  const waitingResults = gateResults.filter((result) =>
+    result.status === "waiting"
+  );
+  const passedResults = gateResults.filter((result) =>
+    result.status === "passed"
+  );
+  const notRequiredResults = gateResults.filter((result) =>
+    result.status === "not_required"
+  );
 
-  let overallStatus = 'passed';
+  let overallStatus = "passed";
   if (failedResults.length > 0) {
-    overallStatus = 'failed';
+    overallStatus = "failed";
   } else if (waitingResults.length > 0) {
-    overallStatus = 'pending';
+    overallStatus = "pending";
   }
 
   const summary = {
@@ -357,17 +413,25 @@ try {
 
   writeOutputs(summary);
 
-  console.log(`Staging launch gate status for ${candidateSha}: ${overallStatus}`);
+  console.log(
+    `Staging launch gate status for ${candidateSha}: ${overallStatus}`,
+  );
   for (const result of gateResults) {
-    console.log(`- ${result.workflow}: ${result.status}${result.conclusion ? ` (${result.conclusion})` : ''}`);
+    console.log(
+      `- ${result.workflow}: ${result.status}${
+        result.conclusion ? ` (${result.conclusion})` : ""
+      }`,
+    );
   }
 
-  if (overallStatus === 'failed') {
+  if (overallStatus === "failed") {
     process.exit(1);
   }
 
-  if (overallStatus === 'pending') {
-    console.error(`Timed out waiting for required workflows after ${elapsedSeconds}s.`);
+  if (overallStatus === "pending") {
+    console.error(
+      `Timed out waiting for required workflows after ${elapsedSeconds}s.`,
+    );
     process.exit(1);
   }
 } catch (error) {
@@ -386,30 +450,34 @@ try {
       not_required: 0,
     },
     elapsed_seconds: 0,
-    overall_status: 'failed',
+    overall_status: "failed",
     workflows: [],
     fatal_error: String(error instanceof Error ? error.message : error),
   };
 
   summary.markdown = [
-    '# Staging Launch Gate Summary',
-    '',
+    "# Staging Launch Gate Summary",
+    "",
     `- candidate_sha: \`${candidateSha}\``,
-    `- base_sha: \`${baseSha || 'unknown'}\``,
+    `- base_sha: \`${baseSha || "unknown"}\``,
     `- repository: \`${repository}\``,
     `- generated_at: \`${generatedAt}\``,
-    '',
-    '## Changed Files',
-    '',
-    ...(changedFiles.length > 0 ? changedFiles.map((file) => `- \`${file}\``) : ['- none detected']),
-    '',
-    '## Expected Workflows',
-    '',
-    ...(expectedWorkflows.length > 0 ? expectedWorkflows.map((spec) => `- ${spec.name}`) : ['- none']),
-    '',
+    "",
+    "## Changed Files",
+    "",
+    ...(changedFiles.length > 0
+      ? changedFiles.map((file) => `- \`${file}\``)
+      : ["- none detected"]),
+    "",
+    "## Expected Workflows",
+    "",
+    ...(expectedWorkflows.length > 0
+      ? expectedWorkflows.map((spec) => `- ${spec.name}`)
+      : ["- none"]),
+    "",
     `Fatal error: ${summary.fatal_error}`,
-    '',
-  ].join('\n');
+    "",
+  ].join("\n");
 
   writeOutputs(summary);
   console.error(summary.fatal_error);

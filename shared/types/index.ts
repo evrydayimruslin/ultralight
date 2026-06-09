@@ -993,12 +993,18 @@ export interface AppRateLimitConfig {
 export interface AppPricingConfig {
   /** Default price in Light per tool call. Applies to any function not in `functions`. 0 = free. */
   default_price_light: number;
+  /** Default price in Light per full skill context pull. Applies to skills not in `skills`. */
+  default_skill_pull_price_light?: number;
   /** Default number of free calls per user before pricing kicks in. 0 = charge from first call. */
   default_free_calls?: number;
+  /** Default number of free full-context pulls per user before skill pricing kicks in. */
+  default_free_skill_pulls?: number;
   /** Whether free call quota is counted per-app (shared) or per-function (separate). Default: 'function'. */
   free_calls_scope?: "app" | "function";
   /** Per-function price overrides. Value is Light (legacy number) or FunctionPricing object. */
   functions?: Record<string, number | FunctionPricing>;
+  /** Per-skill context-pull price overrides. Value is Light (legacy number) or SkillPricing object. */
+  skills?: Record<string, number | SkillPricing>;
   /** Product catalog for in-app purchases via ultralight.charge(). */
   products?: AppProduct[];
 }
@@ -1009,6 +1015,14 @@ export interface FunctionPricing {
   price_light: number;
   /** Number of free calls for this function per user. Overrides app-level default_free_calls. */
   free_calls?: number;
+}
+
+/** Per-skill pricing override with optional free pulls. */
+export interface SkillPricing {
+  /** Price in Light to pull the full skill context into an agent prompt. */
+  price_light: number;
+  /** Number of free full-context pulls for this skill per user. */
+  free_pulls?: number;
 }
 
 /** A purchasable product defined by the app owner. */
@@ -1071,6 +1085,40 @@ export function getFreeCallsScope(
   pricingConfig: AppPricingConfig | null | undefined,
 ): "app" | "function" {
   return pricingConfig?.free_calls_scope || "function";
+}
+
+/**
+ * Get the price in Light for pulling a full skill context into an agent prompt.
+ * Skills do not execute in a Worker; this price is for context access only.
+ */
+export function getSkillPullPriceLight(
+  pricingConfig: AppPricingConfig | null | undefined,
+  skillId: string,
+): number {
+  if (!pricingConfig) return 0;
+  if (pricingConfig.skills && skillId in pricingConfig.skills) {
+    const val = pricingConfig.skills[skillId];
+    if (typeof val === "number") return val;
+    return val.price_light;
+  }
+  return pricingConfig.default_skill_pull_price_light || 0;
+}
+
+/**
+ * Get free full-context pulls for a skill, falling back to the app-level skill default.
+ */
+export function getFreeSkillPulls(
+  pricingConfig: AppPricingConfig | null | undefined,
+  skillId: string,
+): number {
+  if (!pricingConfig) return 0;
+  if (pricingConfig.skills && skillId in pricingConfig.skills) {
+    const val = pricingConfig.skills[skillId];
+    if (typeof val === "object" && val.free_pulls !== undefined) {
+      return val.free_pulls;
+    }
+  }
+  return pricingConfig.default_free_skill_pulls || 0;
 }
 
 // ============================================
@@ -1245,8 +1293,11 @@ export const STORAGE_LIGHT_PER_GB_MONTH = 100;
 
 // ── Billing Constants (in Light) ──
 
-/** Legacy publish balance gate amount, used only when explicitly enabled. */
-export const MIN_PUBLISH_DEPOSIT_LIGHT = 500; // ✦500
+/** Minimum spendable Light publishers need before making non-private versions live. */
+export const PUBLISHER_MIN_PUBLISH_BALANCE_LIGHT = 1_000; // ✦1,000
+
+/** Legacy alias retained for older publish-gate callers. */
+export const MIN_PUBLISH_DEPOSIT_LIGHT = PUBLISHER_MIN_PUBLISH_BALANCE_LIGHT;
 
 /** Legacy published hosting rate, used only when the old hosting meter is enabled. */
 export const HOSTING_RATE_LIGHT_PER_MB_PER_HOUR = 2.25; // ✦2.25/MB/hr
@@ -1258,6 +1309,9 @@ export const DATA_RATE_LIGHT_PER_MB_PER_HOUR = 0.045;
 
 /** Combined storage soft cap (source code + user data). 100MB. */
 export const COMBINED_FREE_TIER_BYTES = 104_857_600;
+
+/** Minimum spendable Light balance required once combined storage exceeds the free tier. */
+export const STORAGE_MIN_BALANCE_AFTER_FREE_TIER_LIGHT = 1_000;
 
 /** Legacy auto top-up threshold (Light). Auto top-up is currently disabled. */
 export const AUTO_TOPUP_DEFAULT_THRESHOLD_LIGHT = 100; // ✦100
@@ -1963,6 +2017,12 @@ export interface AppManifest {
   // Key is function name, value is function metadata
   functions?: Record<string, ManifestFunction>;
 
+  // Skill/context declarations agents can pull independently of execution
+  skills?: Record<string, ManifestSkill>;
+
+  // Declarative hook for custom permission and monetization policy
+  access_policy?: ManifestAccessPolicy;
+
   // Permissions this app requires
   permissions?: string[];
 
@@ -2029,6 +2089,92 @@ export interface ManifestFunction {
   annotations?: MCPToolAnnotations;
   generation_hints?: WidgetGenerationHints;
 }
+
+export interface ManifestSkill {
+  name?: string;
+  description: string;
+  semantic_description?: string;
+  preview?: string;
+  resource?: string;
+  format?: "markdown" | "text";
+}
+
+export type ManifestAccessPolicyMode = "static" | "module";
+
+export interface ManifestAccessPolicy {
+  mode?: ManifestAccessPolicyMode;
+  module?: string;
+  export?: string;
+}
+
+export type ToolAccessPolicySubjectKind = "function" | "skill";
+
+export interface ToolAccessPolicyPlanPayload {
+  version: 1;
+  app: {
+    id: string;
+    slug: string | null;
+    ownerId: string;
+    owner_id: string;
+  };
+  caller: {
+    userId: string;
+    authState?: "authenticated" | "anonymous";
+  };
+  subject: {
+    kind: ToolAccessPolicySubjectKind;
+    id: string;
+  };
+  input: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  static: {
+    effect: "allow";
+    subjectKind: ToolAccessPolicySubjectKind;
+    subject_kind: ToolAccessPolicySubjectKind;
+    subjectId: string;
+    subject_id: string;
+    priceLight: number;
+    price_light: number;
+    chargeLight: number;
+    charge_light: number;
+    free: boolean;
+    freeQuotaLimit: number;
+    free_quota_limit: number;
+    freeQuotaCounterKey: string | null;
+    free_quota_counter_key: string | null;
+    selfAccess: boolean;
+    self_access: boolean;
+  };
+}
+
+export interface ToolAccessPolicyAllowDecision {
+  effect?: "allow";
+  price_light?: number;
+  priceLight?: number;
+  charge_light?: number;
+  chargeLight?: number;
+  free?: boolean;
+  free_quota_limit?: number;
+  freeQuotaLimit?: number;
+  free_quota_counter_key?: string | null;
+  freeQuotaCounterKey?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ToolAccessPolicyDenyDecision {
+  effect: "deny";
+  reason?: string;
+  message?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export type ToolAccessPolicyDecision =
+  | ToolAccessPolicyAllowDecision
+  | ToolAccessPolicyDenyDecision;
+
+export type ToolAccessPolicyFunction = (
+  payload: ToolAccessPolicyPlanPayload,
+) => ToolAccessPolicyDecision | Promise<ToolAccessPolicyDecision>;
 
 export interface ManifestParameter {
   type: "string" | "number" | "boolean" | "object" | "array";
@@ -3141,6 +3287,86 @@ function validateManifestWidgets(
   });
 }
 
+function isSafeManifestModulePath(value: string): boolean {
+  const trimmed = value.trim();
+  if (
+    !trimmed || trimmed.startsWith("/") || trimmed.includes("\\") ||
+    !/\.(ts|js|mjs)$/.test(trimmed)
+  ) {
+    return false;
+  }
+
+  const parts = trimmed.split("/");
+  return parts.every((part) => part && part !== "." && part !== "..");
+}
+
+function isSafeManifestExportName(value: string): boolean {
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(value.trim());
+}
+
+function validateManifestAccessPolicy(
+  policy: unknown,
+  errors: ManifestValidationError[],
+): void {
+  if (!policy || typeof policy !== "object" || Array.isArray(policy)) {
+    errors.push({
+      path: "access_policy",
+      message: "access_policy must be an object",
+    });
+    return;
+  }
+
+  const accessPolicy = policy as Record<string, unknown>;
+  if (
+    accessPolicy.mode !== undefined && accessPolicy.mode !== "static" &&
+    accessPolicy.mode !== "module"
+  ) {
+    errors.push({
+      path: "access_policy.mode",
+      message: 'mode must be "static" or "module"',
+    });
+  }
+
+  if (accessPolicy.mode === "module" && accessPolicy.module === undefined) {
+    errors.push({
+      path: "access_policy.module",
+      message: 'module is required when mode is "module"',
+    });
+  }
+
+  if (accessPolicy.mode === "static" && accessPolicy.module !== undefined) {
+    errors.push({
+      path: "access_policy.module",
+      message: 'module cannot be set when mode is "static"',
+    });
+  }
+
+  if (accessPolicy.module !== undefined) {
+    if (
+      typeof accessPolicy.module !== "string" ||
+      !isSafeManifestModulePath(accessPolicy.module)
+    ) {
+      errors.push({
+        path: "access_policy.module",
+        message:
+          "module must be a relative .ts, .js, or .mjs path without . or .. segments",
+      });
+    }
+  }
+
+  if (accessPolicy.export !== undefined) {
+    if (
+      typeof accessPolicy.export !== "string" ||
+      !isSafeManifestExportName(accessPolicy.export)
+    ) {
+      errors.push({
+        path: "access_policy.export",
+        message: "export must be a valid JavaScript identifier",
+      });
+    }
+  }
+}
+
 /**
  * Validate an app manifest
  */
@@ -3238,6 +3464,74 @@ export function validateManifest(input: unknown): ManifestValidationResult {
         }
       }
     }
+  }
+
+  if (manifest.skills !== undefined) {
+    if (
+      typeof manifest.skills !== "object" || manifest.skills === null ||
+      Array.isArray(manifest.skills)
+    ) {
+      errors.push({
+        path: "skills",
+        message: "skills must be an object",
+      });
+    } else {
+      const skills = manifest.skills as Record<string, unknown>;
+      for (const [skillId, skillDef] of Object.entries(skills)) {
+        const skillPath = `skills.${skillId}`;
+        if (!skillId.trim()) {
+          errors.push({
+            path: "skills",
+            message: "skill ids must be non-empty strings",
+          });
+        }
+        if (
+          !skillDef || typeof skillDef !== "object" || Array.isArray(skillDef)
+        ) {
+          errors.push({
+            path: skillPath,
+            message: "skill definition must be an object",
+          });
+          continue;
+        }
+
+        const skill = skillDef as Record<string, unknown>;
+        if (!skill.description || typeof skill.description !== "string") {
+          errors.push({
+            path: `${skillPath}.description`,
+            message: "description is required",
+          });
+        }
+        for (
+          const field of [
+            "name",
+            "semantic_description",
+            "preview",
+            "resource",
+          ]
+        ) {
+          if (skill[field] !== undefined && typeof skill[field] !== "string") {
+            errors.push({
+              path: `${skillPath}.${field}`,
+              message: `${field} must be a string`,
+            });
+          }
+        }
+        if (
+          skill.format !== undefined && skill.format !== "markdown" &&
+          skill.format !== "text"
+        ) {
+          errors.push({
+            path: `${skillPath}.format`,
+            message: 'format must be "markdown" or "text"',
+          });
+        }
+      }
+    }
+  }
+
+  if (manifest.access_policy !== undefined) {
+    validateManifestAccessPolicy(manifest.access_policy, errors);
   }
 
   // Environment variable / settings validation

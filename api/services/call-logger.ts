@@ -64,6 +64,7 @@ export interface McpCallLogEntry {
   cloudUsageEventId?: string;
   cloudUnits?: number;
   cloudChargeLight?: number;
+  billingConfigVersion?: number | null;
   cloudPayerUserId?: string;
   cloudOwnerSponsored?: boolean;
   routineId?: string;
@@ -166,6 +167,7 @@ export function buildMcpCallLogInsertPayload(
     cloud_usage_event_id: entry.cloudUsageEventId ?? null,
     cloud_units: entry.cloudUnits ?? null,
     cloud_charge_light: entry.cloudChargeLight ?? null,
+    billing_config_version: entry.billingConfigVersion ?? null,
     cloud_payer_user_id: entry.cloudPayerUserId ?? null,
     cloud_owner_sponsored: entry.cloudOwnerSponsored ?? false,
     routine_id: entry.routineId ?? null,

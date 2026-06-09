@@ -10,6 +10,10 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5178",
     "build": "tsc && vite build",
+    "build:staging": "tsc && vite build --mode staging",
+    "build:production": "tsc && vite build --mode production",
+    "pages:deploy:staging": "npm run build:staging && pnpm dlx wrangler@4.67.0 pages deploy dist --project-name ultralight-launch-web --branch staging",
+    "pages:deploy:production": "npm run build:production && pnpm dlx wrangler@4.67.0 pages deploy dist --project-name ultralight-launch-web --branch main",
     "preview": "vite preview --host 127.0.0.1 --port 4178",
     "typecheck": "tsc --noEmit"
   },

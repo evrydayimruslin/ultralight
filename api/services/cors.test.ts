@@ -30,6 +30,28 @@ Deno.test("cors: allows configured production origins", () => {
   assertEquals(headers["Access-Control-Allow-Credentials"], "true");
 });
 
+Deno.test("cors: allows production launch-web Pages origin", () => {
+  const request = new Request(
+    "https://ultralight-api.rgn4jz429m.workers.dev/api/launch/status",
+    {
+      headers: { Origin: "https://ultralight-launch-web.pages.dev" },
+    },
+  );
+
+  const headers = buildCorsHeaders(request, {
+    baseUrl: "https://ultralight-api.rgn4jz429m.workers.dev",
+    environment: "production",
+    allowedOrigins:
+      "https://ultralight-api.rgn4jz429m.workers.dev,https://ultralight-launch-web.pages.dev",
+  });
+
+  assertEquals(
+    headers["Access-Control-Allow-Origin"],
+    "https://ultralight-launch-web.pages.dev",
+  );
+  assertEquals(headers["Access-Control-Allow-Credentials"], "true");
+});
+
 Deno.test("cors: blocks disallowed production browser origins", () => {
   const request = new Request(
     "https://ultralight-api.rgn4jz429m.workers.dev/http/test",
@@ -73,6 +95,7 @@ Deno.test("cors: keeps localhost origins available outside production", () => {
     true,
   );
   assertEquals(origins.includes("http://localhost:5173"), true);
+  assertEquals(origins.includes("http://localhost:5178"), true);
   assertEquals(origins.includes("tauri://localhost"), true);
 });
 

@@ -1,10 +1,10 @@
 # Release Topology
 
-Last reviewed: `2026-04-21`
+Last reviewed: `2026-06-08`
 
 This document is the canonical map of how Ultralight moves from source control
-to staging and then to production across the API, database, and desktop
-surfaces.
+to staging and then to production across the API, launch website, database,
+and desktop surfaces.
 
 Use this as the release-topology source of truth. The more procedural operator
 steps still live in
@@ -21,6 +21,7 @@ Ultralight promotes release candidates through this chain:
 1. Pull requests verify code and packaging inputs.
 2. Pushes to `main` produce the staging candidate:
    - API verified and deployed to staging
+   - launch website verified and deployed to the staging Pages branch
    - Supabase migrations validated and pushed to staging
    - desktop staging artifacts built
 3. Staging smoke and audit evidence are reviewed.
@@ -28,6 +29,7 @@ Ultralight promotes release candidates through this chain:
 5. Tag-triggered workflows deploy:
    - production schema
    - production API Worker
+   - production launch website Pages branch
    - signed production desktop installers and updater metadata
 6. Production smoke runs before release announcement.
 
@@ -45,12 +47,14 @@ flowchart LR
 
   Main["Push to main"] --> StagingDB["Supabase DB -> staging"]
   Main --> StagingAPI["API Deploy -> staging"]
+  Main --> StagingLaunchWeb["Launch Web Pages -> staging"]
   Main --> DesktopStaging["Desktop Build -> staging artifacts"]
   Main --> GuardrailsMain["Launch Guardrails"]
   Main --> StagingGate["Staging Launch Gate"]
 
   StagingDB --> StagingEvidence["Staging smoke + audit evidence"]
   StagingAPI --> StagingEvidence
+  StagingLaunchWeb --> StagingEvidence
   DesktopStaging --> StagingEvidence
   GuardrailsMain --> StagingEvidence
   StagingGate --> StagingEvidence
@@ -59,11 +63,13 @@ flowchart LR
 
   Tag --> ProdDB["Supabase Production DB"]
   Tag --> ProdAPI["API Deploy -> production"]
+  Tag --> ProdLaunchWeb["Launch Web Pages -> production"]
   Tag --> DesktopRelease["Desktop Release -> signed installers + latest.json"]
   Tag --> ProdGate["Production Launch Gate"]
 
   ProdDB --> ProdEvidence["Production workflow evidence"]
   ProdAPI --> ProdEvidence
+  ProdLaunchWeb --> ProdEvidence
   DesktopRelease --> ProdEvidence
   ProdGate --> ProdEvidence
 
@@ -80,6 +86,7 @@ flowchart LR
 | [`.github/workflows/launch-guardrails.yml`](../.github/workflows/launch-guardrails.yml) | PRs and `main` pushes | CI only | none beyond repo checkout and Node runtime | reviewed launch-risk baseline checks | protects against regressions in token transport, wildcard CORS, placeholder runtime copy, archive artifacts, and other guarded patterns |
 | [`.github/workflows/supabase-db.yml`](../.github/workflows/supabase-db.yml) | PRs touching `supabase/**`, `main` pushes, manual dispatch | staging | GitHub `staging` environment with `SUPABASE_ACCESS_TOKEN`, `SUPABASE_STAGING_PROJECT_ID`, `SUPABASE_STAGING_DB_PASSWORD` | validated migration set and staging schema push | produces the staging DB candidate |
 | [`.github/workflows/api-deploy.yml`](../.github/workflows/api-deploy.yml) | `main` pushes, `v*` tags, manual dispatch | staging on `main`, production on tags | GitHub `staging` or `production` env with `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | deployed Cloudflare Worker | promotes the main API to staging or production |
+| [`.github/workflows/launch-web-deploy.yml`](../.github/workflows/launch-web-deploy.yml) | `main` pushes and `v*` tags touching launch-web or launch contracts, manual dispatch | staging Pages branch on `main`, production Pages branch on tags | GitHub `staging` or `production` env with `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | deployed Cloudflare Pages site from `apps/launch-web/dist` | promotes the public launch website separately from the API Worker |
 | [`.github/workflows/desktop-build.yml`](../.github/workflows/desktop-build.yml) | PRs touching `desktop/**`, `main` pushes, manual dispatch | CI verify plus staging-channel artifacts on `main` | build-time `ULTRALIGHT_DESKTOP_BUILD_CHANNEL=staging` | staging desktop bundles for macOS and Windows | produces the desktop staging candidate |
 | [`.github/workflows/launch-gate-staging.yml`](../.github/workflows/launch-gate-staging.yml) | `main` pushes touching release-critical surfaces, manual dispatch | staging gate | GitHub `GITHUB_TOKEN` with `actions:read` | SHA-scoped gate summary and artifact bundle linking required staging workflows | aggregates the current staging candidate into one explicit gate |
 | [`.github/workflows/supabase-production-db.yml`](../.github/workflows/supabase-production-db.yml) | `v*` tags | production | GitHub `production` environment with `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PRODUCTION_PROJECT_ID`, `SUPABASE_PRODUCTION_DB_PASSWORD` | production schema push | promotes the DB to production |
@@ -91,6 +98,8 @@ flowchart LR
 | Surface | Staging | Production | Notes |
 | --- | --- | --- | --- |
 | Public API hostname | `https://ultralight-api-staging.rgn4jz429m.workers.dev` | `https://ultralight-api.rgn4jz429m.workers.dev` | configured in [api/wrangler.toml](../api/wrangler.toml); replace with an owned custom domain only after DNS/control-plane ownership is confirmed |
+| Launch website hostname | `https://staging.ultralight-launch-web.pages.dev` | `https://ultralight-launch-web.pages.dev` | configured in [apps/launch-web/wrangler.toml](../apps/launch-web/wrangler.toml) and the Cloudflare Pages project; replace with owned custom domains only after DNS/control-plane ownership is confirmed |
+| Launch website API base | `https://ultralight-api-staging.rgn4jz429m.workers.dev` | `https://ultralight-api.rgn4jz429m.workers.dev` | build-time `VITE_LAUNCH_API_BASE_URL` from [apps/launch-web/.env.staging](../apps/launch-web/.env.staging) and [apps/launch-web/.env.production](../apps/launch-web/.env.production) |
 | Main API Worker script | `ultralight-api-staging` | `ultralight-api` | staging uses Wrangler `env.staging`; production uses top-level config |
 | Main API entrypoint | [api/src/worker-entry.ts](../api/src/worker-entry.ts) | [api/src/worker-entry.ts](../api/src/worker-entry.ts) | same code path, different deployment target |
 | Supabase project | GitHub secret `SUPABASE_STAGING_PROJECT_ID` | GitHub secret `SUPABASE_PRODUCTION_PROJECT_ID` | schema deploys are split correctly by workflow |
@@ -98,7 +107,7 @@ flowchart LR
 | Desktop channel | `staging` | `production` | set by `ULTRALIGHT_DESKTOP_BUILD_CHANNEL` in desktop workflows |
 | Desktop pinned API base | `https://ultralight-api-staging.rgn4jz429m.workers.dev` | `https://ultralight-api.rgn4jz429m.workers.dev` | enforced in [desktop/src/lib/environment.ts](../desktop/src/lib/environment.ts) |
 | Desktop updater endpoint | none in standard staging builds | [latest.json](https://github.com/evrydayimruslin/ultralight/releases/latest/download/latest.json) | updater is production-only in the tag workflow |
-| Web product origin | none configured | none configured | no project-owned public web origin is currently committed; add an owned origin to CORS only when it exists |
+| Web product origin | `https://staging.ultralight-launch-web.pages.dev` | `https://ultralight-launch-web.pages.dev` | direct browser calls are allowed by `CORS_ALLOWED_ORIGINS` in [api/wrangler.toml](../api/wrangler.toml); launch auth remains bearer-token based for this phase |
 
 ## Supporting And Non-Standard Surfaces
 
@@ -128,6 +137,7 @@ The `main` branch becomes a staging candidate only after:
 
 - staging schema deploy succeeds
 - staging API deploy succeeds
+- staging launch-web Pages deploy succeeds
 - staging desktop artifacts build successfully
 - launch guardrails remain green
 - the required audit scripts and smoke checks are run against the staging
@@ -146,6 +156,7 @@ commit. The tag triggers:
 
 - production schema deploy
 - production API deploy
+- production launch-web Pages deploy
 - production desktop release
 
 A production release is not complete until:
@@ -163,6 +174,8 @@ A production release is not complete until:
   environment secrets and workflows
 - staging and production API Workers are split by Wrangler environment and
   worker script name
+- staging and production launch-web Pages deployments are split by Pages branch
+  and build-time API base URL
 - staging and production desktop channels are split by workflow input and build
   channel
 - production desktop updater publication is tag-only
@@ -199,6 +212,7 @@ so they remain part of launch decisions instead of tribal knowledge.
 | Domain | Where it is owned | Key secret boundary |
 | --- | --- | --- |
 | API deploy | GitHub `staging` and `production` environments | Cloudflare deploy credentials |
+| Launch web deploy | GitHub `staging` and `production` environments | Cloudflare Pages deploy credentials |
 | DB deploy | GitHub `staging` and `production` environments | Supabase access token, project ID, and DB password |
 | Desktop release | GitHub `production` environment | updater signing key, Apple signing/notarization secrets, Windows signing certificate |
 | Runtime secrets | Cloudflare Worker secrets and provider dashboards | app runtime secrets are not managed by GitHub release workflows directly |

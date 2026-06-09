@@ -3,14 +3,24 @@
 // Reuses balance_light wallet and billing_transactions audit trail.
 // Uses debit_light RPC with p_update_billed_at=false (chat doesn't affect hosting clock).
 
-import { getEnv } from '../lib/env.ts';
-import type { ChatUsage, ChatBillingResult } from '../../shared/contracts/ai.ts';
-import { CHAT_MIN_BALANCE_LIGHT, CHAT_PLATFORM_MARKUP } from '../../shared/contracts/ai.ts';
-import { LIGHT_PER_DOLLAR_DESKTOP, formatLight } from '../../shared/types/index.ts';
+import { getEnv } from "../lib/env.ts";
+import type {
+  ChatBillingResult,
+  ChatUsage,
+} from "../../shared/contracts/ai.ts";
+import {
+  CHAT_MIN_BALANCE_LIGHT,
+  CHAT_PLATFORM_MARKUP,
+} from "../../shared/contracts/ai.ts";
+import {
+  formatLight,
+  LIGHT_PER_DOLLAR_DESKTOP,
+} from "../../shared/types/index.ts";
+import { buildEconomicIdempotencyKey } from "./economic-idempotency.ts";
 import {
   calculatePlatformInferenceCost,
   resolvePlatformInferenceModel,
-} from './platform-inference-models.ts';
+} from "./platform-inference-models.ts";
 
 export interface ChatBillingMetadata {
   traceId?: string;
@@ -28,16 +38,16 @@ export interface ChatBillingCostOptions {
 
 function dbHeaders(): Record<string, string> {
   return {
-    'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
-    'Authorization': `Bearer ${getEnv('SUPABASE_SERVICE_ROLE_KEY')}`,
+    "apikey": getEnv("SUPABASE_SERVICE_ROLE_KEY"),
+    "Authorization": `Bearer ${getEnv("SUPABASE_SERVICE_ROLE_KEY")}`,
   };
 }
 
 function dbWriteHeaders(): Record<string, string> {
   return {
     ...dbHeaders(),
-    'Content-Type': 'application/json',
-    'Prefer': 'return=minimal',
+    "Content-Type": "application/json",
+    "Prefer": "return=minimal",
   };
 }
 
@@ -51,12 +61,14 @@ function dbWriteHeaders(): Record<string, string> {
  */
 export async function checkChatBalance(userId: string): Promise<number> {
   const res = await fetch(
-    `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${userId}&select=balance_light`,
-    { headers: dbHeaders() }
+    `${
+      getEnv("SUPABASE_URL")
+    }/rest/v1/users?id=eq.${userId}&select=balance_light`,
+    { headers: dbHeaders() },
   );
-  if (!res.ok) throw new Error('Failed to query user balance');
+  if (!res.ok) throw new Error("Failed to query user balance");
   const rows = await res.json() as Array<{ balance_light: number | null }>;
-  if (!rows || rows.length === 0) throw new Error('User not found');
+  if (!rows || rows.length === 0) throw new Error("User not found");
   return rows[0].balance_light ?? 0;
 }
 
@@ -65,14 +77,20 @@ export async function checkChatBalance(userId: string): Promise<number> {
 // ============================================
 
 /** Per-model pricing fallback (USD per million tokens). Conservative estimates. */
-const MODEL_RATES: Record<string, { inputPerMillion: number; outputPerMillion: number }> = {
-  'anthropic/claude-sonnet-4-20250514': { inputPerMillion: 3, outputPerMillion: 15 },
-  'anthropic/claude-3.5-sonnet': { inputPerMillion: 3, outputPerMillion: 15 },
-  'anthropic/claude-3-opus': { inputPerMillion: 15, outputPerMillion: 75 },
-  'openai/gpt-4o': { inputPerMillion: 5, outputPerMillion: 15 },
-  'openai/gpt-4o-mini': { inputPerMillion: 0.15, outputPerMillion: 0.6 },
-  'google/gemini-pro-1.5': { inputPerMillion: 2.5, outputPerMillion: 7.5 },
-  'deepseek/deepseek-chat': { inputPerMillion: 0.14, outputPerMillion: 0.28 },
+const MODEL_RATES: Record<
+  string,
+  { inputPerMillion: number; outputPerMillion: number }
+> = {
+  "anthropic/claude-sonnet-4-20250514": {
+    inputPerMillion: 3,
+    outputPerMillion: 15,
+  },
+  "anthropic/claude-3.5-sonnet": { inputPerMillion: 3, outputPerMillion: 15 },
+  "anthropic/claude-3-opus": { inputPerMillion: 15, outputPerMillion: 75 },
+  "openai/gpt-4o": { inputPerMillion: 5, outputPerMillion: 15 },
+  "openai/gpt-4o-mini": { inputPerMillion: 0.15, outputPerMillion: 0.6 },
+  "google/gemini-pro-1.5": { inputPerMillion: 2.5, outputPerMillion: 7.5 },
+  "deepseek/deepseek-chat": { inputPerMillion: 0.14, outputPerMillion: 0.28 },
 };
 
 /** Conservative default for unknown models */
@@ -95,7 +113,9 @@ export function calculateCostLight(
   if (options.billingSource === "platform_deepseek_direct") {
     const platformModel = resolvePlatformInferenceModel(model);
     if (!platformModel) {
-      throw new Error(`Unsupported Ultralight platform model for direct billing: ${model}`);
+      throw new Error(
+        `Unsupported Ultralight platform model for direct billing: ${model}`,
+      );
     }
     return calculatePlatformInferenceCost(
       platformModel.id,
@@ -137,7 +157,7 @@ export function calculateCostLight(
 
 /**
  * Deduct chat cost from user balance after stream completes.
-   * Uses atomic debit_light RPC (clamps at 0, never goes negative).
+ * Uses atomic debit_light RPC (clamps at 0, never goes negative).
  * Logs transaction to billing_transactions (fire-and-forget).
  */
 export async function deductChatCost(
@@ -148,7 +168,12 @@ export async function deductChatCost(
   metadata: ChatBillingMetadata = {},
   options: ChatBillingCostOptions = {},
 ): Promise<ChatBillingResult> {
-  const costLight = calculateCostLight(usage, model, openRouterTotalCostUsd, options);
+  const costLight = calculateCostLight(
+    usage,
+    model,
+    openRouterTotalCostUsd,
+    options,
+  );
 
   // Skip deduction for zero-cost (e.g., empty response)
   if (costLight <= 0) {
@@ -157,16 +182,24 @@ export async function deductChatCost(
 
   // Atomic debit — p_update_billed_at=false to not touch hosting billing clock
   const debitRes = await fetch(
-    `${getEnv('SUPABASE_URL')}/rest/v1/rpc/debit_light`,
+    `${getEnv("SUPABASE_URL")}/rest/v1/rpc/debit_light`,
     {
-      method: 'POST',
-      headers: { ...dbHeaders(), 'Content-Type': 'application/json' },
+      method: "POST",
+      headers: { ...dbHeaders(), "Content-Type": "application/json" },
       body: JSON.stringify({
         p_user_id: userId,
         p_amount_light: costLight,
-        p_reason: 'ai_chat',
+        p_reason: "ai_chat",
         p_update_billed_at: false,
         p_allow_partial: true,
+        p_idempotency_key: metadata.messageId
+          ? buildEconomicIdempotencyKey("chat_debit", [
+            metadata.messageId,
+            metadata.conversationId,
+            userId,
+            model,
+          ])
+          : null,
         p_metadata: {
           trace_id: metadata.traceId,
           conversation_id: metadata.conversationId,
@@ -181,13 +214,13 @@ export async function deductChatCost(
           total_tokens: usage.total_tokens,
         },
       }),
-    }
+    },
   );
 
   if (!debitRes.ok) {
     const err = await debitRes.text();
     console.error(`[CHAT-BILLING] Debit failed for ${userId}: ${err}`);
-    throw new Error('Balance deduction failed');
+    throw new Error("Balance deduction failed");
   }
 
   const debitResult = await debitRes.json() as Array<{
@@ -199,14 +232,24 @@ export async function deductChatCost(
 
   if (!debitResult || debitResult.length === 0) {
     console.error(`[CHAT-BILLING] Debit RPC returned empty for ${userId}`);
-    throw new Error('Debit RPC returned empty');
+    throw new Error("Debit RPC returned empty");
   }
 
   const { new_balance, was_depleted, amount_debited } = debitResult[0];
-  const actualCostLight = typeof amount_debited === 'number' ? amount_debited : costLight;
+  const actualCostLight = typeof amount_debited === "number"
+    ? amount_debited
+    : costLight;
 
   // Log transaction (fire-and-forget — never break billing for logging)
-  logChatTransaction(userId, actualCostLight, new_balance, usage, model, metadata, options).catch(() => {});
+  logChatTransaction(
+    userId,
+    actualCostLight,
+    new_balance,
+    usage,
+    model,
+    metadata,
+    options,
+  ).catch(() => {});
 
   return {
     cost_light: actualCostLight,
@@ -229,14 +272,17 @@ async function logChatTransaction(
   metadata: ChatBillingMetadata = {},
   options: ChatBillingCostOptions = {},
 ): Promise<void> {
-  await fetch(`${getEnv('SUPABASE_URL')}/rest/v1/billing_transactions`, {
-    method: 'POST',
+  await fetch(`${getEnv("SUPABASE_URL")}/rest/v1/billing_transactions`, {
+    method: "POST",
     headers: dbWriteHeaders(),
     body: JSON.stringify({
       user_id: userId,
-      type: 'charge',
-      category: 'chat_inference',
-      description: `Chat: ${model} (${usage.prompt_tokens}+${usage.completion_tokens} tokens, ${formatLight(costLight)})`,
+      type: "charge",
+      category: "chat_inference",
+      description:
+        `Chat: ${model} (${usage.prompt_tokens}+${usage.completion_tokens} tokens, ${
+          formatLight(costLight)
+        })`,
       amount_light: -costLight, // negative = charge (same convention as hosting)
       balance_after_light: balanceAfterLight,
       metadata: {

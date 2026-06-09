@@ -1,6 +1,6 @@
 # Environment Isolation Matrix
 
-Last reviewed: `2026-04-21`
+Last reviewed: `2026-06-08`
 
 This document is the canonical inventory of release-relevant environment
 surfaces and the remaining staging/production coupling that still exists at
@@ -29,6 +29,9 @@ Use it to answer three questions quickly:
 | Surface | Staging | Production | Isolation status | Current owner | Evidence | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | Public API hostname | `https://ultralight-api-staging.rgn4jz429m.workers.dev` | `https://ultralight-api.rgn4jz429m.workers.dev` | `Isolated` | Platform / API | [api/wrangler.toml](../api/wrangler.toml), [docs/RELEASE_TOPOLOGY.md](RELEASE_TOPOLOGY.md) | Separate Worker scripts and Workers.dev origins; replace only with an owned custom domain |
+| Launch website hostname | `https://staging.ultralight-launch-web.pages.dev` | `https://ultralight-launch-web.pages.dev` | `Isolated` | Launch Web / Release ops | [apps/launch-web/wrangler.toml](../apps/launch-web/wrangler.toml), [`.github/workflows/launch-web-deploy.yml`](../.github/workflows/launch-web-deploy.yml) | Separate Pages branches and origins; replace only with owned custom domains |
+| Launch website API base | staging API Worker origin | production API Worker origin | `Isolated` | Launch Web / Platform | [apps/launch-web/.env.staging](../apps/launch-web/.env.staging), [apps/launch-web/.env.production](../apps/launch-web/.env.production), [api/wrangler.toml](../api/wrangler.toml) | Build-time API base keeps staging Pages on staging API and production Pages on production API |
+| Launch website auth transport | bearer token in browser storage | bearer token in browser storage | `Isolated` | Launch Web / Platform | [apps/launch-web/src/lib/api.ts](../apps/launch-web/src/lib/api.ts), [api/services/cors.ts](../api/services/cors.ts) | Shared parent-domain cookies are deferred; CORS allows explicit Pages origins for direct API calls |
 | Main API Worker script | `ultralight-api-staging` | `ultralight-api` | `Isolated` | Platform / API | [api/wrangler.toml](../api/wrangler.toml) | Same code path, separate Cloudflare script names |
 | Main API deploy environment | GitHub `staging` environment | GitHub `production` environment | `Isolated` | Release ops | [`.github/workflows/api-deploy.yml`](../.github/workflows/api-deploy.yml) | Separate deployment credentials and concurrency groups |
 | Supabase project | `SUPABASE_STAGING_PROJECT_ID` | `SUPABASE_PRODUCTION_PROJECT_ID` | `Isolated` | Database / Release ops | [`.github/workflows/supabase-db.yml`](../.github/workflows/supabase-db.yml), [`.github/workflows/supabase-production-db.yml`](../.github/workflows/supabase-production-db.yml) | Primary DB boundary is correctly split |

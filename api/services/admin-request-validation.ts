@@ -154,6 +154,7 @@ export interface UpdateBillingConfigPayload {
   storage_free_bytes?: number;
   storage_light_per_gb_month?: number;
   publish_deposit_enabled?: boolean;
+  publisher_min_publish_balance_light?: number;
   published_hosting_meter_enabled?: boolean;
   payout_policy_copy?: string;
 }
@@ -782,9 +783,13 @@ export async function validateGrantFeeWaiverCreditRequest(
       body.created_by_user_id,
       "created_by_user_id",
     ),
-    referenceTable: normalizeOptionalString(body.reference_table, "reference_table", {
-      maxLength: MAX_REFERENCE_TABLE_LENGTH,
-    }),
+    referenceTable: normalizeOptionalString(
+      body.reference_table,
+      "reference_table",
+      {
+        maxLength: MAX_REFERENCE_TABLE_LENGTH,
+      },
+    ),
     referenceId: normalizeOptionalUuid(body.reference_id, "reference_id"),
     metadata: normalizeMetadataObject(body.metadata, "metadata"),
   };
@@ -849,6 +854,7 @@ export async function validateUpdateBillingConfigRequest(
       "storage_free_bytes",
       "storage_light_per_gb_month",
       "publish_deposit_enabled",
+      "publisher_min_publish_balance_light",
       "published_hosting_meter_enabled",
       "payout_policy_copy",
     ],
@@ -973,6 +979,13 @@ export async function validateUpdateBillingConfigRequest(
     payload.publish_deposit_enabled = normalizeRequiredBoolean(
       body.publish_deposit_enabled,
       "publish_deposit_enabled",
+    );
+  }
+  if (body.publisher_min_publish_balance_light !== undefined) {
+    payload.publisher_min_publish_balance_light = normalizePositiveNumber(
+      body.publisher_min_publish_balance_light,
+      "publisher_min_publish_balance_light",
+      { max: MAX_TOP_UP_LIGHT },
     );
   }
   if (body.published_hosting_meter_enabled !== undefined) {

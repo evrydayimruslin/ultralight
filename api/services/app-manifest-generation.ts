@@ -3,6 +3,7 @@ import type {
   ManifestFunction,
   ManifestParameter,
   ManifestReturn,
+  ManifestSkill,
 } from '../../shared/contracts/manifest.ts';
 import { validateManifest } from '../../shared/contracts/manifest.ts';
 import type { ParseResult } from './parser.ts';
@@ -61,6 +62,40 @@ function hasManifestFunctionContracts(
   return !!manifest?.functions && Object.keys(manifest.functions).length > 0;
 }
 
+function buildDefaultManifestSkill(
+  app: ManifestAppIdentity,
+  functionNames: string[],
+): ManifestSkill {
+  const appName = app.name || app.slug;
+  const functionSummary = functionNames.length > 0
+    ? `Functions: ${functionNames.slice(0, 12).join(', ')}.`
+    : undefined;
+  return {
+    name: `${appName} context`,
+    description: `Full usage context and examples for ${appName}.`,
+    semantic_description: [app.description, functionSummary]
+      .filter((part): part is string => Boolean(part && part.trim()))
+      .join(' '),
+    resource: 'skills.md',
+    format: 'markdown',
+  };
+}
+
+function withDefaultManifestSkill(
+  manifest: AppManifest,
+  app: ManifestAppIdentity,
+): AppManifest {
+  const functionNames = manifest.functions ? Object.keys(manifest.functions) : [];
+  const defaultSkill = buildDefaultManifestSkill(app, functionNames);
+  return {
+    ...manifest,
+    skills: {
+      context: defaultSkill,
+      ...(manifest.skills || {}),
+    },
+  };
+}
+
 export function generateManifestFromParseResult(
   app: ManifestAppIdentity,
   parseResult: ParseResult,
@@ -79,11 +114,11 @@ export function generateManifestFromParseResult(
         ...(param.default !== undefined ? { default: param.default } : {}),
         ...(param.schema && (param.schema as Record<string, unknown>).properties
           ? {
-              properties: (param.schema as Record<string, unknown>).properties as Record<
-                string,
-                ManifestParameter
-              >,
-            }
+            properties: (param.schema as Record<string, unknown>).properties as Record<
+              string,
+              ManifestParameter
+            >,
+          }
           : {}),
       };
     }
@@ -93,11 +128,11 @@ export function generateManifestFromParseResult(
       parameters: Object.keys(parameters).length > 0 ? parameters : undefined,
       returns: fn.returns?.type
         ? ({
-            type: jsonSchemaToManifestType({
-              type: fn.returns.type.replace(/^Promise<(.+)>$/, '$1'),
-            } as Record<string, unknown>),
-            description: fn.returns.description || undefined,
-          } as ManifestReturn)
+          type: jsonSchemaToManifestType({
+            type: fn.returns.type.replace(/^Promise<(.+)>$/, '$1'),
+          } as Record<string, unknown>),
+          description: fn.returns.description || undefined,
+        } as ManifestReturn)
         : undefined,
       examples: fn.examples.length > 0 ? fn.examples : undefined,
     };
@@ -110,6 +145,12 @@ export function generateManifestFromParseResult(
     type: 'mcp',
     entry: { functions: options.entryFileName || 'index.ts' },
     functions: Object.keys(functions).length > 0 ? functions : undefined,
+    skills: {
+      context: buildDefaultManifestSkill(
+        app,
+        parseResult.functions.map((fn) => fn.name),
+      ),
+    },
     permissions: parseResult.permissions.length > 0 ? parseResult.permissions : undefined,
   };
 }
@@ -141,6 +182,10 @@ export function mergeManifestWithParseResult(
       },
       permissions: existingManifest.permissions ?? autoManifest.permissions,
       functions: { ...(existingManifest.functions || {}) },
+      skills: {
+        ...(autoManifest.skills || {}),
+        ...(existingManifest.skills || {}),
+      },
     };
 
     if (autoManifest.functions) {
@@ -254,9 +299,10 @@ export async function resolveStoredManifestCoverage(input: {
 }): Promise<StoredManifestCoverageResult> {
   const storedManifest = await fetchStoredManifest(input.fetchTextFile, input.storageKey);
   if (hasManifestFunctionContracts(storedManifest)) {
+    const manifest = withDefaultManifestSkill(storedManifest!, input.app);
     return {
-      manifest: storedManifest,
-      manifestJson: JSON.stringify(storedManifest, null, 2),
+      manifest,
+      manifestJson: JSON.stringify(manifest, null, 2),
       source: 'stored',
     };
   }

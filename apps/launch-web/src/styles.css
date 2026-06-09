@@ -164,6 +164,26 @@ button {
   padding: 52px 0 88px;
 }
 
+.api-notice {
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 0 18px;
+  padding: 8px 10px;
+  border: 1px solid var(--ul-border);
+  border-radius: 8px;
+  background: var(--ul-raised);
+  color: var(--ul-secondary);
+  font-family: var(--ul-mono);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.api-notice.warning {
+  border-color: rgba(245, 158, 11, 0.28);
+  background: rgba(245, 158, 11, 0.08);
+  color: var(--ul-amber-deep);
+}
+
 .page-hero {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -2981,7 +3001,7 @@ button {
 
 .wallet-metric-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 14px;
 }
 

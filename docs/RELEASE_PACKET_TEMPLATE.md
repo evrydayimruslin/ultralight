@@ -1,6 +1,6 @@
 # Release Packet Template
 
-Last reviewed: `2026-04-21`
+Last reviewed: `2026-06-08`
 
 This template is the operator-facing release packet for a single candidate.
 
@@ -84,6 +84,7 @@ Use this structure verbatim or keep it very close:
 | Launch Guardrails | | | |
 | Supabase DB / Supabase Production DB | | | |
 | API Deploy | | | |
+| Launch Web Deploy | | | |
 | Desktop Build / Desktop Release | | | |
 | Staging Launch Gate / Production Launch Gate | | | |
 
@@ -96,6 +97,8 @@ Use this structure verbatim or keep it very close:
 | API smoke | `smoke/api-smoke.log` | | |
 | CORS allowed probe | `smoke/cors-allowed.*` | | |
 | CORS blocked probe | `smoke/cors-blocked.*` | | |
+| Launch web Pages smoke | `smoke/launch-web-pages.md` | | exact Pages/API URLs recorded |
+| Launch web Pages smoke JSON | `smoke/launch-web-pages.json` | | failure classes recorded |
 | Smoke summary | `smoke/summary.md` | | |
 
 ### Audit outputs
@@ -120,6 +123,11 @@ List only the audits relevant to this candidate.
 | Sign out | | `manual/desktop-smoke-notes.md` | |
 | Embedded dashboard / widget flow | | `manual/desktop-smoke-notes.md` | |
 | Shared-page / share-link flow | | `manual/desktop-smoke-notes.md` | |
+| Launch website public routes (`/`, `/install`, `/store`, `/tools/:slug`) | | `smoke/launch-web-pages.md` | |
+| Launch website authenticated SPA routes (`/library`, `/wallet`, `/settings`, `/admin/tools/:id`) | | `smoke/launch-web-pages.md` | |
+| Launch website API status/OpenAPI/store from Pages origin | | `smoke/launch-web-pages.md` | |
+| Launch website API CORS preflight from Pages origin | | `smoke/launch-web-pages.md` | |
+| Launch website authenticated API probes | | `smoke/launch-web-pages.md` | token supplied / skipped |
 | Updater smoke, if applicable | | `manual/desktop-smoke-notes.md` | |
 
 ### Recovery evidence
@@ -152,6 +160,7 @@ List only what is still relevant to this candidate.
 
 - [ ] required workflow runs succeeded
 - [ ] required smoke passed
+- [ ] launch-web Pages smoke passed with exact Pages/API URLs recorded
 - [ ] manual desktop checks completed
 - [ ] required audits reviewed
 - [ ] restore / rollback evidence reviewed when in scope

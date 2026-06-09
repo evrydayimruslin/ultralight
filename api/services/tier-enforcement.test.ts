@@ -1,6 +1,7 @@
 import { assertEquals } from "https://deno.land/std@0.210.0/assert/assert_equals.ts";
 import {
   checkPublishDeposit,
+  checkPublisherPublishReadiness,
   checkVisibilityAllowed,
 } from "./tier-enforcement.ts";
 
@@ -88,6 +89,7 @@ Deno.test("tier enforcement: publish gate checks balance before address", async 
             id: "singleton",
             version: 22,
             publish_deposit_enabled: true,
+            publisher_min_publish_balance_light: 1000,
           }]);
         }
 
@@ -102,7 +104,7 @@ Deno.test("tier enforcement: publish gate checks balance before address", async 
 
         assertEquals(
           result,
-          "Publishing is temporarily gated by a minimum ✦500 spendable Light balance. Your current balance is ✦100. Add Light from Wallet to go live.",
+          "Publishing requires at least ✦1000 spendable Light before a non-private tool can go live. Current balance: ✦100. Add Light from Wallet to go live.",
         );
         assertEquals(
           calls.some((url) => url.includes("/rest/v1/user_billing_addresses?")),
@@ -124,11 +126,12 @@ Deno.test("tier enforcement: publish gate requires billing address with sufficie
             id: "singleton",
             version: 22,
             publish_deposit_enabled: true,
+            publisher_min_publish_balance_light: 1000,
           }]);
         }
 
         if (url.includes("/rest/v1/users?")) {
-          return Response.json([{ balance_light: 750 }]);
+          return Response.json([{ balance_light: 1250 }]);
         }
 
         if (url.includes("/rest/v1/user_billing_addresses?")) {
@@ -142,7 +145,7 @@ Deno.test("tier enforcement: publish gate requires billing address with sufficie
 
         assertEquals(
           result,
-          "Publishing requires a saved billing address. Add Light from Wallet or save your billing address before going live.",
+          "Publishing requires a saved billing address after meeting the ✦1000 minimum. Current balance: ✦1250. Save a billing address before going live.",
         );
       },
     );
@@ -160,11 +163,12 @@ Deno.test("tier enforcement: publish gate passes with balance and billing addres
             id: "singleton",
             version: 22,
             publish_deposit_enabled: true,
+            publisher_min_publish_balance_light: 1000,
           }]);
         }
 
         if (url.includes("/rest/v1/users?")) {
-          return Response.json([{ balance_light: 750 }]);
+          return Response.json([{ balance_light: 1250 }]);
         }
 
         if (url.includes("/rest/v1/user_billing_addresses?")) {
@@ -175,6 +179,44 @@ Deno.test("tier enforcement: publish gate passes with balance and billing addres
       },
       async () => {
         assertEquals(await checkPublishDeposit("user-1"), null);
+      },
+    );
+  });
+});
+
+Deno.test("tier enforcement: publish readiness exposes structured balance details", async () => {
+  await runSerial(async () => {
+    await withMockedEnvAndFetch(
+      async (input) => {
+        const url = String(input);
+
+        if (url.includes("/platform_billing_config")) {
+          return Response.json([{
+            id: "singleton",
+            version: 22,
+            publish_deposit_enabled: true,
+            publisher_min_publish_balance_light: 1500,
+          }]);
+        }
+
+        if (url.includes("/rest/v1/users?")) {
+          return Response.json([{ balance_light: 1000 }]);
+        }
+
+        throw new Error(`Unexpected fetch: ${url}`);
+      },
+      async () => {
+        const readiness = await checkPublisherPublishReadiness("user-1");
+
+        assertEquals(readiness.allowed, false);
+        assertEquals(readiness.requiredLight, 1500);
+        assertEquals(readiness.currentBalanceLight, 1000);
+        assertEquals(readiness.block?.reason, "insufficient_publish_balance");
+        assertEquals(readiness.block?.status, 402);
+        assertEquals(
+          readiness.block?.nextAction,
+          "Add Light from Wallet to go live.",
+        );
       },
     );
   });

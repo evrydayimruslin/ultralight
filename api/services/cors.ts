@@ -29,6 +29,8 @@ const TAURI_ALLOWED_ORIGINS = [
 const LOCAL_DEV_ALLOWED_ORIGINS = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
+  "http://localhost:5178",
+  "http://127.0.0.1:5178",
   "http://localhost:1420",
   "http://127.0.0.1:1420",
 ] as const;

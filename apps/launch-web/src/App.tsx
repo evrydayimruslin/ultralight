@@ -8,6 +8,10 @@ import {
   type ResolvedLaunchRoute,
 } from "./lib/routes";
 import {
+  useLaunchRouteLiveData,
+  type LaunchRouteLiveState,
+} from "./lib/live-data";
+import {
   AdminFoundationPage,
   HomeFoundationPage,
   InstallFoundationPage,
@@ -25,6 +29,7 @@ export interface LocationState {
 }
 
 export interface LaunchPageProps {
+  live: LaunchRouteLiveState;
   location: LocationState;
   route: ResolvedLaunchRoute;
   navigate: (to: string) => void;
@@ -67,6 +72,7 @@ export function App(): ReactElement {
     () => resolveLaunchRoute(location.pathname),
     [location.pathname],
   );
+  const live = useLaunchRouteLiveData(location, route);
 
   return (
     <LaunchShell
@@ -76,29 +82,29 @@ export function App(): ReactElement {
       primaryRoutes={primaryRoutes()}
       title={routeTitles[route.definition.key]}
     >
-      <RouteSwitch location={location} route={route} navigate={navigate} />
+      <RouteSwitch live={live} location={location} route={route} navigate={navigate} />
     </LaunchShell>
   );
 }
 
-function RouteSwitch({ location, route, navigate }: LaunchPageProps): ReactElement {
+function RouteSwitch({ live, location, route, navigate }: LaunchPageProps): ReactElement {
   switch (route.definition.key) {
     case "home":
-      return <HomeFoundationPage location={location} route={route} navigate={navigate} />;
+      return <HomeFoundationPage live={live} location={location} route={route} navigate={navigate} />;
     case "install":
-      return <InstallFoundationPage location={location} route={route} navigate={navigate} />;
+      return <InstallFoundationPage live={live} location={location} route={route} navigate={navigate} />;
     case "library":
-      return <LibraryFoundationPage location={location} route={route} navigate={navigate} />;
+      return <LibraryFoundationPage live={live} location={location} route={route} navigate={navigate} />;
     case "store":
-      return <StoreFoundationPage location={location} route={route} navigate={navigate} />;
+      return <StoreFoundationPage live={live} location={location} route={route} navigate={navigate} />;
     case "tool":
-      return <ToolFoundationPage location={location} route={route} navigate={navigate} />;
+      return <ToolFoundationPage live={live} location={location} route={route} navigate={navigate} />;
     case "wallet":
-      return <WalletFoundationPage location={location} route={route} navigate={navigate} />;
+      return <WalletFoundationPage live={live} location={location} route={route} navigate={navigate} />;
     case "settings":
-      return <SettingsFoundationPage location={location} route={route} navigate={navigate} />;
+      return <SettingsFoundationPage live={live} location={location} route={route} navigate={navigate} />;
     case "adminTool":
-      return <AdminFoundationPage location={location} route={route} navigate={navigate} />;
+      return <AdminFoundationPage live={live} location={location} route={route} navigate={navigate} />;
   }
 }
 

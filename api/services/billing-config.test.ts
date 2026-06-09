@@ -26,6 +26,7 @@ Deno.test("billing config: defaults encode current Light economics", () => {
   assertEquals(DEFAULT_BILLING_CONFIG.storageFreeBytes, 104857600);
   assertEquals(DEFAULT_BILLING_CONFIG.storageLightPerGbMonth, 100);
   assertEquals(DEFAULT_BILLING_CONFIG.publishDepositEnabled, true);
+  assertEquals(DEFAULT_BILLING_CONFIG.publisherMinPublishBalanceLight, 1000);
   assertEquals(DEFAULT_BILLING_CONFIG.publishedHostingMeterEnabled, false);
 });
 
@@ -51,6 +52,7 @@ Deno.test("billing config: row normalization falls back only for invalid values"
     storage_free_bytes: 209715200,
     storage_light_per_gb_month: 75,
     publish_deposit_enabled: true,
+    publisher_min_publish_balance_light: 1500,
     published_hosting_meter_enabled: false,
     payout_policy_copy: "Monthly payouts.",
     updated_at: "2026-04-30T00:00:00Z",
@@ -70,6 +72,7 @@ Deno.test("billing config: row normalization falls back only for invalid values"
   assertEquals(config.storageFreeBytes, 209715200);
   assertEquals(config.storageLightPerGbMonth, 75);
   assertEquals(config.publishDepositEnabled, true);
+  assertEquals(config.publisherMinPublishBalanceLight, 1500);
   assertEquals(config.publishedHostingMeterEnabled, false);
   assertEquals(config.payoutPolicyCopy, "Monthly payouts.");
 });
@@ -95,6 +98,7 @@ Deno.test("billing config: public shape includes human-readable labels", () => {
   assertEquals(publicConfig.storage_free_bytes, 104857600);
   assertEquals(publicConfig.storage_light_per_gb_month, 100);
   assertEquals(publicConfig.publish_deposit_enabled, true);
+  assertEquals(publicConfig.publisher_min_publish_balance_light, 1000);
   assertEquals(publicConfig.published_hosting_meter_enabled, false);
   assertEquals(publicConfig.labels.card_minimum, "$25.00");
   assertEquals(publicConfig.labels.wire_minimum, "$25.00");
@@ -108,8 +112,8 @@ Deno.test("billing config: public shape includes human-readable labels", () => {
     publicConfig.labels.storage_at_rest,
     "✦100 / GB-month after 100MB free",
   );
+  assertEquals(publicConfig.labels.publisher_min_publish_balance, "✦1,000");
   assertEquals(Object.hasOwn(publicConfig, "min_publish_deposit_light"), false);
-  assertEquals(Object.hasOwn(publicConfig.labels, "publish_deposit"), false);
   assertEquals(Object.hasOwn(publicConfig.labels, "hosting_rate"), false);
   assertEquals(Object.hasOwn(publicConfig.labels, "data_rate"), false);
   assertEquals(publicConfig.policy_copy.termsUrl, "/terms");

@@ -5,7 +5,10 @@
 // guardrails live at the handler boundary.
 
 import { getEnv } from '../lib/env.ts';
-import { COMBINED_FREE_TIER_BYTES } from '../../shared/types/index.ts';
+import {
+  COMBINED_FREE_TIER_BYTES,
+  STORAGE_MIN_BALANCE_AFTER_FREE_TIER_LIGHT,
+} from '../../shared/types/index.ts';
 import { resolveEnforcementOptions, type EnforcementOptions } from './enforcement.ts';
 
 /** Combined storage soft cap: source code + user data = 100MB. */
@@ -17,7 +20,9 @@ export interface StorageQuotaResult {
   limit_bytes: number;
   remaining_bytes: number;
   over_soft_cap?: boolean;
-  reason?: 'quota_exceeded' | 'service_unavailable';
+  minimum_balance_light?: number;
+  current_balance_light?: number;
+  reason?: 'quota_exceeded' | 'insufficient_storage_balance' | 'service_unavailable';
 }
 
 export interface AppStorageAccountingResult {
@@ -68,9 +73,9 @@ export async function checkStorageQuota(
   }
 
   try {
-    // Query combined storage usage from users table.
+    // Query combined storage usage and spendable balance from users table.
     const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=storage_used_bytes,data_storage_used_bytes,d1_storage_bytes`,
+      `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=storage_used_bytes,data_storage_used_bytes,d1_storage_bytes,balance_light`,
       {
         headers: {
           'apikey': SUPABASE_SERVICE_ROLE_KEY,
@@ -83,24 +88,37 @@ export async function checkStorageQuota(
       return unavailableStorageQuotaResult(uploadSizeBytes, options, await res.text());
     }
 
-    const rows = await res.json() as Array<{ storage_used_bytes: number | null; data_storage_used_bytes: number | null; d1_storage_bytes?: number | null }>;
+    const rows = await res.json() as Array<{
+      storage_used_bytes: number | null;
+      data_storage_used_bytes: number | null;
+      d1_storage_bytes?: number | null;
+      balance_light?: number | null;
+    }>;
     if (!rows || rows.length === 0) {
       return unavailableStorageQuotaResult(uploadSizeBytes, options, 'User row missing during quota check');
     }
     const sourceBytes = rows[0]?.storage_used_bytes ?? 0;
     const dataBytes = rows[0]?.data_storage_used_bytes ?? 0;
     const d1Bytes = rows[0]?.d1_storage_bytes ?? 0;
+    const balanceLight = rows[0]?.balance_light ?? 0;
     const combinedUsed = sourceBytes + dataBytes + d1Bytes;
     const projectedBytes = combinedUsed + uploadSizeBytes;
     const remaining = Math.max(0, STORAGE_SOFT_CAP_BYTES - combinedUsed);
     const overSoftCap = projectedBytes > STORAGE_SOFT_CAP_BYTES;
+    const requiresMinimumBalance =
+      overSoftCap && balanceLight < STORAGE_MIN_BALANCE_AFTER_FREE_TIER_LIGHT;
 
     return {
-      allowed: true,
+      allowed: !requiresMinimumBalance,
       used_bytes: combinedUsed,
       limit_bytes: STORAGE_SOFT_CAP_BYTES,
       remaining_bytes: remaining,
       over_soft_cap: overSoftCap,
+      minimum_balance_light: STORAGE_MIN_BALANCE_AFTER_FREE_TIER_LIGHT,
+      current_balance_light: balanceLight,
+      reason: requiresMinimumBalance
+        ? 'insufficient_storage_balance'
+        : undefined,
     };
   } catch (err) {
     return unavailableStorageQuotaResult(uploadSizeBytes, options, err);

@@ -61,7 +61,7 @@ BEGIN
     p_amount_light,
     0
   )
-  ON CONFLICT (publisher_user_id) DO UPDATE
+  ON CONFLICT ON CONSTRAINT publisher_fee_credit_accounts_pkey DO UPDATE
   SET balance_light = public.publisher_fee_credit_accounts.balance_light + EXCLUDED.balance_light,
       lifetime_granted_light = public.publisher_fee_credit_accounts.lifetime_granted_light + EXCLUDED.lifetime_granted_light,
       updated_at = now()

@@ -51,13 +51,16 @@ async function withMockedEnvAndFetch(
   }
 }
 
-function billingConfigResponse(): Response {
+function billingConfigResponse(
+  overrides: Record<string, unknown> = {},
+): Response {
   return Response.json([{
     id: "singleton",
     version: 21,
     storage_free_bytes: 100 * MIB,
     storage_light_per_gb_month: 100,
     published_hosting_meter_enabled: false,
+    ...overrides,
   }]);
 }
 
@@ -91,7 +94,10 @@ Deno.test("storage billing debits exact storage-at-rest usage through cloud ledg
         calls.push({ url, method, body });
 
         if (url.includes("/platform_billing_config")) {
-          return billingConfigResponse();
+          return billingConfigResponse({
+            version: 22,
+            storage_light_per_gb_month: 125,
+          });
         }
 
         if (url.includes("/rest/v1/users?or=")) {
@@ -153,7 +159,12 @@ Deno.test("storage billing debits exact storage-at-rest usage through cloud ledg
         assert(debitCall);
         assertEquals(debitCall.body.p_resource, "storage_at_rest");
         assertEquals(debitCall.body.p_units, 62 * MIB);
-        assertEquals(debitCall.body.p_billing_config_version, 21);
+        assertEquals(debitCall.body.p_billing_config_version, 22);
+        assertEquals(
+          (debitCall.body.p_metadata as Record<string, unknown>)
+            .storage_light_per_gb_month,
+          125,
+        );
         assertEquals(
           (debitCall.body.p_metadata as Record<string, unknown>)
             .d1_storage_bytes,
@@ -161,7 +172,7 @@ Deno.test("storage billing debits exact storage-at-rest usage through cloud ledg
         );
         assertAlmostEquals(
           Number(debitCall.body.p_amount_light),
-          Number(debitCall.body.p_cloud_units) * 100,
+          Number(debitCall.body.p_cloud_units) * 125,
           1e-9,
         );
         assertAlmostEquals(
@@ -171,6 +182,7 @@ Deno.test("storage billing debits exact storage-at-rest usage through cloud ledg
         );
         assert(txCall);
         assertEquals(txCall.body.category, "storage_at_rest");
+        assertEquals(txCall.body.billing_config_version, 22);
         assertEquals(
           calls.some((call) => call.url.includes("/rpc/debit_light")),
           false,

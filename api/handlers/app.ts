@@ -5173,6 +5173,9 @@ async function handlePublishedPage(
                 p_amount_light: contentRow.price_light,
                 p_reason: "page_view",
                 p_content_id: contentRow.id,
+                p_idempotency_key: request.headers.get("Idempotency-Key") ||
+                  request.headers.get("X-Idempotency-Key") ||
+                  null,
                 p_metadata: {
                   content_slug: slug,
                   content_type: "page",

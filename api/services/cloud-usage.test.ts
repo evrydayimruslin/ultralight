@@ -98,6 +98,10 @@ Deno.test("cloud usage debit calls atomic no-partial RPC with fractional amount"
     assertEquals(calls[0].body.p_amount_light, 0.001);
     assertEquals(calls[0].body.p_cloud_units, 1);
     assertEquals(calls[0].body.p_allow_partial, undefined);
+    assertEquals(
+      calls[0].body.p_idempotency_key,
+      "cloud_usage_debit:receipt-123:00000000-0000-0000-0000-000000000101:00000000-0000-0000-0000-000000000201:run:mcp:worker_execution",
+    );
     assertEquals(calls[0].body.p_metadata, { trace_id: "trace-123" });
   } finally {
     globalThis.__env = previousEnv;
@@ -162,6 +166,7 @@ Deno.test("cloud operation debit applies R2/KV operation unit config", async () 
     assertEquals(calls[0].body.p_cloud_units, 2);
     assertEquals(calls[0].body.p_amount_light, 0.002);
     assertEquals(calls[0].body.p_billing_config_version, 9);
+    assertEquals(calls[0].body.p_idempotency_key, null);
     assertEquals(calls[0].body.p_metadata, {
       key: "apps/app-1/index.js",
       operation: "put",
@@ -241,9 +246,19 @@ Deno.test("D1 usage debit emits exact read and write cloud usage events", async 
     assertEquals(calls[0].body.p_units, 250);
     assertEquals(calls[0].body.p_cloud_units, 3);
     assertEquals(calls[0].body.p_amount_light, 0.003);
+    assertEquals(calls[0].body.p_billing_config_version, 10);
+    assertEquals(
+      calls[0].body.p_idempotency_key,
+      "d1_usage:receipt-d1:00000000-0000-0000-0000-000000000101:00000000-0000-0000-0000-000000000201:search:tools%2Fcall:select:read",
+    );
     assertEquals(calls[1].body.p_units, 3);
     assertEquals(calls[1].body.p_cloud_units, 3);
     assertEquals(calls[1].body.p_amount_light, 0.003);
+    assertEquals(calls[1].body.p_billing_config_version, 10);
+    assertEquals(
+      calls[1].body.p_idempotency_key,
+      "d1_usage:receipt-d1:00000000-0000-0000-0000-000000000101:00000000-0000-0000-0000-000000000201:search:tools%2Fcall:select:write",
+    );
     assertEquals(calls[0].body.p_metadata.rows_per_cloud_unit, 100);
     assertEquals(calls[1].body.p_metadata.rows_per_cloud_unit, 1);
   } finally {
@@ -337,7 +352,12 @@ Deno.test("cloud usage hold lifecycle maps reserve, settle, and release RPCs", a
     assertEquals(settlement.releasedAmountLight, 0.15);
     assertEquals(release.releasedAmountLight, 0.25);
     assertEquals(calls[0].body.p_expected_amount_light, 0.25);
+    assertEquals(calls[0].body.p_idempotency_key, null);
     assertEquals(calls[1].body.p_amount_light, 0.1);
+    assertEquals(
+      calls[1].body.p_idempotency_key,
+      "cloud_hold_settlement:00000000-0000-0000-0000-000000000401",
+    );
     assertEquals(calls[2].body.p_metadata, { reason: "timeout" });
   } finally {
     globalThis.__env = previousEnv;
@@ -376,9 +396,9 @@ Deno.test("runtime cloud hold reserves timeout amount and settles exact duration
             free_call_count: null,
             free_call_limit: 0,
             old_balance: 10,
-            new_balance: 9.88,
-            held_amount_light: 0.12,
-            held_deposit_light: 0.12,
+            new_balance: 9.94,
+            held_amount_light: 0.06,
+            held_deposit_light: 0.06,
             held_earned_light: 0,
           }]),
           { status: 200, headers: { "Content-Type": "application/json" } },
@@ -391,8 +411,8 @@ Deno.test("runtime cloud hold reserves timeout amount and settles exact duration
         JSON.stringify([{
           event_id: "00000000-0000-0000-0000-000000000602",
           hold_id: "00000000-0000-0000-0000-000000000601",
-          settled_amount_light: 0.003,
-          released_amount_light: 0.117,
+          settled_amount_light: 0.006,
+          released_amount_light: 0.054,
         }]),
         { status: 200, headers: { "Content-Type": "application/json" } },
       ),
@@ -409,22 +429,40 @@ Deno.test("runtime cloud hold reserves timeout amount and settles exact duration
       source: "run",
       timeoutMs: 30_000,
       appPriceLight: 3,
+      billingConfig: {
+        version: 12,
+        workerMsPerCloudUnit: 1_000,
+        cloudUnitLightPer1k: 2,
+      },
     }, { fetchFn });
     const settlement = await settleRuntimeCloudHold({
       holdId: hold.holdId,
-      durationMs: 501,
+      durationMs: 2_001,
+      billingConfig: {
+        workerMsPerCloudUnit: 1_000,
+        cloudUnitLightPer1k: 2,
+      },
     }, { fetchFn });
 
-    assertEquals(hold.expectedCloudUnits, 120);
-    assertEquals(hold.expectedAmountLight, 0.12);
+    assertEquals(hold.expectedCloudUnits, 30);
+    assertEquals(hold.expectedAmountLight, 0.06);
     assertEquals(calls[0].body.p_expected_units, 30_000);
-    assertEquals(calls[0].body.p_expected_cloud_units, 120);
-    assertEquals(calls[0].body.p_expected_amount_light, 0.12);
+    assertEquals(calls[0].body.p_expected_cloud_units, 30);
+    assertEquals(calls[0].body.p_expected_amount_light, 0.06);
+    assertEquals(calls[0].body.p_billing_config_version, 12);
+    assertEquals(
+      calls[0].body.p_idempotency_key,
+      "runtime_cloud_hold:receipt-runtime:00000000-0000-0000-0000-000000000101:00000000-0000-0000-0000-000000000102:00000000-0000-0000-0000-000000000201:run:run",
+    );
     assertEquals(settlement.cloudUnits, 3);
-    assertEquals(settlement.amountLight, 0.003);
-    assertEquals(calls[1].body.p_units, 501);
+    assertEquals(settlement.amountLight, 0.006);
+    assertEquals(calls[1].body.p_units, 2_001);
     assertEquals(calls[1].body.p_cloud_units, 3);
-    assertEquals(calls[1].body.p_amount_light, 0.003);
+    assertEquals(calls[1].body.p_amount_light, 0.006);
+    assertEquals(
+      calls[1].body.p_idempotency_key,
+      "runtime_cloud_settlement:00000000-0000-0000-0000-000000000601",
+    );
   } finally {
     globalThis.__env = previousEnv;
   }

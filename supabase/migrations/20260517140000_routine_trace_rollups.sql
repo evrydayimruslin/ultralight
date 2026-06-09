@@ -353,18 +353,18 @@ BEGIN
   )
   RETURNING id INTO v_step_id;
 
-  UPDATE public.routine_runs
+  UPDATE public.routine_runs AS runs
   SET
-    total_light = COALESCE(total_light, 0) + v_cost_light,
-    metadata = COALESCE(metadata, '{}'::jsonb)
+    total_light = COALESCE(runs.total_light, 0) + v_cost_light,
+    metadata = COALESCE(runs.metadata, '{}'::jsonb)
       || jsonb_strip_nulls(jsonb_build_object(
         'last_receipt_id', v_receipt_id,
         'last_tool_invocation_id', p_tool_invocation_id,
         'last_contribution_step_id', v_step_id,
         'last_contribution_at', now()
       ))
-  WHERE id = p_routine_run_id
-  RETURNING total_light INTO v_total_light;
+  WHERE runs.id = p_routine_run_id
+  RETURNING runs.total_light INTO v_total_light;
 
   RETURN QUERY SELECT v_step_id, v_step_index, v_total_light;
 END;

@@ -1,0 +1,8 @@
+name = "ultralight-launch-web"
+compatibility_date = "2026-03-01"
+pages_build_output_dir = "dist"
+
+# Cloudflare Pages serves this as a static SPA. Build-time environment comes
+# from Vite modes:
+#   npm run build:staging    -> .env.staging
+#   npm run build:production -> .env.production

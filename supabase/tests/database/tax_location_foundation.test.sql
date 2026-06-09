@@ -1,6 +1,6 @@
 BEGIN;
 
-SELECT plan(14);
+SELECT plan(16);
 
 INSERT INTO public.users (
   id,
@@ -60,6 +60,23 @@ SELECT ok(
       AND column_name = 'publish_deposit_enabled'
   ) LIKE '%true%'),
   'publish Light balance gate defaults to enabled'
+);
+
+SELECT is(
+  (SELECT publisher_min_publish_balance_light FROM public.platform_billing_config WHERE id = 'singleton'),
+  1000::double precision,
+  'publisher minimum publish balance starts at 1000 Light'
+);
+
+SELECT ok(
+  ((
+    SELECT column_default::text
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'platform_billing_config'
+      AND column_name = 'publisher_min_publish_balance_light'
+  ) LIKE '%1000%'),
+  'publisher minimum publish balance defaults to 1000 Light'
 );
 
 SELECT ok(

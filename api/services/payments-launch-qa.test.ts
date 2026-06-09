@@ -37,6 +37,7 @@ Deno.test("payments launch QA: public config states closed-loop Light economics"
   assertEquals(config.cloud_unit_light_per_1k, 1);
   assertEquals(config.storage_light_per_gb_month, 100);
   assertEquals(config.publish_deposit_enabled, true);
+  assertEquals(config.publisher_min_publish_balance_light, 1000);
   assertEquals(config.published_hosting_meter_enabled, false);
   assertEquals(config.labels.payout_rate, "100 Light = $1");
   assertEquals(config.labels.cloud_unit_rate, "✦1 / 1,000 cloud units");
@@ -44,6 +45,7 @@ Deno.test("payments launch QA: public config states closed-loop Light economics"
     config.labels.storage_at_rest,
     "✦100 / GB-month after 100MB free",
   );
+  assertEquals(config.labels.publisher_min_publish_balance, "✦1,000");
   assertEquals(Object.hasOwn(config, "min_publish_deposit_light"), false);
   assertEquals(Object.hasOwn(config.labels, "hosting_rate"), false);
   assert(

@@ -69,6 +69,8 @@ export const LAUNCH_API_ROUTES = [
   "POST /api/launch/tools/:id/widgets/:widgetId/render",
   "GET /api/launch/tools/:id/functions",
   "POST /api/launch/tools/:id/functions/:functionName/run",
+  "GET /api/launch/tools/:id/skills",
+  "POST /api/launch/tools/:id/skills/:skillId/pull",
   "GET /api/launch/tools/:id/agent-permissions",
   "PATCH /api/launch/tools/:id/agent-permissions",
   "GET /api/launch/admin/tools/:id",
@@ -248,10 +250,28 @@ export interface LaunchMoneyAmount {
   display: string;
 }
 
+export interface LaunchPublisherPublishRequirement {
+  enabled: boolean;
+  requiredBalance: LaunchMoneyAmount;
+  currentBalance: LaunchMoneyAmount;
+  met: boolean;
+  nextAction?: string | null;
+}
+
 export interface LaunchPricingSummary {
   defaultCallPrice?: LaunchMoneyAmount | null;
+  defaultSkillPullPrice?: LaunchMoneyAmount | null;
   freeToInstall: boolean;
   paidFunctionsCount?: number;
+  paidSkillsCount?: number;
+}
+
+export interface LaunchAccessPolicySummary {
+  configured: boolean;
+  mode: "static" | "module";
+  module: string | null;
+  exportName: string;
+  execution: "static_pricing" | "runtime_policy";
 }
 
 export interface LaunchFunctionSummary {
@@ -260,6 +280,7 @@ export interface LaunchFunctionSummary {
   inputSchema?: Record<string, unknown> | null;
   outputSchema?: Record<string, unknown> | null;
   pricing?: LaunchPricingSummary | null;
+  accessPolicy?: LaunchAccessPolicySummary | null;
   widgetIds?: string[];
   agentPermission?: LaunchAgentFunctionPermissionSummary | null;
 }
@@ -270,6 +291,50 @@ export interface LaunchToolFunctionsResponse {
     "id" | "slug" | "name" | "relationship" | "publicUrl" | "adminUrl"
   >;
   functions: LaunchFunctionSummary[];
+  generatedAt: string;
+}
+
+export interface LaunchSkillSummary {
+  id: string;
+  name: string;
+  description?: string | null;
+  semanticDescription: string;
+  pricing?: {
+    pullPrice: LaunchMoneyAmount | null;
+    freePulls: number;
+    monetized: boolean;
+  } | null;
+  accessPolicy?: LaunchAccessPolicySummary | null;
+  pullUrl: string;
+}
+
+export interface LaunchToolSkillsResponse {
+  tool: Pick<
+    LaunchToolSummary,
+    "id" | "slug" | "name" | "relationship" | "publicUrl" | "adminUrl"
+  >;
+  skills: LaunchSkillSummary[];
+  generatedAt: string;
+}
+
+export interface LaunchSkillPullResponse {
+  success: boolean;
+  tool: Pick<LaunchToolSummary, "id" | "slug" | "name">;
+  skill: LaunchSkillSummary;
+  content?: string;
+  receiptId?: string | null;
+  charged?: LaunchMoneyAmount | null;
+  developerRevenue?: LaunchMoneyAmount | null;
+  platformFee?: LaunchMoneyAmount | null;
+  freePull?: boolean;
+  freePullCount?: number | null;
+  freePullLimit?: number;
+  waiverSource?: string | null;
+  error?: {
+    type?: string;
+    message: string;
+    details?: unknown;
+  } | null;
   generatedAt: string;
 }
 
@@ -487,10 +552,22 @@ export type LaunchDiscoverySource =
 
 export type LaunchRelevanceSource = "semantic" | "lexical" | "curated";
 
+export type LaunchSemanticSubjectType =
+  | "app"
+  | "function"
+  | "skill"
+  | "widget"
+  | "platform_primitive";
+
 export interface LaunchRelevanceSummary {
   source: LaunchRelevanceSource;
   score?: number | null;
   signals?: string[];
+  subjectType?: LaunchSemanticSubjectType;
+  subjectId?: string | null;
+  subjectLabel?: string | null;
+  appVersion?: string | null;
+  embeddingTextHash?: string | null;
 }
 
 export interface LaunchDiscoveryRetrievalSummary {
@@ -622,6 +699,7 @@ export interface LaunchWalletSummary {
   earningsUrl?: string | null;
   payoutsUrl?: string | null;
   payoutStatus?: LaunchPayoutStatus | null;
+  publishRequirement?: LaunchPublisherPublishRequirement | null;
   actions?: LaunchWalletAction[];
   recentTransactions?: LaunchWalletTransaction[];
   recentReceipts?: LaunchWalletReceiptSummary[];
@@ -728,6 +806,8 @@ export interface LaunchWalletReceiptSummary {
   infraCharge: LaunchMoneyAmount;
   platformFee: LaunchMoneyAmount;
   developerNet: LaunchMoneyAmount;
+  billingConfigVersion?: number | null;
+  billingConfigVersions?: number[];
   createdAt?: string | null;
   receiptUrl?: string | null;
 }

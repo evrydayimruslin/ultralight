@@ -1,18 +1,20 @@
-import type { EnvSchemaEntry } from "./env.ts";
-import type { MCPTool, MCPToolAnnotations } from "./mcp.ts";
-import type { RoutineDeclaration } from "./routine.ts";
-import type { WidgetContextSourceDeclaration, WidgetDeclaration, WidgetGenerationHints } from "./widget.ts";
+import type { EnvSchemaEntry } from './env.ts';
+import type { MCPTool, MCPToolAnnotations } from './mcp.ts';
+import type { RoutineDeclaration } from './routine.ts';
+import type { WidgetContextSourceDeclaration, WidgetDeclaration, WidgetGenerationHints } from './widget.ts';
 export interface AppManifest {
     name: string;
     version: string;
     description?: string;
     author?: string;
     icon?: string;
-    type: "mcp";
+    type: 'mcp';
     entry: {
         functions?: string;
     };
     functions?: Record<string, ManifestFunction>;
+    skills?: Record<string, ManifestSkill>;
+    access_policy?: ManifestAccessPolicy;
     permissions?: string[];
     widgets?: WidgetDeclaration[];
     context_sources?: WidgetContextSourceDeclaration[];
@@ -21,10 +23,10 @@ export interface AppManifest {
     env_vars?: Record<string, ManifestEnvVar>;
     http?: ManifestHttpConfig;
 }
-export type ManifestHttpAuthMode = "user" | "public";
-export type ManifestHttpBillingMode = "owner" | "caller";
-export type ManifestHttpDataScope = "app" | "user";
-export type ManifestHttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD";
+export type ManifestHttpAuthMode = 'user' | 'public';
+export type ManifestHttpBillingMode = 'owner' | 'caller';
+export type ManifestHttpDataScope = 'app' | 'user';
+export type ManifestHttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
 export interface ManifestHttpConfig {
     defaults?: ManifestHttpRouteDefaults;
     routes?: Record<string, ManifestHttpRoutePolicy>;
@@ -58,8 +60,85 @@ export interface ManifestFunction {
     annotations?: MCPToolAnnotations;
     generation_hints?: WidgetGenerationHints;
 }
+export interface ManifestSkill {
+    name?: string;
+    description: string;
+    semantic_description?: string;
+    preview?: string;
+    resource?: string;
+    format?: 'markdown' | 'text';
+}
+export type ManifestAccessPolicyMode = 'static' | 'module';
+export interface ManifestAccessPolicy {
+    /**
+     * `static` uses dashboard/static pricing config only.
+     * `module` runs the declared policy export from the bundled app entry surface.
+     */
+    mode?: ManifestAccessPolicyMode;
+    module?: string;
+    export?: string;
+}
+export type ToolAccessPolicySubjectKind = 'function' | 'skill';
+export interface ToolAccessPolicyPlanPayload {
+    version: 1;
+    app: {
+        id: string;
+        slug: string | null;
+        ownerId: string;
+        owner_id: string;
+    };
+    caller: {
+        userId: string;
+        authState?: 'authenticated' | 'anonymous';
+    };
+    subject: {
+        kind: ToolAccessPolicySubjectKind;
+        id: string;
+    };
+    input: Record<string, unknown>;
+    metadata: Record<string, unknown>;
+    static: {
+        effect: 'allow';
+        subjectKind: ToolAccessPolicySubjectKind;
+        subject_kind: ToolAccessPolicySubjectKind;
+        subjectId: string;
+        subject_id: string;
+        priceLight: number;
+        price_light: number;
+        chargeLight: number;
+        charge_light: number;
+        free: boolean;
+        freeQuotaLimit: number;
+        free_quota_limit: number;
+        freeQuotaCounterKey: string | null;
+        free_quota_counter_key: string | null;
+        selfAccess: boolean;
+        self_access: boolean;
+    };
+}
+export interface ToolAccessPolicyAllowDecision {
+    effect?: 'allow';
+    price_light?: number;
+    priceLight?: number;
+    charge_light?: number;
+    chargeLight?: number;
+    free?: boolean;
+    free_quota_limit?: number;
+    freeQuotaLimit?: number;
+    free_quota_counter_key?: string | null;
+    freeQuotaCounterKey?: string | null;
+    metadata?: Record<string, unknown>;
+}
+export interface ToolAccessPolicyDenyDecision {
+    effect: 'deny';
+    reason?: string;
+    message?: string;
+    metadata?: Record<string, unknown>;
+}
+export type ToolAccessPolicyDecision = ToolAccessPolicyAllowDecision | ToolAccessPolicyDenyDecision;
+export type ToolAccessPolicyFunction = (payload: ToolAccessPolicyPlanPayload) => ToolAccessPolicyDecision | Promise<ToolAccessPolicyDecision>;
 export interface ManifestParameter {
-    type: "string" | "number" | "boolean" | "object" | "array";
+    type: 'string' | 'number' | 'boolean' | 'object' | 'array';
     description?: string;
     required?: boolean;
     default?: unknown;
@@ -68,17 +147,17 @@ export interface ManifestParameter {
     properties?: Record<string, ManifestParameter>;
 }
 export interface ManifestReturn {
-    type: "string" | "number" | "boolean" | "object" | "array" | "void";
+    type: 'string' | 'number' | 'boolean' | 'object' | 'array' | 'void';
     description?: string;
 }
 export interface ManifestEnvVar {
     description?: string;
     required?: boolean;
     default?: string;
-    scope?: EnvSchemaEntry["scope"];
-    type?: EnvSchemaEntry["scope"];
+    scope?: EnvSchemaEntry['scope'];
+    type?: EnvSchemaEntry['scope'];
     label?: string;
-    input?: EnvSchemaEntry["input"];
+    input?: EnvSchemaEntry['input'];
     placeholder?: string;
     help?: string;
 }

@@ -12,6 +12,7 @@ import {
   LIGHT_SYMBOL,
   MIN_WITHDRAWAL_LIGHT,
   PLATFORM_FEE_RATE,
+  PUBLISHER_MIN_PUBLISH_BALANCE_LIGHT,
   R2_OPS_PER_CLOUD_UNIT,
   STORAGE_LIGHT_PER_GB_MONTH,
   WIDGET_PULLS_PER_CLOUD_UNIT,
@@ -41,6 +42,7 @@ export interface BillingConfig {
   storageFreeBytes: number;
   storageLightPerGbMonth: number;
   publishDepositEnabled: boolean;
+  publisherMinPublishBalanceLight: number;
   publishedHostingMeterEnabled: boolean;
   payoutPolicyCopy: string;
   updatedAt: string | null;
@@ -67,6 +69,7 @@ interface BillingConfigRow {
   storage_free_bytes?: number | null;
   storage_light_per_gb_month?: number | null;
   publish_deposit_enabled?: boolean | null;
+  publisher_min_publish_balance_light?: number | null;
   published_hosting_meter_enabled?: boolean | null;
   payout_policy_copy?: string | null;
   updated_at?: string | null;
@@ -91,9 +94,9 @@ export const LIGHT_ECONOMY_POLICY_COPY = {
   feeWaiverCredit:
     "Publisher fee-waiver credit is platform scrip that can be used only to cover Ultralight internal platform fees on eligible creator revenue and has no cash value.",
   cloudUsage:
-    "Cloud usage is metered in cloud units and charged as exact fractional Light at the configured cloud-unit rate.",
+    "Cloud usage is metered in cloud units and charged as exact fractional Light at Ultralight's configured internal cloud-unit rates. The billing config version on receipts is the authoritative rate snapshot.",
   storagePolicy:
-    "The first 100MB of combined storage is included. Storage above that is charged at the configured GB-month rate.",
+    "The first 100MB of combined storage is included. Storage above that is charged at Ultralight's configured internal GB-month rate.",
   freeCallSponsorship:
     "Free calls use app-owner sponsorship for infrastructure when available. If the owner has no Light balance, the caller needs Light balance to cover infrastructure and continue.",
   termsUrl: "/terms",
@@ -120,6 +123,7 @@ export const DEFAULT_BILLING_CONFIG: BillingConfig = {
   storageFreeBytes: COMBINED_FREE_TIER_BYTES,
   storageLightPerGbMonth: STORAGE_LIGHT_PER_GB_MONTH,
   publishDepositEnabled: true,
+  publisherMinPublishBalanceLight: PUBLISHER_MIN_PUBLISH_BALANCE_LIGHT,
   publishedHostingMeterEnabled: false,
   payoutPolicyCopy: DEFAULT_PAYOUT_POLICY_COPY,
   updatedAt: null,
@@ -228,6 +232,10 @@ export function normalizeBillingConfigRow(
       row.publish_deposit_enabled,
       DEFAULT_BILLING_CONFIG.publishDepositEnabled,
     ),
+    publisherMinPublishBalanceLight: finitePositive(
+      row.publisher_min_publish_balance_light,
+      DEFAULT_BILLING_CONFIG.publisherMinPublishBalanceLight,
+    ),
     publishedHostingMeterEnabled: booleanValue(
       row.published_hosting_meter_enabled,
       DEFAULT_BILLING_CONFIG.publishedHostingMeterEnabled,
@@ -303,6 +311,7 @@ export function toPublicBillingConfig(config: BillingConfig) {
     storage_soft_cap_bytes: config.storageFreeBytes,
     storage_light_per_gb_month: config.storageLightPerGbMonth,
     publish_deposit_enabled: config.publishDepositEnabled,
+    publisher_min_publish_balance_light: config.publisherMinPublishBalanceLight,
     published_hosting_meter_enabled: config.publishedHostingMeterEnabled,
     payout_policy_copy: config.payoutPolicyCopy,
     labels: {
@@ -338,6 +347,9 @@ export function toPublicBillingConfig(config: BillingConfig) {
       storage_at_rest: `${
         formatLightRate(config.storageLightPerGbMonth)
       } / GB-month after ${formatBytes(config.storageFreeBytes)} free`,
+      publisher_min_publish_balance: formatLightRate(
+        config.publisherMinPublishBalanceLight,
+      ),
     },
     policy_copy: LIGHT_ECONOMY_POLICY_COPY,
   };

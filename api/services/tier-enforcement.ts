@@ -4,7 +4,6 @@
 
 import {
   formatLight,
-  MIN_PUBLISH_DEPOSIT_LIGHT,
   type Tier,
   TIER_LIMITS,
 } from "../../shared/types/index.ts";
@@ -13,6 +12,80 @@ import { hasCurrentBillingAddress } from "./billing-addresses.ts";
 import { getBillingConfig } from "./billing-config.ts";
 
 type Visibility = "private" | "unlisted" | "public";
+
+export type PublishReadinessBlockReason =
+  | "billing_check_unavailable"
+  | "insufficient_publish_balance"
+  | "billing_address_required";
+
+export interface PublishReadinessBlock {
+  reason: PublishReadinessBlockReason;
+  message: string;
+  requiredLight: number;
+  currentBalanceLight: number;
+  nextAction: string;
+  status: number;
+}
+
+export interface PublishReadinessResult {
+  allowed: boolean;
+  requiredLight: number;
+  currentBalanceLight: number;
+  nextAction: string | null;
+  block?: PublishReadinessBlock;
+}
+
+export interface PublishReadinessErrorPayload {
+  error: string;
+  reason: PublishReadinessBlockReason;
+  required_light: number;
+  current_balance_light: number;
+  next_action: string;
+}
+
+export class PublishReadinessError extends Error {
+  status: number;
+  reason: PublishReadinessBlockReason;
+  requiredLight: number;
+  currentBalanceLight: number;
+  nextAction: string;
+  details: PublishReadinessErrorPayload;
+
+  constructor(block: PublishReadinessBlock) {
+    super(block.message);
+    this.name = "PublishReadinessError";
+    this.status = block.status;
+    this.reason = block.reason;
+    this.requiredLight = block.requiredLight;
+    this.currentBalanceLight = block.currentBalanceLight;
+    this.nextAction = block.nextAction;
+    this.details = publishReadinessErrorPayload(block);
+  }
+}
+
+export function publishReadinessErrorPayload(
+  block: PublishReadinessBlock,
+): PublishReadinessErrorPayload {
+  return {
+    error: block.message,
+    reason: block.reason,
+    required_light: block.requiredLight,
+    current_balance_light: block.currentBalanceLight,
+    next_action: block.nextAction,
+  };
+}
+
+export function isPublishReadinessError(
+  err: unknown,
+): err is PublishReadinessError {
+  return err instanceof PublishReadinessError ||
+    (
+      typeof err === "object" &&
+      err !== null &&
+      (err as { name?: string }).name === "PublishReadinessError" &&
+      "details" in err
+    );
+}
 
 /**
  * Check whether a visibility value is allowed for the given tier.
@@ -28,16 +101,21 @@ export function checkVisibilityAllowed(
 
 /**
  * Publish readiness gate.
- * When enabled in billing config, publishing requires a spendable Light balance
- * and a current billing address for tax-location records.
- * Returns null if allowed, or an error message string if blocked.
+ * When enabled in billing config, publishing requires a configurable spendable
+ * Light balance and a current billing address for tax-location records.
  */
-export async function checkPublishDeposit(
+export async function checkPublisherPublishReadiness(
   userId: string,
-): Promise<string | null> {
+): Promise<PublishReadinessResult> {
   const billingConfig = await getBillingConfig();
+  const requiredLight = billingConfig.publisherMinPublishBalanceLight;
   if (!billingConfig.publishDepositEnabled) {
-    return null;
+    return {
+      allowed: true,
+      requiredLight,
+      currentBalanceLight: 0,
+      nextAction: null,
+    };
   }
 
   const supabaseUrl = getEnv("SUPABASE_URL");
@@ -45,12 +123,30 @@ export async function checkPublishDeposit(
 
   if (!supabaseUrl || !supabaseKey) {
     console.error("[TIER] Supabase not configured for publish gate");
-    return "Publishing is temporarily unavailable while billing checks recover. Please try again shortly.";
+    const nextAction = "Try publishing again shortly.";
+    const block: PublishReadinessBlock = {
+      reason: "billing_check_unavailable",
+      message:
+        "Publishing is temporarily unavailable while billing checks recover. Please try again shortly.",
+      requiredLight,
+      currentBalanceLight: 0,
+      nextAction,
+      status: 503,
+    };
+    return {
+      allowed: false,
+      requiredLight,
+      currentBalanceLight: 0,
+      nextAction,
+      block,
+    };
   }
 
   try {
     const response = await fetch(
-      `${supabaseUrl}/rest/v1/users?id=eq.${userId}&select=balance_light`,
+      `${supabaseUrl}/rest/v1/users?id=eq.${
+        encodeURIComponent(userId)
+      }&select=balance_light`,
       {
         headers: {
           "apikey": supabaseKey,
@@ -64,7 +160,23 @@ export async function checkPublishDeposit(
         "[TIER] checkPublishDeposit: fetch failed:",
         await response.text(),
       );
-      return "Publishing is temporarily unavailable while billing checks recover. Please try again shortly.";
+      const nextAction = "Try publishing again shortly.";
+      const block: PublishReadinessBlock = {
+        reason: "billing_check_unavailable",
+        message:
+          "Publishing is temporarily unavailable while billing checks recover. Please try again shortly.",
+        requiredLight,
+        currentBalanceLight: 0,
+        nextAction,
+        status: 503,
+      };
+      return {
+        allowed: false,
+        requiredLight,
+        currentBalanceLight: 0,
+        nextAction,
+        block,
+      };
     }
 
     const rows = await response.json() as Array<
@@ -72,28 +184,97 @@ export async function checkPublishDeposit(
     >;
     const balance = rows[0]?.balance_light ?? 0;
 
-    if (balance < MIN_PUBLISH_DEPOSIT_LIGHT) {
-      return (
-        `Publishing is temporarily gated by a minimum ${
-          formatLight(MIN_PUBLISH_DEPOSIT_LIGHT)
-        } spendable Light balance. ` +
-        `Your current balance is ${formatLight(balance)}. ` +
-        `Add Light from Wallet to go live.`
-      );
+    if (balance < requiredLight) {
+      const nextAction = "Add Light from Wallet to go live.";
+      const block: PublishReadinessBlock = {
+        reason: "insufficient_publish_balance",
+        message: `Publishing requires at least ${
+          formatLight(requiredLight)
+        } spendable Light before a non-private tool can go live. Current balance: ${
+          formatLight(balance)
+        }. ${nextAction}`,
+        requiredLight,
+        currentBalanceLight: balance,
+        nextAction,
+        status: 402,
+      };
+      return {
+        allowed: false,
+        requiredLight,
+        currentBalanceLight: balance,
+        nextAction,
+        block,
+      };
     }
 
     if (!(await hasCurrentBillingAddress(userId))) {
-      return (
-        "Publishing requires a saved billing address. " +
-        "Add Light from Wallet or save your billing address before going live."
-      );
+      const nextAction = "Save a billing address before going live.";
+      const block: PublishReadinessBlock = {
+        reason: "billing_address_required",
+        message:
+          `Publishing requires a saved billing address after meeting the ${
+            formatLight(requiredLight)
+          } minimum. Current balance: ${formatLight(balance)}. ${nextAction}`,
+        requiredLight,
+        currentBalanceLight: balance,
+        nextAction,
+        status: 402,
+      };
+      return {
+        allowed: false,
+        requiredLight,
+        currentBalanceLight: balance,
+        nextAction,
+        block,
+      };
     }
 
-    return null; // Allowed
+    return {
+      allowed: true,
+      requiredLight,
+      currentBalanceLight: balance,
+      nextAction: null,
+    };
   } catch (err) {
     console.error("[TIER] checkPublishDeposit error:", err);
-    return "Publishing is temporarily unavailable while billing checks recover. Please try again shortly.";
+    const nextAction = "Try publishing again shortly.";
+    const block: PublishReadinessBlock = {
+      reason: "billing_check_unavailable",
+      message:
+        "Publishing is temporarily unavailable while billing checks recover. Please try again shortly.",
+      requiredLight,
+      currentBalanceLight: 0,
+      nextAction,
+      status: 503,
+    };
+    return {
+      allowed: false,
+      requiredLight,
+      currentBalanceLight: 0,
+      nextAction,
+      block,
+    };
   }
+}
+
+export async function assertPublisherPublishReadiness(
+  userId: string,
+): Promise<PublishReadinessResult> {
+  const readiness = await checkPublisherPublishReadiness(userId);
+  if (!readiness.allowed && readiness.block) {
+    throw new PublishReadinessError(readiness.block);
+  }
+  return readiness;
+}
+
+/**
+ * Backward-compatible string wrapper for older publish-gate callers.
+ */
+export async function checkPublishDeposit(
+  userId: string,
+): Promise<string | null> {
+  const readiness = await checkPublisherPublishReadiness(userId);
+  return readiness.allowed ? null : readiness.block?.message ?? null;
 }
 
 /**

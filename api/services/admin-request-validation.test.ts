@@ -136,6 +136,7 @@ Deno.test("admin request validation: billing config accepts rates and policy cop
         storage_free_bytes: 104857600,
         storage_light_per_gb_month: 100,
         publish_deposit_enabled: false,
+        publisher_min_publish_balance_light: 1000,
         published_hosting_meter_enabled: false,
         payout_policy_copy: "Payouts run monthly.",
       }),
@@ -161,6 +162,7 @@ Deno.test("admin request validation: billing config accepts rates and policy cop
     storage_free_bytes: 104857600,
     storage_light_per_gb_month: 100,
     publish_deposit_enabled: false,
+    publisher_min_publish_balance_light: 1000,
     published_hosting_meter_enabled: false,
     payout_policy_copy: "Payouts run monthly.",
   });

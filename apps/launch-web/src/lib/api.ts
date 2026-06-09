@@ -70,6 +70,9 @@ export interface LaunchApiClientOptions {
   getAuthToken?: () => string | null;
 }
 
+const configuredLaunchApiBaseUrl =
+  import.meta.env.VITE_LAUNCH_API_BASE_URL?.trim().replace(/\/$/u, "") || "";
+
 export interface LaunchLeaderboardRequest {
   period?: LaunchLeaderboardResponse["period"];
   limit?: number;
@@ -82,6 +85,10 @@ export class LaunchApiClient {
   constructor(options: LaunchApiClientOptions = {}) {
     this.baseUrl = options.baseUrl?.replace(/\/$/u, "") || "";
     this.getAuthToken = options.getAuthToken;
+  }
+
+  status(): Promise<Record<string, unknown>> {
+    return this.fetchJson("/api/launch/status");
   }
 
   install(request: { tool?: string } = {}): Promise<LaunchInstallResponse> {
@@ -300,7 +307,17 @@ export class LaunchApiClient {
       headers,
     });
     if (!response.ok) {
-      const message = await response.text().catch(() => "");
+      const text = await response.text().catch(() => "");
+      let message = text;
+      try {
+        const parsed = JSON.parse(text) as {
+          error?: unknown;
+          message?: unknown;
+        };
+        message = String(parsed.error || parsed.message || text);
+      } catch {
+        // Keep the raw text response.
+      }
       throw new Error(
         message || `Launch API request failed (${response.status})`,
       );
@@ -310,6 +327,7 @@ export class LaunchApiClient {
 }
 
 export const launchApi = new LaunchApiClient({
+  baseUrl: configuredLaunchApiBaseUrl,
   getAuthToken: () =>
     window.localStorage.getItem("ultralight.launch.authToken"),
 });

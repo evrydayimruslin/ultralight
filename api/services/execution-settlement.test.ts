@@ -5,6 +5,7 @@ import {
   buildExecutionTelemetry,
   debitWidgetPullUsage,
   logExecutionResult,
+  preflightRuntimeCloudHold,
   settleAndLogAppExecution,
   settleAppCall,
   settleCallerAppCharge,
@@ -150,6 +151,86 @@ Deno.test("settleAppCall preserves waived fee fields from transfer RPC", async (
   });
 });
 
+Deno.test("preflightRuntimeCloudHold fails closed when runtime policy denies", async () => {
+  await withMockedEnv(async () => {
+    const result = await preflightRuntimeCloudHold({
+      app: {
+        ...createTestApp({ default_price_light: 5 }),
+        manifest: {
+          access_policy: {
+            mode: "module",
+            module: "policy.ts",
+            export: "planAccess",
+          },
+        },
+      },
+      userId: "user_denied",
+      functionName: "search",
+      inputArgs: { query: "blocked" },
+      receiptId: "receipt-denied-1",
+      method: "run",
+      timeoutMs: 30_000,
+      callerAuthState: "authenticated",
+    }, {
+      accessPolicyExecutor: async () => ({
+        effect: "deny",
+        reason: "Search is disabled for this account.",
+      }),
+    });
+
+    assertEquals(result.hold, null);
+    assertEquals(result.insufficientBalance, true);
+    assertEquals(result.insufficientBalanceCode, "access_policy_denied");
+    assertEquals(
+      result.insufficientBalanceMessage,
+      "Search is disabled for this account.",
+    );
+    assertEquals(result.pricing.policySource, "runtime_policy");
+    assertEquals(result.metadata.access_policy_denied, true);
+    assertEquals(result.metadata.access_policy_executed, true);
+  });
+});
+
+Deno.test("preflightRuntimeCloudHold applies runtime policy pricing before auth gating", async () => {
+  await withMockedEnv(async () => {
+    const result = await preflightRuntimeCloudHold({
+      app: {
+        ...createTestApp({ default_price_light: 0 }),
+        manifest: {
+          access_policy: {
+            mode: "module",
+            module: "policy.ts",
+            export: "planAccess",
+          },
+        },
+      },
+      userId: "anonymous",
+      functionName: "search",
+      inputArgs: { query: "paid by policy" },
+      receiptId: "receipt-policy-price-1",
+      method: "run",
+      timeoutMs: 30_000,
+      callerAuthState: "anonymous",
+    }, {
+      accessPolicyExecutor: async () => ({
+        effect: "allow",
+        price_light: 13,
+        charge_light: 13,
+        metadata: { policy_rule: "paid_anonymous_gate" },
+      }),
+    });
+
+    assertEquals(result.hold, null);
+    assertEquals(result.insufficientBalance, true);
+    assertEquals(result.insufficientBalanceCode, "caller_auth_required");
+    assertEquals(result.pricing.appPriceLight, 13);
+    assertEquals(result.pricing.appChargeLight, 13);
+    assertEquals(result.pricing.policySource, "runtime_policy");
+    assertEquals(result.metadata.app_price_light, 13);
+    assertEquals(result.metadata.policy_rule, "paid_anonymous_gate");
+  });
+});
+
 Deno.test("settleAndLogAppExecution settles app pricing across run/http style calls", async () => {
   await withMockedEnv(async () => {
     let logged: Record<string, unknown> | null = null;
@@ -190,6 +271,10 @@ Deno.test("settleAndLogAppExecution settles app pricing across run/http style ca
           assertEquals(body.p_to_user, "owner_123");
           assertEquals(body.p_amount_light, 10);
           assertEquals(body.p_function_name, "search");
+          assertEquals(
+            body.p_idempotency_key,
+            "tool_call_transfer:receipt-run-1:user_run:app_123:search:tool_call",
+          );
           assertEquals(
             (body.p_metadata as Record<string, unknown>).routine_id,
             routineContext.routineId,
@@ -285,6 +370,7 @@ Deno.test("settleAppCall uses owner sponsorship for free-call infra", async () =
         units: 120,
         cloudUnits: 120,
         resource: "worker_execution",
+        billingConfigVersion: 31,
       },
     }, {
       fetchFn: async (input, init) => {
@@ -304,6 +390,7 @@ Deno.test("settleAppCall uses owner sponsorship for free-call infra", async () =
           assertEquals(body.p_sponsor_user_id, "owner_123");
           assertEquals(body.p_caller_user_id, "user_free");
           assertEquals(body.p_amount_light, 0.12);
+          assertEquals(body.p_billing_config_version, 31);
           return new Response(
             JSON.stringify([{
               event_id: "event-free-1",
@@ -326,6 +413,7 @@ Deno.test("settleAppCall uses owner sponsorship for free-call infra", async () =
     assertEquals(settlement.freeCall, true);
     assertEquals(settlement.appChargeLight, 0);
     assertEquals(settlement.infraChargeLight, 0.12);
+    assertEquals(settlement.billingConfigVersion, 31);
     assertEquals(settlement.infraPayerUserId, "owner_123");
     assertEquals(settlement.ownerSponsoredInfra, true);
     assertEquals(
@@ -351,6 +439,7 @@ Deno.test("settleAppCall gates free calls when owner sponsorship has no Light", 
         units: 120,
         cloudUnits: 120,
         resource: "worker_execution",
+        billingConfigVersion: 32,
       },
     }, {
       fetchFn: async (input) => {
@@ -370,6 +459,7 @@ Deno.test("settleAppCall gates free calls when owner sponsorship has no Light", 
       "owner_sponsor_light_required",
     );
     assertEquals(settlement.chargedLight, 0);
+    assertEquals(settlement.billingConfigVersion, 32);
     assertMatch(
       settlement.insufficientBalanceMessage || "",
       /Add Light/,
@@ -394,6 +484,8 @@ Deno.test("settleAppCall keeps free app charge zero when caller funds infra fall
         freeCall: true,
         freeCallCount: null,
         freeCallLimit: 0,
+        freeCallCounterKey: null,
+        policySource: "static_config",
       },
       runtimeCloudSettlement: {
         holdId: "hold-free-fallback",
@@ -405,6 +497,7 @@ Deno.test("settleAppCall keeps free app charge zero when caller funds infra fall
         amountLight: 0.12,
         settledAmountLight: 0.12,
         releasedAmountLight: 0,
+        billingConfigVersion: 42,
       },
     });
 
@@ -415,7 +508,9 @@ Deno.test("settleAppCall keeps free app charge zero when caller funds infra fall
     assertEquals(settlement.infraPayerUserId, "user_free");
     assertEquals(settlement.ownerSponsoredInfra, false);
     assertEquals(settlement.callerInfraFallback, true);
+    assertEquals(settlement.billingConfigVersion, 42);
     assertEquals(settlement.metadata.caller_infra_fallback, true);
+    assertEquals(settlement.metadata.billing_config_version, 42);
   });
 });
 
@@ -529,6 +624,7 @@ Deno.test("logExecutionResult records computed telemetry alongside the provided 
     appPriceLight: 5,
     appChargeLight: 3,
     infraChargeLight: 0.001,
+    billingConfigVersion: 42,
     platformFeeLight: 0.45,
     developerNetLight: 2.55,
     freeCall: true,
@@ -559,6 +655,7 @@ Deno.test("logExecutionResult records computed telemetry alongside the provided 
   assertEquals(loggedEntry.appPriceLight, 5);
   assertEquals(loggedEntry.appChargeLight, 3);
   assertEquals(loggedEntry.infraChargeLight, 0.001);
+  assertEquals(loggedEntry.billingConfigVersion, 42);
   assertEquals(loggedEntry.platformFeeLight, 0.45);
   assertEquals(loggedEntry.developerNetLight, 2.55);
   assertEquals(loggedEntry.freeCall, true);

@@ -118,7 +118,7 @@ Deno.test("Storage soft caps: backend failures do not block uploads", async () =
   });
 });
 
-Deno.test("Storage soft caps: projected overages are reported without blocking", async () => {
+Deno.test("Storage soft caps: projected overages are allowed when minimum balance is present", async () => {
   await runSerial(async () => {
     await withMockedEnvAndFetch(
       async () =>
@@ -127,6 +127,7 @@ Deno.test("Storage soft caps: projected overages are reported without blocking",
             storage_used_bytes: 104_857_560,
             data_storage_used_bytes: 20,
             d1_storage_bytes: 20,
+            balance_light: 1000,
           }]),
           {
             status: 200,
@@ -142,7 +143,42 @@ Deno.test("Storage soft caps: projected overages are reported without blocking",
         assertEquals(result.allowed, true);
         assertEquals(result.used_bytes, 104_857_600);
         assertEquals(result.over_soft_cap, true);
+        assertEquals(result.minimum_balance_light, 1000);
+        assertEquals(result.current_balance_light, 1000);
         assertEquals(result.reason, undefined);
+      },
+    );
+  });
+});
+
+Deno.test("Storage soft caps: projected overages require minimum Light balance", async () => {
+  await runSerial(async () => {
+    await withMockedEnvAndFetch(
+      async () =>
+        new Response(
+          JSON.stringify([{
+            storage_used_bytes: 104_857_560,
+            data_storage_used_bytes: 20,
+            d1_storage_bytes: 20,
+            balance_light: 999,
+          }]),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      async () => {
+        const result = await checkStorageQuota("user-1", 15, {
+          mode: "fail_closed",
+          resource: "strict upload",
+        });
+
+        assertEquals(result.allowed, false);
+        assertEquals(result.used_bytes, 104_857_600);
+        assertEquals(result.over_soft_cap, true);
+        assertEquals(result.minimum_balance_light, 1000);
+        assertEquals(result.current_balance_light, 999);
+        assertEquals(result.reason, "insufficient_storage_balance");
       },
     );
   });

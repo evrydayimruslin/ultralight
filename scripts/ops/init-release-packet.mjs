@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { basename, resolve } from 'node:path';
-import { ensureNode20, parseArgs, repoRoot } from '../analysis/_shared.mjs';
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { basename, resolve } from "node:path";
+import { ensureNode20, parseArgs, repoRoot } from "../analysis/_shared.mjs";
 
 ensureNode20();
 
@@ -24,37 +24,46 @@ Options:
 
 const args = parseArgs(process.argv.slice(2));
 
-if (args.has('--help')) {
+if (args.has("--help")) {
   printHelp();
   process.exit(0);
 }
 
-const target = String(args.get('--target') || 'staging').trim();
-const operator = String(args.get('--operator') || process.env.USER || 'unknown').trim();
-const force = Boolean(args.has('--force'));
-const configuredOutput = String(args.get('--output-dir') || '').trim();
+const target = String(args.get("--target") || "staging").trim();
+const operator = String(args.get("--operator") || process.env.USER || "unknown")
+  .trim();
+const force = Boolean(args.has("--force"));
+const configuredOutput = String(args.get("--output-dir") || "").trim();
 const envOutput = process.env.UL_LAUNCH_EVIDENCE_DIR
   ? resolve(repoRoot, process.env.UL_LAUNCH_EVIDENCE_DIR)
-  : '';
+  : "";
 const outputDir = configuredOutput
   ? resolve(repoRoot, configuredOutput)
   : envOutput;
 
 if (!outputDir) {
   printHelp();
-  console.error('An output directory is required. Pass --output-dir or set UL_LAUNCH_EVIDENCE_DIR.');
+  console.error(
+    "An output directory is required. Pass --output-dir or set UL_LAUNCH_EVIDENCE_DIR.",
+  );
   process.exit(1);
 }
 
 mkdirSync(outputDir, { recursive: true });
 
 const inferredCandidateId = basename(outputDir);
-const candidateId = String(args.get('--candidate-id') || inferredCandidateId).trim();
-const gitRef = String(args.get('--git-ref') || (target === 'production' ? 'refs/tags/<tag>' : 'main')).trim();
-const commitSha = String(args.get('--commit-sha') || '<commit-sha>').trim();
-const versionTag = String(args.get('--version-tag') || (target === 'production' ? '<version-tag>' : '')).trim();
+const candidateId = String(args.get("--candidate-id") || inferredCandidateId)
+  .trim();
+const gitRef = String(
+  args.get("--git-ref") ||
+    (target === "production" ? "refs/tags/<tag>" : "main"),
+).trim();
+const commitSha = String(args.get("--commit-sha") || "<commit-sha>").trim();
+const versionTag = String(
+  args.get("--version-tag") || (target === "production" ? "<version-tag>" : ""),
+).trim();
 
-const packetPath = resolve(outputDir, 'release-packet.md');
+const packetPath = resolve(outputDir, "release-packet.md");
 
 if (existsSync(packetPath) && !force) {
   console.log(`Skipped existing file: ${packetPath}`);
@@ -67,7 +76,7 @@ const packet = `# Release Packet
 - candidate_id: ${candidateId}
 - commit_sha: ${commitSha}
 - git_ref: ${gitRef}
-- version_tag: ${versionTag || 'n/a'}
+- version_tag: ${versionTag || "n/a"}
 - prepared_at: ${new Date().toISOString()}
 - prepared_by: ${operator}
 
@@ -88,7 +97,7 @@ const packet = `# Release Packet
 | Candidate ID | ${candidateId} |
 | Commit SHA | ${commitSha} |
 | Git ref | ${gitRef} |
-| Version tag | ${versionTag || 'n/a'} |
+| Version tag | ${versionTag || "n/a"} |
 | Evidence root | ${outputDir} |
 | Metadata file | metadata.json |
 
@@ -100,10 +109,17 @@ const packet = `# Release Packet
 | --- | --- | --- | --- |
 | API CI | pending | | |
 | Launch Guardrails | pending | | |
-| ${target === 'production' ? 'Supabase Production DB' : 'Supabase DB'} | pending | | |
+| ${
+  target === "production" ? "Supabase Production DB" : "Supabase DB"
+} | pending | | |
 | API Deploy | pending | | |
-| ${target === 'production' ? 'Desktop Release' : 'Desktop Build'} | pending | | |
-| ${target === 'production' ? 'Production Launch Gate' : 'Staging Launch Gate'} | pending | | |
+| Launch Web Deploy | pending | | |
+| ${
+  target === "production" ? "Desktop Release" : "Desktop Build"
+} | pending | | |
+| ${
+  target === "production" ? "Production Launch Gate" : "Staging Launch Gate"
+} | pending | | |
 
 ### Smoke artifacts
 
@@ -138,7 +154,9 @@ List only the audits relevant to this candidate.
 | Sign out | pending | manual/desktop-smoke-notes.md | |
 | Embedded dashboard / widget flow | pending | manual/desktop-smoke-notes.md | |
 | Shared-page / share-link flow | pending | manual/desktop-smoke-notes.md | |
-| Updater smoke, if applicable | ${target === 'production' ? 'pending' : 'not-applicable'} | manual/desktop-smoke-notes.md | |
+| Updater smoke, if applicable | ${
+  target === "production" ? "pending" : "not-applicable"
+} | manual/desktop-smoke-notes.md | |
 
 ### Recovery evidence
 
@@ -184,9 +202,11 @@ List only what is still relevant to this candidate.
 - approver:
 - rollback owner:
 - communications owner:
-- announcement blocked until production smoke complete: ${target === 'production' ? 'yes' : 'n/a'}
+- announcement blocked until production smoke complete: ${
+  target === "production" ? "yes" : "n/a"
+}
 - follow-up issues opened:
 `;
 
-writeFileSync(packetPath, packet, 'utf8');
+writeFileSync(packetPath, packet, "utf8");
 console.log(`Wrote ${packetPath}`);

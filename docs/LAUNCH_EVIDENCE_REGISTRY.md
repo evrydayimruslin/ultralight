@@ -100,6 +100,8 @@ docs/_generated/launch/
         api-smoke.log
         cors-allowed.txt
         cors-blocked.txt
+        launch-web-pages.json
+        launch-web-pages.md
         summary.json
         summary.md
       audits/
@@ -170,11 +172,14 @@ Required evidence:
 - API smoke output
 - allowed-origin CORS probe result
 - disallowed-origin CORS probe result
+- launch-web Pages smoke JSON/markdown, including exact Pages/API URLs and
+  public/auth route results
 - workflow run links for:
   - `API CI`
   - `Launch Guardrails`
   - `Supabase DB`
   - `API Deploy`
+  - `Launch Web Deploy`
   - `Desktop Build`
 - Wave 4 audit outputs when relevant to the release:
   - Supabase config audit
@@ -192,11 +197,14 @@ Required evidence:
 - workflow run links for:
   - `Supabase Production DB`
   - `API Deploy`
+  - `Launch Web Deploy`
   - `Desktop Release`
 - auth redirect smoke output
 - API smoke output
 - allowed-origin CORS probe result
 - disallowed-origin CORS probe result
+- launch-web Pages smoke JSON/markdown, including exact Pages/API URLs and
+  public/auth route results
 - manual desktop smoke notes
 - updater smoke notes if updater validation is in scope
 - release URL / GitHub Release link

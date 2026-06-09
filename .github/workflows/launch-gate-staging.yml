@@ -21,6 +21,7 @@ on:
       - '.github/workflows/api-ci.yml'
       - '.github/workflows/api-deploy.yml'
       - '.github/workflows/desktop-build.yml'
+      - '.github/workflows/launch-web-deploy.yml'
       - '.github/workflows/launch-guardrails.yml'
       - '.github/workflows/launch-gate-staging.yml'
       - '.github/workflows/supabase-db.yml'

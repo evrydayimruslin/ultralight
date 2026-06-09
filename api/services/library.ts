@@ -6,24 +6,28 @@
 // R2 layout per version:  apps/{appId}/{version}/skills.md, library.txt, embedding.json
 // R2 layout per user:     users/{userId}/library.md, users/{userId}/memory.md
 
-import { getEnv } from '../lib/env.ts';
-import { createR2Service } from './storage.ts';
-import { createAppsService } from './apps.ts';
-import { parseTypeScript, toSkillsParsed } from './parser.ts';
+import { getEnv } from "../lib/env.ts";
+import { createR2Service } from "./storage.ts";
+import { createAppsService } from "./apps.ts";
+import { parseTypeScript, toSkillsParsed } from "./parser.ts";
 import {
   generateManifestFromParseResult,
   mergeManifestWithParseResult,
-} from './app-manifest-generation.ts';
+} from "./app-manifest-generation.ts";
+import { generateSkillsMd } from "./docgen.ts";
 import {
-  generateSkillsMd,
-  generateEmbeddingText,
-} from './docgen.ts';
-import { createEmbeddingService } from './embedding.ts';
-import type { App, AppWithDraft, ParsedSkills } from '../../shared/types/index.ts';
-import { resolveManifestEnvSchema } from '../../shared/types/index.ts';
-import type { ParseResult } from './parser.ts';
+  createEmbeddingService,
+  generateToolSemanticEmbeddingsForApp,
+} from "./embedding.ts";
+import type {
+  App,
+  AppWithDraft,
+  ParsedSkills,
+} from "../../shared/types/index.ts";
+import { resolveManifestEnvSchema } from "../../shared/types/index.ts";
+import type { ParseResult } from "./parser.ts";
 
-export { generateManifestFromParseResult } from './app-manifest-generation.ts';
+export { generateManifestFromParseResult } from "./app-manifest-generation.ts";
 
 // ============================================
 // USER MEMORY.MD: Read / Write / Append
@@ -50,28 +54,35 @@ export async function readUserMemory(userId: string): Promise<string | null> {
  * Saves a timestamped snapshot of the previous version before overwriting.
  * Throws if content exceeds 50KB.
  */
-export async function writeUserMemory(userId: string, content: string): Promise<void> {
+export async function writeUserMemory(
+  userId: string,
+  content: string,
+): Promise<void> {
   const bytes = new TextEncoder().encode(content);
   if (bytes.length > MEMORY_MAX_BYTES) {
-    throw new Error(`memory.md exceeds ${MEMORY_MAX_BYTES / 1024}KB limit (${(bytes.length / 1024).toFixed(1)}KB). Trim content or use ul.memory.remember for structured data.`);
+    throw new Error(
+      `memory.md exceeds ${MEMORY_MAX_BYTES / 1024}KB limit (${
+        (bytes.length / 1024).toFixed(1)
+      }KB). Trim content or use ul.memory.remember for structured data.`,
+    );
   }
 
   const r2Service = createR2Service();
 
   // Snapshot previous version (fire-and-forget)
-  snapshotMemory(r2Service, userId).catch(err =>
-    console.error('Memory snapshot failed:', err)
+  snapshotMemory(r2Service, userId).catch((err) =>
+    console.error("Memory snapshot failed:", err)
   );
 
   await r2Service.uploadFile(`users/${userId}/memory.md`, {
-    name: 'memory.md',
+    name: "memory.md",
     content: bytes,
-    contentType: 'text/markdown',
+    contentType: "text/markdown",
   });
 
   // Chunk and upsert content rows + generate embeddings (fire-and-forget)
-  upsertMemoryChunks(userId, content).catch(err =>
-    console.error('Memory chunk upsert failed:', err)
+  upsertMemoryChunks(userId, content).catch((err) =>
+    console.error("Memory chunk upsert failed:", err)
   );
 }
 
@@ -80,10 +91,15 @@ export async function writeUserMemory(userId: string, content: string): Promise<
  * Creates the file if it doesn't exist.
  * Throws if result would exceed 50KB.
  */
-export async function appendUserMemory(userId: string, section: string): Promise<string> {
+export async function appendUserMemory(
+  userId: string,
+  section: string,
+): Promise<string> {
   const existing = await readUserMemory(userId);
-  const separator = existing ? '\n\n' : '';
-  const updated = (existing || '# Memory\n\nPersonal context and preferences.') + separator + section;
+  const separator = existing ? "\n\n" : "";
+  const updated =
+    (existing || "# Memory\n\nPersonal context and preferences.") + separator +
+    section;
   await writeUserMemory(userId, updated);
   return updated;
 }
@@ -93,18 +109,21 @@ export async function appendUserMemory(userId: string, section: string): Promise
  * Stored at users/{userId}/memory_snapshots/{timestamp}.md
  * Only snapshots if current memory.md exists.
  */
-async function snapshotMemory(r2Service: ReturnType<typeof createR2Service>, userId: string): Promise<void> {
+async function snapshotMemory(
+  r2Service: ReturnType<typeof createR2Service>,
+  userId: string,
+): Promise<void> {
   let existing: string;
   try {
     existing = await r2Service.fetchTextFile(`users/${userId}/memory.md`);
   } catch {
     return; // nothing to snapshot
   }
-  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
   await r2Service.uploadFile(`users/${userId}/memory_snapshots/${ts}.md`, {
     name: `${ts}.md`,
     content: new TextEncoder().encode(existing),
-    contentType: 'text/markdown',
+    contentType: "text/markdown",
   });
 }
 
@@ -119,28 +138,28 @@ async function snapshotMemory(r2Service: ReturnType<typeof createR2Service>, use
  */
 async function upsertContentWithEmbedding(
   userId: string,
-  type: 'memory_md' | 'library_md',
+  type: "memory_md" | "library_md",
   slug: string,
   content: string,
-  sizeBytes: number
+  sizeBytes: number,
 ): Promise<void> {
-  const SUPABASE_URL = getEnv('SUPABASE_URL');
-  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+  const SUPABASE_URL = getEnv("SUPABASE_URL");
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv("SUPABASE_SERVICE_ROLE_KEY");
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
 
   const headers = {
-    'apikey': SUPABASE_SERVICE_ROLE_KEY,
-    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-    'Content-Type': 'application/json',
-    'Prefer': 'resolution=merge-duplicates',
+    "apikey": SUPABASE_SERVICE_ROLE_KEY,
+    "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    "Content-Type": "application/json",
+    "Prefer": "resolution=merge-duplicates",
   };
 
   // Generate embedding text: prefix + first ~500 words
-  const prefix = type === 'memory_md'
-    ? 'User memory and preferences: '
-    : 'User app library and capabilities: ';
+  const prefix = type === "memory_md"
+    ? "User memory and preferences: "
+    : "User app library and capabilities: ";
   const words = content.split(/\s+/).slice(0, 6000);
-  const embeddingText = prefix + words.join(' ');
+  const embeddingText = prefix + words.join(" ");
 
   // Generate embedding
   let embedding: number[] | null = null;
@@ -155,16 +174,16 @@ async function upsertContentWithEmbedding(
   }
 
   // Upsert content row
-  const title = type === 'memory_md' ? 'Memory' : 'Library';
+  const title = type === "memory_md" ? "Memory" : "Library";
   const row: Record<string, unknown> = {
     owner_id: userId,
     type: type,
     slug: slug,
     title: title,
-    description: type === 'memory_md'
-      ? 'Personal context, preferences, and notes'
-      : 'Compiled app library and capabilities',
-    visibility: 'private',
+    description: type === "memory_md"
+      ? "Personal context, preferences, and notes"
+      : "Compiled app library and capabilities",
+    visibility: "private",
     size: sizeBytes,
     embedding_text: embeddingText,
     updated_at: new Date().toISOString(),
@@ -178,10 +197,10 @@ async function upsertContentWithEmbedding(
     const res = await fetch(
       `${SUPABASE_URL}/rest/v1/content?on_conflict=owner_id,type,slug`,
       {
-        method: 'POST',
+        method: "POST",
         headers: headers,
         body: JSON.stringify(row),
-      }
+      },
     );
     if (!res.ok) {
       const errText = await res.text();
@@ -203,16 +222,16 @@ async function upsertContentWithEmbedding(
  */
 async function upsertMemoryChunks(
   userId: string,
-  content: string
+  content: string,
 ): Promise<void> {
-  const SUPABASE_URL = getEnv('SUPABASE_URL');
-  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+  const SUPABASE_URL = getEnv("SUPABASE_URL");
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv("SUPABASE_SERVICE_ROLE_KEY");
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
 
   const headers = {
-    'apikey': SUPABASE_SERVICE_ROLE_KEY,
-    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-    'Content-Type': 'application/json',
+    "apikey": SUPABASE_SERVICE_ROLE_KEY,
+    "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    "Content-Type": "application/json",
   };
 
   // Step 1: Chunk the content
@@ -223,15 +242,15 @@ async function upsertMemoryChunks(
     const delRes = await fetch(
       `${SUPABASE_URL}/rest/v1/content?owner_id=eq.${userId}&type=eq.memory_md&slug=like._memory*`,
       {
-        method: 'DELETE',
-        headers: { ...headers, 'Prefer': 'return=minimal' },
-      }
+        method: "DELETE",
+        headers: { ...headers, "Prefer": "return=minimal" },
+      },
     );
     if (!delRes.ok) {
-      console.error('Memory chunk cleanup failed:', await delRes.text());
+      console.error("Memory chunk cleanup failed:", await delRes.text());
     }
   } catch (err) {
-    console.error('Memory chunk cleanup fetch failed:', err);
+    console.error("Memory chunk cleanup fetch failed:", err);
   }
 
   if (chunks.length === 0) return;
@@ -252,7 +271,7 @@ async function upsertMemoryChunks(
         embeddings.push(...results);
       }
     } catch (err) {
-      console.error('Memory chunk batch embedding failed:', err);
+      console.error("Memory chunk batch embedding failed:", err);
       // Embeddings stay empty — processor will fill them later via NULL check
     }
   }
@@ -261,14 +280,16 @@ async function upsertMemoryChunks(
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
     const slug = `_memory_chunk_${i}`;
-    const embeddingText = `User memory (section ${i + 1}/${chunks.length}): ${chunk.text}`;
+    const embeddingText = `User memory (section ${
+      i + 1
+    }/${chunks.length}): ${chunk.text}`;
     const row: Record<string, unknown> = {
       owner_id: userId,
-      type: 'memory_md',
+      type: "memory_md",
       slug: slug,
       title: chunk.title || `Memory section ${i + 1}`,
-      description: `Memory chunk: ${chunk.title || 'untitled'}`,
-      visibility: 'private',
+      description: `Memory chunk: ${chunk.title || "untitled"}`,
+      visibility: "private",
       size: new TextEncoder().encode(chunk.text).length,
       embedding_text: embeddingText,
       updated_at: new Date().toISOString(),
@@ -284,13 +305,16 @@ async function upsertMemoryChunks(
       const res = await fetch(
         `${SUPABASE_URL}/rest/v1/content?on_conflict=owner_id,type,slug`,
         {
-          method: 'POST',
-          headers: { ...headers, 'Prefer': 'resolution=merge-duplicates' },
+          method: "POST",
+          headers: { ...headers, "Prefer": "resolution=merge-duplicates" },
           body: JSON.stringify(row),
-        }
+        },
       );
       if (!res.ok) {
-        console.error(`Memory chunk upsert failed for ${slug}:`, await res.text());
+        console.error(
+          `Memory chunk upsert failed for ${slug}:`,
+          await res.text(),
+        );
       }
     } catch (err) {
       console.error(`Memory chunk upsert fetch failed for ${slug}:`, err);
@@ -303,12 +327,14 @@ async function upsertMemoryChunks(
  * Fallback: 1,000-word chunks if no ## headers found.
  * Each chunk capped at 6,000 words for embedding model limit.
  */
-function chunkMemoryContent(content: string): Array<{ title: string; text: string }> {
+function chunkMemoryContent(
+  content: string,
+): Array<{ title: string; text: string }> {
   if (!content || content.trim().length === 0) return [];
 
   const sections: Array<{ title: string; text: string }> = [];
-  const lines = content.split('\n');
-  let currentTitle = '';
+  const lines = content.split("\n");
+  let currentTitle = "";
   let currentLines: string[] = [];
   let foundH2 = false;
 
@@ -318,10 +344,10 @@ function chunkMemoryContent(content: string): Array<{ title: string; text: strin
       foundH2 = true;
       // Save previous section if any
       if (currentLines.length > 0) {
-        const text = currentLines.join('\n').trim();
+        const text = currentLines.join("\n").trim();
         if (text.length > 0) {
           sections.push({
-            title: currentTitle || 'Overview',
+            title: currentTitle || "Overview",
             text: text,
           });
         }
@@ -335,10 +361,10 @@ function chunkMemoryContent(content: string): Array<{ title: string; text: strin
 
   // Capture final section
   if (currentLines.length > 0) {
-    const text = currentLines.join('\n').trim();
+    const text = currentLines.join("\n").trim();
     if (text.length > 0) {
       sections.push({
-        title: currentTitle || 'Overview',
+        title: currentTitle || "Overview",
         text: text,
       });
     }
@@ -355,20 +381,20 @@ function chunkMemoryContent(content: string): Array<{ title: string; text: strin
         const chunkWords = words.slice(i, i + CHUNK_SIZE);
         chunked.push({
           title: `Section ${Math.floor(i / CHUNK_SIZE) + 1}`,
-          text: chunkWords.join(' '),
+          text: chunkWords.join(" "),
         });
       }
-      return chunked.map(s => ({
+      return chunked.map((s) => ({
         title: s.title,
-        text: s.text.split(/\s+/).slice(0, 6000).join(' '),
+        text: s.text.split(/\s+/).slice(0, 6000).join(" "),
       }));
     }
   }
 
   // Cap each chunk at 6,000 words
-  return sections.map(s => ({
+  return sections.map((s) => ({
     title: s.title,
-    text: s.text.split(/\s+/).slice(0, 6000).join(' '),
+    text: s.text.split(/\s+/).slice(0, 6000).join(" "),
   }));
 }
 
@@ -380,6 +406,11 @@ export interface VersionArtifacts {
   skillsMd: string | null;
   libraryTxt: string | null;
   embeddingJson: number[] | null;
+  semanticEmbeddings?: {
+    readyCount: number;
+    failedCount: number;
+    skippedCount: number;
+  };
 }
 
 /**
@@ -394,15 +425,19 @@ export interface VersionArtifacts {
 export async function generateSkillsForVersion(
   app: App,
   storageKey: string,
-  _version: string
+  _version: string,
 ): Promise<VersionArtifacts> {
   const r2Service = createR2Service();
 
   // Fetch source code (prefer _source_ file, fall back to bundled)
   let code: string | null = null;
   const entryNames = [
-    '_source_index.ts', '_source_index.tsx',
-    'index.ts', 'index.tsx', 'index.js', 'index.jsx',
+    "_source_index.ts",
+    "_source_index.tsx",
+    "index.ts",
+    "index.tsx",
+    "index.js",
+    "index.jsx",
   ];
   for (const entry of entryNames) {
     try {
@@ -420,19 +455,19 @@ export async function generateSkillsForVersion(
   // back onto source-derived contracts when the stored manifest is thin or stale.
   const existingManifest = app.manifest
     ? (() => {
-        try {
-          return JSON.parse(app.manifest!);
-        } catch {
-          return null;
-        }
-      })()
+      try {
+        return JSON.parse(app.manifest!);
+      } catch {
+        return null;
+      }
+    })()
     : null;
   const { manifest } = mergeManifestWithParseResult(
     app,
     existingManifest,
     parseResult,
     _version,
-    { entryFileName: 'index.ts' },
+    { entryFileName: "index.ts" },
   );
 
   const manifestJson = JSON.stringify(manifest, null, 2);
@@ -446,51 +481,75 @@ export async function generateSkillsForVersion(
   // Generate compact library entry (header + functions summary)
   const libraryTxt = generateLibraryEntry(app, parseResult);
 
-  // Generate embedding from parsed skills
+  // Generate subject-level semantic embeddings. The app subject remains the
+  // compatibility aggregate persisted to embedding.json and apps.skills_embedding.
   let embeddingJson: number[] | null = null;
+  let semanticEmbeddings: VersionArtifacts["semanticEmbeddings"];
   try {
-    const embeddingService = createEmbeddingService();
-    if (embeddingService) {
-      const searchHints = Array.isArray(app.tags) ? app.tags as string[] : undefined;
-      const embeddingText = generateEmbeddingText(app.name, app.description, skillsParsed, searchHints);
-      const result = await embeddingService.embed(embeddingText);
-      embeddingJson = result.embedding;
+    const searchHints = Array.isArray(app.tags)
+      ? app.tags as string[]
+      : undefined;
+    const result = await generateToolSemanticEmbeddingsForApp({
+      app: {
+        ...app,
+        manifest: manifestJson,
+        skills_parsed: skillsParsed,
+      },
+      appVersion: _version,
+      manifest,
+      skillsParsed,
+      searchHints,
+    });
+    embeddingJson = result.appEmbedding?.embedding || null;
+    semanticEmbeddings = {
+      readyCount: result.readyCount,
+      failedCount: result.failedCount,
+      skippedCount: result.skippedCount,
+    };
+    if (result.failedCount > 0 || result.skippedCount > 0) {
+      console.warn("Tool semantic embedding generation incomplete", {
+        app_id: app.id,
+        version: _version,
+        ready_count: result.readyCount,
+        failed_count: result.failedCount,
+        skipped_count: result.skippedCount,
+      });
     }
   } catch (err) {
-    console.error('Embedding generation failed:', err);
+    console.error("Tool semantic embedding generation failed:", err);
   }
 
   // Store per-version in R2
   try {
     const uploads = [
       r2Service.uploadFile(`${storageKey}skills.md`, {
-        name: 'skills.md',
+        name: "skills.md",
         content: new TextEncoder().encode(skillsMd),
-        contentType: 'text/markdown',
+        contentType: "text/markdown",
       }),
       r2Service.uploadFile(`${storageKey}manifest.json`, {
-        name: 'manifest.json',
+        name: "manifest.json",
         content: new TextEncoder().encode(manifestJson),
-        contentType: 'application/json',
+        contentType: "application/json",
       }),
     ];
     if (libraryTxt) {
       uploads.push(r2Service.uploadFile(`${storageKey}library.txt`, {
-        name: 'library.txt',
+        name: "library.txt",
         content: new TextEncoder().encode(libraryTxt),
-        contentType: 'text/plain',
+        contentType: "text/plain",
       }));
     }
     if (embeddingJson) {
       uploads.push(r2Service.uploadFile(`${storageKey}embedding.json`, {
-        name: 'embedding.json',
+        name: "embedding.json",
         content: new TextEncoder().encode(JSON.stringify(embeddingJson)),
-        contentType: 'application/json',
+        contentType: "application/json",
       }));
     }
     await Promise.all(uploads);
   } catch (err) {
-    console.error('Failed to store skills artifacts in R2:', err);
+    console.error("Failed to store skills artifacts in R2:", err);
   }
 
   // Update the app record — skills_parsed from parser directly (no round-trip), manifest stored
@@ -508,10 +567,10 @@ export async function generateSkillsForVersion(
       await appsService.updateEmbedding(app.id, embeddingJson);
     }
   } catch (err) {
-    console.error('Failed to update app with skills:', err);
+    console.error("Failed to update app with skills:", err);
   }
 
-  return { skillsMd, libraryTxt, embeddingJson };
+  return { skillsMd, libraryTxt, embeddingJson, semanticEmbeddings };
 }
 
 // ============================================
@@ -524,20 +583,22 @@ export async function generateSkillsForVersion(
  */
 export function generateLibraryEntry(
   app: App,
-  parseResult: ParseResult
+  parseResult: ParseResult,
 ): string {
   const lines: string[] = [];
   lines.push(`## ${app.name || app.slug}`);
   if (app.description) lines.push(app.description);
-  lines.push('');
-  lines.push('Functions:');
+  lines.push("");
+  lines.push("Functions:");
   for (const fn of parseResult.functions) {
-    const params = fn.parameters.map(p => p.name).join(', ');
-    lines.push(`- ${fn.name}(${params}): ${fn.description || 'No description'}`);
+    const params = fn.parameters.map((p) => p.name).join(", ");
+    lines.push(
+      `- ${fn.name}(${params}): ${fn.description || "No description"}`,
+    );
   }
-  lines.push('');
+  lines.push("");
   lines.push(`Dashboard: /http/${app.id}/ui`);
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 // ============================================
@@ -563,32 +624,44 @@ export async function rebuildUserLibrary(userId: string): Promise<void> {
 
     // Try to read library.txt from live version
     try {
-      const libraryTxt = await r2Service.fetchTextFile(`${app.storage_key}library.txt`);
+      const libraryTxt = await r2Service.fetchTextFile(
+        `${app.storage_key}library.txt`,
+      );
       libraryParts.push(libraryTxt);
     } catch {
       // Fall back to inline generation
-      libraryParts.push(`## ${app.name || app.slug}\n${app.description || 'No description'}\nMCP: /mcp/${app.id}`);
+      libraryParts.push(
+        `## ${app.name || app.slug}\n${
+          app.description || "No description"
+        }\nMCP: /mcp/${app.id}`,
+      );
     }
 
-    libraryParts.push(''); // separator
+    libraryParts.push(""); // separator
   }
 
-  const libraryMd = `# Library\n\nAll your apps and their capabilities.\n\n${libraryParts.join('\n')}`;
+  const libraryMd = `# Library\n\nAll your apps and their capabilities.\n\n${
+    libraryParts.join("\n")
+  }`;
   const libraryBytes = new TextEncoder().encode(libraryMd);
 
   // Store per-user in R2
   try {
     await r2Service.uploadFile(`users/${userId}/library.md`, {
-      name: 'library.md',
+      name: "library.md",
       content: libraryBytes,
-      contentType: 'text/markdown',
+      contentType: "text/markdown",
     });
   } catch (err) {
-    console.error('Failed to store user library:', err);
+    console.error("Failed to store user library:", err);
   }
 
   // Upsert content row + generate embedding (fire-and-forget)
-  upsertContentWithEmbedding(userId, 'library_md', '_library', libraryMd, libraryBytes.length).catch(err =>
-    console.error('Library content upsert failed:', err)
-  );
+  upsertContentWithEmbedding(
+    userId,
+    "library_md",
+    "_library",
+    libraryMd,
+    libraryBytes.length,
+  ).catch((err) => console.error("Library content upsert failed:", err));
 }

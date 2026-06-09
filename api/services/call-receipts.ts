@@ -24,6 +24,7 @@ export const CALL_RECEIPT_LOG_SELECT = [
   "cloud_usage_event_id",
   "cloud_units",
   "cloud_charge_light",
+  "billing_config_version",
   "cloud_payer_user_id",
   "cloud_owner_sponsored",
   "routine_id",
@@ -100,6 +101,7 @@ export interface CallReceiptLogRow {
   cloud_usage_event_id?: string | null;
   cloud_units?: number | null;
   cloud_charge_light?: number | null;
+  billing_config_version?: number | null;
   cloud_payer_user_id?: string | null;
   cloud_owner_sponsored?: boolean | null;
   routine_id?: string | null;
@@ -199,6 +201,8 @@ export interface CallReceipt {
   };
   resources: Record<ReceiptResource, ReceiptResourceSummary>;
   cloud_usage_event_ids: string[];
+  billing_config_version: number | null;
+  billing_config_versions: number[];
   cloud_payer_user_id: string | null;
   owner_sponsored_infra: boolean;
   caller_infra_fallback: boolean;
@@ -236,6 +240,30 @@ function emptyResourceSummary(): Record<
       { event_count: 0, units: 0, cloud_units: 0, amount_light: 0 },
     ]),
   ) as Record<ReceiptResource, ReceiptResourceSummary>;
+}
+
+function uniqueBillingConfigVersions(
+  log: CallReceiptLogRow,
+  cloudEvents: ReceiptCloudUsageEvent[],
+): number[] {
+  const versions = new Set<number>();
+  if (
+    typeof log.billing_config_version === "number" &&
+    Number.isInteger(log.billing_config_version) &&
+    log.billing_config_version > 0
+  ) {
+    versions.add(log.billing_config_version);
+  }
+  for (const event of cloudEvents) {
+    if (
+      typeof event.billing_config_version === "number" &&
+      Number.isInteger(event.billing_config_version) &&
+      event.billing_config_version > 0
+    ) {
+      versions.add(event.billing_config_version);
+    }
+  }
+  return [...versions].sort((a, b) => a - b);
 }
 
 export function summarizeReceiptCloudEvents(
@@ -276,6 +304,7 @@ export function buildCallReceipt(
     ? eventCloudUnits
     : numeric(log.cloud_units);
   const eventIds = cloudEvents.map((event) => event.id).filter(Boolean);
+  const billingConfigVersions = uniqueBillingConfigVersions(log, cloudEvents);
   const callerInfraFallback =
     cloudEvents.some((event) =>
       event.metadata?.caller_infra_fallback === true
@@ -341,6 +370,10 @@ export function buildCallReceipt(
     },
     resources,
     cloud_usage_event_ids: eventIds,
+    billing_config_version: billingConfigVersions.length === 1
+      ? billingConfigVersions[0]
+      : null,
+    billing_config_versions: billingConfigVersions,
     cloud_payer_user_id: log.cloud_payer_user_id ?? null,
     owner_sponsored_infra: log.cloud_owner_sponsored === true,
     caller_infra_fallback: callerInfraFallback,

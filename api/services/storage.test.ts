@@ -102,15 +102,16 @@ function okDebitFetch(
       : {};
     calls.push({ url, body });
     events.push(`debit:${body.p_metadata?.operation}`);
+    const amount = Number(body.p_amount_light);
 
     return Promise.resolve(
       new Response(
         JSON.stringify([{
           event_id: crypto.randomUUID(),
           old_balance: 10,
-          new_balance: 9.999,
-          amount_debited: 0.001,
-          deposit_debited: 0.001,
+          new_balance: 10 - amount,
+          amount_debited: amount,
+          deposit_debited: amount,
           earned_debited: 0,
         }]),
         { status: 200, headers: { "Content-Type": "application/json" } },
@@ -127,6 +128,12 @@ Deno.test("R2 service meters upload before touching the bucket", async () => {
   await withR2Env(bucket, async () => {
     const r2 = createR2Service({
       metering: TEST_METERING,
+      billingConfig: {
+        version: 44,
+        cloudUnitLightPer1k: 2,
+        r2OpsPerCloudUnit: 2,
+        kvOpsPerCloudUnit: 1,
+      },
       fetchFn: okDebitFetch(calls, events),
     });
     const file: FileUpload = {
@@ -146,12 +153,13 @@ Deno.test("R2 service meters upload before touching the bucket", async () => {
     assertEquals(calls[0].body.p_resource, "r2_operation");
     assertEquals(calls[0].body.p_units, 1);
     assertEquals(calls[0].body.p_cloud_units, 1);
-    assertEquals(calls[0].body.p_amount_light, 0.001);
+    assertEquals(calls[0].body.p_amount_light, 0.002);
+    assertEquals(calls[0].body.p_billing_config_version, 44);
     assertEquals(calls[0].body.p_metadata, {
       test_case: "storage",
       key: "apps/app-1/1/index.js",
       operation: "put",
-      operations_per_cloud_unit: 1,
+      operations_per_cloud_unit: 2,
     });
   });
 });

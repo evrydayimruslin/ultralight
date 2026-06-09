@@ -9,6 +9,7 @@ import { createAppsService } from "../apps.ts";
 import { createR2Service } from "../storage.ts";
 import { getEnv } from "../../lib/env.ts";
 import { setAppStorageBytes } from "../storage-quota.ts";
+import { buildEconomicIdempotencyKey } from "../economic-idempotency.ts";
 import {
   buildTargetImageRef,
   dispatchGpuImageBuild,
@@ -720,6 +721,11 @@ async function chargeGpuImageBuildCost(
       p_allow_partial: true,
       p_app_id: app.id,
       p_function_name: null,
+      p_idempotency_key: buildEconomicIdempotencyKey("gpu_image_build_debit", [
+        payload.build_id,
+        app.id,
+        payload.version,
+      ]),
       p_metadata: {
         build_id: payload.build_id,
         version: payload.version,

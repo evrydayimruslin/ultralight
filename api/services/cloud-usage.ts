@@ -2,6 +2,7 @@ import {
   type BillingConfig,
   DEFAULT_BILLING_CONFIG,
 } from "./billing-config.ts";
+import { buildEconomicIdempotencyKey } from "./economic-idempotency.ts";
 import { createSupabaseRestClient } from "./platform-clients/supabase-rest.ts";
 
 export type CloudUsageResource =
@@ -24,6 +25,7 @@ export interface CloudUsageContext {
   functionName?: string | null;
   receiptId?: string | null;
   billingConfigVersion?: number | null;
+  idempotencyKey?: string | null;
   metadata?: Record<string, unknown>;
 }
 
@@ -37,6 +39,7 @@ export interface CloudOperationMeteringContext {
   functionName?: string | null;
   receiptId?: string | null;
   billingConfigVersion?: number | null;
+  idempotencyKey?: string | null;
   metadata?: Record<string, unknown>;
 }
 
@@ -98,11 +101,13 @@ export interface SettleCloudUsageHoldParams {
   units: number;
   cloudUnits: number;
   amountLight: number;
+  idempotencyKey?: string | null;
   metadata?: Record<string, unknown>;
 }
 
 export interface ReleaseCloudUsageHoldParams {
   holdId: string;
+  idempotencyKey?: string | null;
   metadata?: Record<string, unknown>;
 }
 
@@ -148,6 +153,7 @@ export interface RuntimeCloudHoldParams {
   freeCallLimit?: number;
   freeCallCounterKey?: string | null;
   expiresAt?: string | null;
+  idempotencyKey?: string | null;
   billingConfig?: Pick<
     BillingConfig,
     "version" | "workerMsPerCloudUnit" | "cloudUnitLightPer1k"
@@ -173,6 +179,7 @@ export interface RuntimeCloudHoldResult extends CloudUsageHoldResult {
 export interface RuntimeCloudHoldSettlementParams {
   holdId: string;
   durationMs: number;
+  idempotencyKey?: string | null;
   billingConfig?: Pick<
     BillingConfig,
     "workerMsPerCloudUnit" | "cloudUnitLightPer1k"
@@ -189,6 +196,7 @@ export interface RuntimeCloudHoldSettlementResult
 
 interface CloudUsageDeps {
   fetchFn?: typeof fetch;
+  logger?: Pick<Console, "warn">;
 }
 
 type RpcRow = Record<string, unknown>;
@@ -306,6 +314,18 @@ export async function debitCloudOperation(
     cloudUnits,
     amountLight,
     billingConfigVersion: params.billingConfigVersion ?? config.version,
+    idempotencyKey: params.idempotencyKey ??
+      (params.receiptId
+        ? buildEconomicIdempotencyKey("cloud_operation", [
+          params.receiptId,
+          params.payerUserId,
+          params.appId,
+          params.functionName,
+          params.source,
+          params.resource,
+          params.operation,
+        ])
+        : null),
     metadata: {
       ...(params.metadata ?? {}),
       operation: params.operation,
@@ -360,6 +380,18 @@ export async function debitD1Usage(
       cloudUnits: readCloudUnits,
       amountLight: readAmountLight,
       billingConfigVersion: params.billingConfigVersion ?? config.version,
+      idempotencyKey: params.idempotencyKey ??
+        (params.receiptId
+          ? buildEconomicIdempotencyKey("d1_usage", [
+            params.receiptId,
+            params.payerUserId,
+            params.appId,
+            params.functionName,
+            params.source,
+            params.operation,
+            "read",
+          ])
+          : null),
       metadata: {
         ...(params.metadata ?? {}),
         operation: params.operation,
@@ -389,6 +421,18 @@ export async function debitD1Usage(
       cloudUnits: writeCloudUnits,
       amountLight: writeAmountLight,
       billingConfigVersion: params.billingConfigVersion ?? config.version,
+      idempotencyKey: params.idempotencyKey ??
+        (params.receiptId
+          ? buildEconomicIdempotencyKey("d1_usage", [
+            params.receiptId,
+            params.payerUserId,
+            params.appId,
+            params.functionName,
+            params.source,
+            params.operation,
+            "write",
+          ])
+          : null),
       metadata: {
         ...(params.metadata ?? {}),
         operation: params.operation,
@@ -442,6 +486,15 @@ export async function createRuntimeCloudHold(
     p_expires_at: params.expiresAt ?? null,
     p_billing_config_version: config.version ?? null,
     p_metadata: params.metadata ?? {},
+    p_idempotency_key: params.idempotencyKey ??
+      buildEconomicIdempotencyKey("runtime_cloud_hold", [
+        params.receiptId,
+        params.callerUserId,
+        params.ownerUserId,
+        params.appId,
+        params.functionName,
+        params.source,
+      ]),
   }, deps);
 
   const payerUserId = requiredString(row.payer_user_id, "payer_user_id");
@@ -495,6 +548,10 @@ export async function settleRuntimeCloudHold(
     units,
     cloudUnits,
     amountLight,
+    idempotencyKey: params.idempotencyKey ??
+      buildEconomicIdempotencyKey("runtime_cloud_settlement", [
+        params.holdId,
+      ]),
     metadata: params.metadata,
   }, deps);
 
@@ -512,7 +569,7 @@ export async function recordCloudUsageEvent(
 ): Promise<string> {
   const payload = await callCloudUsageRpc(
     "record_cloud_usage_event",
-    eventBody(params),
+    eventBody(params, false),
     deps,
   );
   if (typeof payload === "string") {
@@ -534,9 +591,20 @@ export async function debitCloudUsage(
   params: CloudUsageEventParams,
   deps?: CloudUsageDeps,
 ): Promise<CloudUsageDebitResult> {
+  const idempotencyKey = params.idempotencyKey ??
+    (params.receiptId
+      ? buildEconomicIdempotencyKey("cloud_usage_debit", [
+        params.receiptId,
+        params.payerUserId,
+        params.appId,
+        params.functionName,
+        params.source,
+        params.resource,
+      ])
+      : null);
   const row = await callCloudUsageRpcRow(
     "debit_cloud_usage",
-    eventBody(params),
+    eventBody({ ...params, idempotencyKey }, true),
     deps,
   );
   return {
@@ -553,9 +621,20 @@ export async function createCloudUsageHold(
   params: CreateCloudUsageHoldParams,
   deps?: CloudUsageDeps,
 ): Promise<CloudUsageHoldResult> {
+  const idempotencyKey = params.idempotencyKey ??
+    (params.receiptId
+      ? buildEconomicIdempotencyKey("cloud_usage_hold", [
+        params.receiptId,
+        params.payerUserId,
+        params.appId,
+        params.functionName,
+        params.source,
+        params.resource,
+      ])
+      : null);
   const row = await callCloudUsageRpcRow(
     "create_cloud_usage_hold",
-    holdBody(params),
+    holdBody({ ...params, idempotencyKey }),
     deps,
   );
   return {
@@ -575,13 +654,37 @@ export async function settleCloudUsageHold(
   params: SettleCloudUsageHoldParams,
   deps?: CloudUsageDeps,
 ): Promise<CloudUsageHoldSettlementResult> {
-  const row = await callCloudUsageRpcRow("settle_cloud_usage_hold", {
-    p_hold_id: params.holdId,
-    p_units: params.units,
-    p_cloud_units: params.cloudUnits,
-    p_amount_light: params.amountLight,
-    p_metadata: params.metadata ?? {},
-  }, deps);
+  let row: RpcRow;
+  try {
+    row = await callCloudUsageRpcRow("settle_cloud_usage_hold", {
+      p_hold_id: params.holdId,
+      p_units: params.units,
+      p_cloud_units: params.cloudUnits,
+      p_amount_light: params.amountLight,
+      p_metadata: params.metadata ?? {},
+      p_idempotency_key: params.idempotencyKey ??
+        buildEconomicIdempotencyKey("cloud_hold_settlement", [
+          params.holdId,
+        ]),
+    }, deps);
+  } catch (err) {
+    if (
+      err instanceof CloudUsageRpcError &&
+      /settlement exceeds held amount/i.test(err.message)
+    ) {
+      (deps?.logger ?? console).warn(
+        "[USAGE] Cloud usage hold settlement exceeded held amount",
+        {
+          hold_id: params.holdId,
+          amount_light: params.amountLight,
+          units: params.units,
+          cloud_units: params.cloudUnits,
+          error: err.message,
+        },
+      );
+    }
+    throw err;
+  }
 
   return {
     eventId: requiredString(row.event_id, "event_id"),
@@ -604,6 +707,10 @@ export async function releaseCloudUsageHold(
   const row = await callCloudUsageRpcRow("release_cloud_usage_hold", {
     p_hold_id: params.holdId,
     p_metadata: params.metadata ?? {},
+    p_idempotency_key: params.idempotencyKey ??
+      buildEconomicIdempotencyKey("cloud_hold_release", [
+        params.holdId,
+      ]),
   }, deps);
 
   return {
@@ -615,13 +722,20 @@ export async function releaseCloudUsageHold(
   };
 }
 
-function eventBody(params: CloudUsageEventParams): RpcRow {
-  return {
+function eventBody(
+  params: CloudUsageEventParams,
+  includeIdempotencyKey: boolean,
+): RpcRow {
+  const body: RpcRow = {
     ...contextBody(params),
     p_units: params.units,
     p_cloud_units: params.cloudUnits,
     p_amount_light: params.amountLight,
   };
+  if (includeIdempotencyKey) {
+    body.p_idempotency_key = params.idempotencyKey ?? null;
+  }
+  return body;
 }
 
 function holdBody(params: CreateCloudUsageHoldParams): RpcRow {
@@ -631,6 +745,7 @@ function holdBody(params: CreateCloudUsageHoldParams): RpcRow {
     p_expected_cloud_units: params.expectedCloudUnits,
     p_expected_amount_light: params.expectedAmountLight,
     p_expires_at: params.expiresAt ?? null,
+    p_idempotency_key: params.idempotencyKey ?? null,
   };
 }
 

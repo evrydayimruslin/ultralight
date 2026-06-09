@@ -12,6 +12,7 @@ import type { BillingConfig } from "../services/billing-config.ts";
 import type { D1DataService } from "../services/d1-data.ts";
 import type { D1TestFixtureConfig } from "../services/d1-test-fixtures.ts";
 import type { CloudOperationMeteringContext } from "../services/cloud-usage.ts";
+import { buildEconomicIdempotencyKey } from "../services/economic-idempotency.ts";
 
 // User context passed to apps (subset of full user, safe to expose)
 export interface UserContext {
@@ -2203,6 +2204,16 @@ export async function executeInSandbox(
               p_amount_light: Math.round(amountLight),
               p_reason: "in_app_purchase",
               p_app_id: config.appId,
+              p_idempotency_key: buildEconomicIdempotencyKey(
+                "sandbox_purchase_transfer",
+                [
+                  config.executionId,
+                  config.userId,
+                  config.appId,
+                  amountLight,
+                  reason || "in_app_purchase",
+                ],
+              ),
               p_metadata: {
                 developer_reason: reason || null,
               },

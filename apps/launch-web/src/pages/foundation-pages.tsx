@@ -1,11 +1,31 @@
-import { useEffect, useState, type ReactElement, type ReactNode } from "react";
+import {
+  type ReactElement,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
 import {
   LAUNCH_SCOPE_CONTRACT,
+  type LaunchAgentFunctionPermissionsResponse,
+  type LaunchApiKeySummary,
   type LaunchDeferredCapability,
+  type LaunchFunctionSummary,
   type LaunchIncludedCapability,
+  type LaunchInstallInstruction,
+  type LaunchLeaderboardEntry,
+  type LaunchMoneyAmount,
+  type LaunchPublisherPublishRequirement,
+  type LaunchToolSummary,
+  type LaunchTrustCard,
+  type LaunchWalletEarningSummary,
+  type LaunchWalletReceiptSummary,
+  type LaunchWalletSummary,
+  type LaunchWalletTransaction,
 } from "../../../../shared/contracts/launch.ts";
 import type { LaunchPageProps } from "../App";
+import { launchApi } from "../lib/api";
 import {
   Avatar,
   Button,
@@ -35,7 +55,7 @@ interface ToolFixture {
   growth: number;
   id: string;
   installs: number;
-  kind: "mcp" | "http";
+  kind: "gpu" | "http" | "markdown" | "mcp";
   name: string;
   slug: string;
   spark: number[];
@@ -202,32 +222,106 @@ const discoverTools: ToolFixture[] = [
 ];
 
 const primitives = [
-  ["install", "Install Ultralight", "Connect the MCP/API layer to an existing agent.", "/install"],
-  ["discover", "Discover tools", "Find public agent-native tools and widgets.", "/store"],
-  ["wallet", "Light wallet", "Spendable Light for installs, calls, hosting.", "/wallet"],
-  ["widgets", "Widgets", "Open public UI surfaces attached to tools.", "/tools/:slug"],
+  [
+    "install",
+    "Install Ultralight",
+    "Connect the MCP/API layer to an existing agent.",
+    "/install",
+  ],
+  [
+    "discover",
+    "Discover tools",
+    "Find public agent-native tools and widgets.",
+    "/store",
+  ],
+  [
+    "wallet",
+    "Light wallet",
+    "Spendable Light for installs, calls, hosting.",
+    "/wallet",
+  ],
+  [
+    "widgets",
+    "Widgets",
+    "Open public UI surfaces attached to tools.",
+    "/tools/:slug",
+  ],
 ] as const;
 
 const builderLeaders: LeaderboardRow[] = [
-  { rank: 1, name: "@kepler", color: "#7c3aed", value: 4820.4, eventCount: 268000, featured: "get_weather" },
-  { rank: 2, name: "stripe", color: "#635bff", value: 3910.2, eventCount: 142000, featured: "stripe.subscribe" },
-  { rank: 3, name: "@anchor", color: "#0891b2", value: 2740.8, eventCount: 198000, featured: "currency_convert" },
-  { rank: 4, name: "@vellum", color: "#ea580c", value: 1690.0, eventCount: 64000, featured: "pdf.parse" },
-  { rank: 5, name: "@cartography", color: "#10b981", value: 1120.5, eventCount: 88000, featured: "maps.route" },
+  {
+    rank: 1,
+    name: "@kepler",
+    color: "#7c3aed",
+    value: 4820.4,
+    eventCount: 268000,
+    featured: "get_weather",
+  },
+  {
+    rank: 2,
+    name: "stripe",
+    color: "#635bff",
+    value: 3910.2,
+    eventCount: 142000,
+    featured: "stripe.subscribe",
+  },
+  {
+    rank: 3,
+    name: "@anchor",
+    color: "#0891b2",
+    value: 2740.8,
+    eventCount: 198000,
+    featured: "currency_convert",
+  },
+  {
+    rank: 4,
+    name: "@vellum",
+    color: "#ea580c",
+    value: 1690.0,
+    eventCount: 64000,
+    featured: "pdf.parse",
+  },
+  {
+    rank: 5,
+    name: "@cartography",
+    color: "#10b981",
+    value: 1120.5,
+    eventCount: 88000,
+    featured: "maps.route",
+  },
 ];
 
 const feeLeaders: LeaderboardRow[] = [
-  { rank: 1, name: "stripe", color: "#635bff", value: 1284.0, eventCount: 5120 },
-  { rank: 2, name: "@kepler", color: "#7c3aed", value: 942.6, eventCount: 4380 },
+  {
+    rank: 1,
+    name: "stripe",
+    color: "#635bff",
+    value: 1284.0,
+    eventCount: 5120,
+  },
+  {
+    rank: 2,
+    name: "@kepler",
+    color: "#7c3aed",
+    value: 942.6,
+    eventCount: 4380,
+  },
   { rank: 3, name: "@octo", color: "#0a0a0a", value: 770.2, eventCount: 2010 },
-  { rank: 4, name: "@anchor", color: "#0891b2", value: 615.4, eventCount: 3160 },
+  {
+    rank: 4,
+    name: "@anchor",
+    color: "#0891b2",
+    value: 615.4,
+    eventCount: 3160,
+  },
   { rank: 5, name: "@hex", color: "#22c55e", value: 402.1, eventCount: 1890 },
 ];
 
 const installTargets: InstallTarget[] = [
   {
     config: (key) => genericMcpConfig(key),
-    description: "Add Ultralight as a remote MCP server for an existing Claude Code workspace.",
+    description:
+      "Add Ultralight as a remote MCP server for an existing Claude Code workspace.",
     group: "MCP",
     label: "Claude Code",
     requiresApiKey: true,
@@ -240,7 +334,8 @@ const installTargets: InstallTarget[] = [
   },
   {
     config: (key) => genericMcpConfig(key),
-    description: "Install the Ultralight MCP server in Cursor's MCP configuration.",
+    description:
+      "Install the Ultralight MCP server in Cursor's MCP configuration.",
     group: "MCP",
     label: "Cursor",
     requiresApiKey: true,
@@ -254,7 +349,8 @@ const installTargets: InstallTarget[] = [
   {
     config: (key) =>
       `[mcp_servers.ultralight]\nurl = "${mcpUrl}"\nheaders = { Authorization = "Bearer ${key}" }`,
-    description: "Connect Codex to the same remote MCP endpoint used by other agents.",
+    description:
+      "Connect Codex to the same remote MCP endpoint used by other agents.",
     group: "MCP",
     label: "Codex",
     requiresApiKey: true,
@@ -267,8 +363,13 @@ const installTargets: InstallTarget[] = [
   },
   {
     config: (key) =>
-      JSON.stringify({ server_url: mcpUrl, authorization: `Bearer ${key}` }, null, 2),
-    description: "Register Ultralight as a remote MCP server for OpenAI agent runtimes that support MCP tools.",
+      JSON.stringify(
+        { server_url: mcpUrl, authorization: `Bearer ${key}` },
+        null,
+        2,
+      ),
+    description:
+      "Register Ultralight as a remote MCP server for OpenAI agent runtimes that support MCP tools.",
     group: "MCP",
     label: "OpenAI Remote MCP",
     requiresApiKey: true,
@@ -281,7 +382,8 @@ const installTargets: InstallTarget[] = [
   },
   {
     config: (key) => genericMcpConfig(key),
-    description: "Use the standard remote MCP server declaration for any compatible agent.",
+    description:
+      "Use the standard remote MCP server declaration for any compatible agent.",
     group: "MCP",
     label: "Generic MCP",
     requiresApiKey: true,
@@ -295,7 +397,8 @@ const installTargets: InstallTarget[] = [
   {
     config: (key) =>
       `npm install -g ultralightpro\nultralight login --token ${key}\nultralight upload .`,
-    description: "Use the Ultralight CLI to login, upload, test, and run deployed tools.",
+    description:
+      "Use the Ultralight CLI to login, upload, test, and run deployed tools.",
     group: "Direct",
     label: "CLI",
     requiresApiKey: true,
@@ -309,7 +412,8 @@ const installTargets: InstallTarget[] = [
   {
     config: (key) =>
       `curl "https://api.ultralight.dev/api/launch/status"\ncurl -H "Authorization: Bearer ${key}" \\\n  "https://api.ultralight.dev/api/launch/library"`,
-    description: "Call launch and platform endpoints directly with an Ultralight API token.",
+    description:
+      "Call launch and platform endpoints directly with an Ultralight API token.",
     group: "Direct",
     label: "Direct API",
     requiresApiKey: true,
@@ -366,9 +470,21 @@ type StoreKindFilter = "all" | ToolFixture["kind"];
 type ToolPageTabId = "details" | "functions" | "widgets";
 
 const visibilityOptions = [
-  ["public", "Public", "Listed in the Store, embeddable widgets, installable by anyone."],
-  ["unlisted", "Unlisted", "Reachable by direct link only. Not indexed in the Store."],
-  ["private", "Private", "Only you can see and call it. Hidden everywhere else."],
+  [
+    "public",
+    "Public",
+    "Listed in the Store, embeddable widgets, installable by anyone.",
+  ],
+  [
+    "unlisted",
+    "Unlisted",
+    "Reachable by direct link only. Not indexed in the Store.",
+  ],
+  [
+    "private",
+    "Private",
+    "Only you can see and call it. Hidden everywhere else.",
+  ],
 ] as const;
 
 const adminSecrets = [
@@ -378,16 +494,40 @@ const adminSecrets = [
 ] as const;
 
 const adminReceipts = [
-  { caller: "@arbiter", fn: "forecast", light: 0.012, status: "ok", when: "1m" },
+  {
+    caller: "@arbiter",
+    fn: "forecast",
+    light: 0.012,
+    status: "ok",
+    when: "1m",
+  },
   { caller: "agent_7f", fn: "now", light: 0.004, status: "ok", when: "3m" },
-  { caller: "@nimbus", fn: "historical", light: 0.018, status: "ok", when: "12m" },
-  { caller: "agent_2b", fn: "alerts", light: 0.006, status: "error", when: "28m" },
+  {
+    caller: "@nimbus",
+    fn: "historical",
+    light: 0.018,
+    status: "ok",
+    when: "12m",
+  },
+  {
+    caller: "agent_2b",
+    fn: "alerts",
+    light: 0.006,
+    status: "error",
+    when: "28m",
+  },
 ] as const;
 
 const adminLogs = [
   { fn: "forecast", ms: 142, status: "ok", when: "1m" },
   { fn: "now", ms: 68, status: "ok", when: "3m" },
-  { fn: "alerts", ms: 0, note: "upstream 503 · api.openweather.com", status: "error", when: "28m" },
+  {
+    fn: "alerts",
+    ms: 0,
+    note: "upstream 503 · api.openweather.com",
+    status: "error",
+    when: "28m",
+  },
   { fn: "historical", ms: 280, status: "ok", when: "1h" },
 ] as const;
 
@@ -412,6 +552,7 @@ interface ReceiptRowFixture {
 
 interface ApiKeyFixture {
   created: string;
+  id?: string;
   lastUsed: string;
   name: string;
   prefix: string;
@@ -426,51 +567,429 @@ const walletSummary = {
 };
 
 const walletLedger: LedgerRow[] = [
-  { amount: -0.012, detail: "get_weather · forecast", kind: "call", when: "2m" },
-  { amount: -0.002, detail: "currency_convert · convert", kind: "call", when: "14m" },
+  {
+    amount: -0.012,
+    detail: "get_weather · forecast",
+    kind: "call",
+    when: "2m",
+  },
+  {
+    amount: -0.002,
+    detail: "currency_convert · convert",
+    kind: "call",
+    when: "14m",
+  },
   { amount: 2500, detail: "Top up · card", kind: "topup", when: "3h" },
   { amount: -0.018, detail: "pdf.parse · extract", kind: "call", when: "6h" },
   { amount: 2500, detail: "Earnings → Balance", kind: "transfer", when: "1d" },
   { amount: -0.008, detail: "maps.route · route", kind: "call", when: "1d" },
-  { amount: -50000, detail: "Payout · Bank (ACH) ···4821", kind: "payout", when: "4d" },
+  {
+    amount: -50000,
+    detail: "Payout · Bank (ACH) ···4821",
+    kind: "payout",
+    when: "4d",
+  },
 ];
 
 const walletEarnings: LedgerRow[] = [
-  { amount: 248.0, detail: "get_weather · forecast", kind: "earning", when: "5h" },
-  { amount: 120.4, detail: "tweet.draft · compose", kind: "earning", when: "8h" },
+  {
+    amount: 248.0,
+    detail: "get_weather · forecast",
+    kind: "earning",
+    when: "5h",
+  },
+  {
+    amount: 120.4,
+    detail: "tweet.draft · compose",
+    kind: "earning",
+    when: "8h",
+  },
   { amount: 40.0, detail: "radar.tile · render", kind: "earning", when: "1d" },
   { amount: 192.0, detail: "get_weather · now", kind: "earning", when: "1d" },
   { amount: 40.0, detail: "radar.tile · render", kind: "earning", when: "3d" },
 ];
 
 const walletReceipts: ReceiptRowFixture[] = [
-  { fn: "forecast", latency: 142, light: 0.012, status: "ok", tool: "get_weather", when: "2m" },
-  { fn: "convert", latency: 84, light: 0.002, status: "ok", tool: "currency_convert", when: "14m" },
-  { fn: "extract", latency: 480, light: 0.018, status: "ok", tool: "pdf.parse", when: "1d" },
-  { fn: "route", latency: 195, light: 0.008, status: "error", tool: "maps.route", when: "2d" },
+  {
+    fn: "forecast",
+    latency: 142,
+    light: 0.012,
+    status: "ok",
+    tool: "get_weather",
+    when: "2m",
+  },
+  {
+    fn: "convert",
+    latency: 84,
+    light: 0.002,
+    status: "ok",
+    tool: "currency_convert",
+    when: "14m",
+  },
+  {
+    fn: "extract",
+    latency: 480,
+    light: 0.018,
+    status: "ok",
+    tool: "pdf.parse",
+    when: "1d",
+  },
+  {
+    fn: "route",
+    latency: 195,
+    light: 0.008,
+    status: "error",
+    tool: "maps.route",
+    when: "2d",
+  },
 ];
 
 const apiKeys: ApiKeyFixture[] = [
-  { created: "12 Apr", lastUsed: "2m", name: "Claude Code · laptop", prefix: "ulk_live_••••4xN4", scopes: "mcp · api" },
-  { created: "3 Mar", lastUsed: "1d", name: "CI deploy", prefix: "ulk_live_••••9aQ2", scopes: "cli" },
-  { created: "28 Feb", lastUsed: "6d", name: "Cursor", prefix: "ulk_live_••••7bX1", scopes: "mcp" },
+  {
+    created: "12 Apr",
+    lastUsed: "2m",
+    name: "Claude Code · laptop",
+    prefix: "ulk_live_••••4xN4",
+    scopes: "mcp · api",
+  },
+  {
+    created: "3 Mar",
+    lastUsed: "1d",
+    name: "CI deploy",
+    prefix: "ulk_live_••••9aQ2",
+    scopes: "cli",
+  },
+  {
+    created: "28 Feb",
+    lastUsed: "6d",
+    name: "Cursor",
+    prefix: "ulk_live_••••7bX1",
+    scopes: "mcp",
+  },
 ];
 
-export function HomeFoundationPage({ navigate }: LaunchPageProps): ReactElement {
+const livePalette = [
+  "#7c3aed",
+  "#0891b2",
+  "#635bff",
+  "#ea580c",
+  "#0a0a0a",
+  "#10b981",
+];
+
+function liveToolFixture(
+  tool: LaunchToolSummary,
+  options: {
+    functions?: LaunchFunctionSummary[];
+    permissions?: LaunchAgentFunctionPermissionsResponse;
+    trustCard?: LaunchTrustCard;
+  } = {},
+): ToolDetailFixture {
+  const base = toolDetails[tool.slug] || createToolDetail({
+    author: liveOwnerLabel(tool.owner),
+    callPrice: lightValue(tool.pricing?.defaultCallPrice),
+    category: tool.tags?.[0] || tool.kind.toUpperCase(),
+    color: stableColor(tool.id),
+    free: lightValue(tool.pricing?.defaultCallPrice) === 0,
+    growth: Math.max(0.03, Number(tool.relevance?.score || 0.08)),
+    id: tool.id,
+    installs: 0,
+    kind: tool.kind,
+    name: tool.name,
+    slug: tool.slug,
+    spark: stableSpark(tool.id),
+    summary: tool.description || "Agent-callable Ultralight tool.",
+    widgets: tool.widgets.length,
+  });
+  const permissions = new Map(
+    (options.permissions?.permissions || []).map((
+      entry,
+    ) => [entry.functionName, entry.policy]),
+  );
+  const functions = options.functions && options.functions.length > 0
+    ? options.functions.map((fn, index) => ({
+      args: inputArgs(fn.inputSchema),
+      description: fn.description || `Run ${fn.name}.`,
+      name: fn.name,
+      p50: base.functions[index]?.p50 || 120,
+      permission: permissions.get(fn.name) || fn.agentPermission?.policy ||
+        base.functions[index]?.permission || "ask",
+      price: lightValue(fn.pricing?.defaultCallPrice),
+    }))
+    : base.functions;
+  const widgets = tool.widgets.length > 0
+    ? tool.widgets.map((widget) => ({
+      description: widget.description || "Public tool UI preview.",
+      id: widget.id,
+      label: widget.label,
+    }))
+    : base.widgetList;
+  const trust = options.trustCard;
+  const paidFunctionPrices = functions.map((fn) => fn.price).filter((price) =>
+    price > 0
+  );
+  const callPrice = lightValue(tool.pricing?.defaultCallPrice) ||
+    (paidFunctionPrices.length > 0
+      ? Math.min(...paidFunctionPrices)
+      : base.callPrice);
+
+  return {
+    ...base,
+    author: liveOwnerLabel(tool.owner),
+    callPrice,
+    category: tool.tags?.[0] || base.category,
+    color: base.color || stableColor(tool.id),
+    free: callPrice === 0,
+    functions,
+    id: tool.id,
+    kind: tool.kind,
+    name: tool.name,
+    runtime: trust?.runtime || base.runtime,
+    signer: trust?.signer || base.signer,
+    slug: tool.slug,
+    summary: tool.description || base.summary,
+    title: titleizeToolName(tool.name),
+    updatedAt: relativeTime(tool.updatedAt) || base.updatedAt,
+    version: trust?.version || base.version,
+    visibility: tool.visibility,
+    widgetList: widgets,
+    widgets: widgets.length,
+  };
+}
+
+function liveStoreTools(tools?: LaunchToolSummary[]): ToolFixture[] {
+  if (!tools || tools.length === 0) return discoverTools;
+  return tools.map((tool) => liveToolFixture(tool));
+}
+
+function liveDetailTool(
+  tool?: LaunchToolSummary,
+  functions?: LaunchFunctionSummary[],
+  permissions?: LaunchAgentFunctionPermissionsResponse,
+  trustCard?: LaunchTrustCard,
+): ToolDetailFixture | null {
+  return tool
+    ? liveToolFixture(tool, { functions, permissions, trustCard })
+    : null;
+}
+
+function liveOwnerLabel(owner: LaunchToolSummary["owner"]): string {
+  if (owner.profileSlug) {
+    return owner.profileSlug.startsWith("@")
+      ? owner.profileSlug
+      : `@${owner.profileSlug}`;
+  }
+  if (owner.displayName) {
+    return owner.displayName.startsWith("@")
+      ? owner.displayName
+      : `@${owner.displayName}`;
+  }
+  return `@${owner.userId.slice(0, 6)}`;
+}
+
+function lightValue(amount?: LaunchMoneyAmount | null): number {
+  return Number(amount?.light || 0);
+}
+
+function inputArgs(schema?: Record<string, unknown> | null): string[] {
+  const props = asRecord(schema?.properties);
+  return props ? Object.keys(props).slice(0, 8) : [];
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function stableColor(seed: string): string {
+  let hash = 0;
+  for (const char of seed) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return livePalette[hash % livePalette.length];
+}
+
+function stableSpark(seed: string): number[] {
+  let hash = 0;
+  for (const char of seed) hash = (hash * 33 + char.charCodeAt(0)) >>> 0;
+  return Array.from(
+    { length: 7 },
+    (_, index) => 8 + ((hash >> (index * 3)) & 15),
+  );
+}
+
+function liveInstallTargets(
+  instructions?: LaunchInstallInstruction[],
+): InstallTarget[] {
+  if (!instructions || instructions.length === 0) return installTargets;
+  return instructions.map((instruction) => ({
+    config: () => instruction.configText || "",
+    description: instruction.description,
+    group: instruction.target === "cli" || instruction.target === "api"
+      ? "Direct"
+      : "MCP",
+    label: instruction.label,
+    requiresApiKey: instruction.requiresApiKey,
+    steps: instruction.steps,
+    target: instruction.target,
+  }));
+}
+
+function liveApiKeyFixtures(keys?: LaunchApiKeySummary[]): ApiKeyFixture[] {
+  if (!keys || keys.length === 0) return apiKeys;
+  return keys.map((key) => ({
+    created: shortDate(key.createdAt),
+    id: key.id,
+    lastUsed: relativeTime(key.lastUsedAt) || "never",
+    name: key.name,
+    prefix: key.tokenPrefix,
+    scopes: key.scopes.join(" · ") || "all",
+  }));
+}
+
+function liveLeaderboardRows(
+  entries?: LaunchLeaderboardEntry[],
+): LeaderboardRow[] {
+  if (!entries || entries.length === 0) return [];
+  return entries.map((entry) => ({
+    color: stableColor(entry.userId),
+    eventCount: entry.eventCount || 0,
+    featured: entry.featuredTool?.name,
+    name: entry.profileSlug
+      ? `@${entry.profileSlug}`
+      : entry.displayName || `@${entry.userId.slice(0, 6)}`,
+    rank: entry.rank,
+    value: lightValue(entry.value),
+  }));
+}
+
+function liveWalletTotals(wallet?: LaunchWalletSummary): typeof walletSummary {
+  if (!wallet) return walletSummary;
+  return {
+    deposited: lightValue(wallet.depositBalance),
+    earned: lightValue(wallet.earnedBalance),
+    escrow: lightValue(wallet.escrowBalance),
+    spendable: lightValue(wallet.spendableBalance || wallet.balance),
+  };
+}
+
+function liveLedgerRows(transactions?: LaunchWalletTransaction[]): LedgerRow[] {
+  if (!transactions || transactions.length === 0) return walletLedger;
+  return transactions.map((entry) => ({
+    amount: lightValue(entry.amount),
+    detail: entry.appName
+      ? `${entry.appName} · ${entry.description}`
+      : entry.description,
+    kind: ledgerKind(entry.category, entry.type),
+    when: relativeTime(entry.createdAt) || "now",
+  }));
+}
+
+function liveEarningRows(earnings?: LaunchWalletEarningSummary[]): LedgerRow[] {
+  if (!earnings || earnings.length === 0) return walletEarnings;
+  return earnings.map((entry) => ({
+    amount: lightValue(entry.amount),
+    detail: `${entry.appId || "tool"} · ${entry.functionName || entry.reason}`,
+    kind: "earning",
+    when: relativeTime(entry.createdAt) || "now",
+  }));
+}
+
+function liveReceiptRows(
+  receipts?: LaunchWalletReceiptSummary[],
+): ReceiptRowFixture[] {
+  if (!receipts || receipts.length === 0) return walletReceipts;
+  return receipts.map((receipt) => ({
+    fn: receipt.functionName || "run",
+    latency: 0,
+    light: lightValue(receipt.total),
+    status: receipt.success ? "ok" : "error",
+    tool: receipt.appName || receipt.appId || "tool",
+    when: relativeTime(receipt.createdAt) || "now",
+  }));
+}
+
+function ledgerKind(category: string, type: string): LedgerRow["kind"] {
+  const value = `${category} ${type}`.toLowerCase();
+  if (value.includes("earning")) return "earning";
+  if (value.includes("payout")) return "payout";
+  if (value.includes("top") || value.includes("deposit")) return "topup";
+  if (value.includes("transfer")) return "transfer";
+  return "call";
+}
+
+function relativeTime(value?: string | null): string {
+  if (!value) return "";
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return "";
+  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (seconds < 60) return `${seconds || 1}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `${days}d`;
+}
+
+function shortDate(value?: string | null): string {
+  if (!value) return "now";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "now";
+  return date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+
+function ApiNotice({
+  live,
+  noun,
+}: {
+  live: LaunchPageProps["live"];
+  noun: string;
+}): ReactElement | null {
+  if (live.status === "ready") return null;
+  if (live.status === "loading") {
+    return <div className="api-notice">Loading live {noun}...</div>;
+  }
+  if (live.status === "error") {
+    return (
+      <div className="api-notice warning">
+        Showing design fallback. {live.error}
+      </div>
+    );
+  }
+  return null;
+}
+
+export function HomeFoundationPage(
+  { live, navigate }: LaunchPageProps,
+): ReactElement {
+  const homeTools = liveStoreTools(live.data.store?.results).slice(0, 6);
   return (
     <div className="launch-page-narrow home-page">
+      <ApiNotice live={live} noun="launch data" />
       <section className="home-hero">
         <div className="home-hero-copy">
-          <h1>Many agents?<br />One tool layer.</h1>
+          <h1>
+            Many agents?<br />One tool layer.
+          </h1>
           <p>
             Connected agents now inherit every published tool, with unified auth
             and payments. Or deploy your own.
           </p>
           <div className="hero-actions left">
-            <RouteButton icon="copy" navigate={navigate} size="lg" to="/install">
+            <RouteButton
+              icon="copy"
+              navigate={navigate}
+              size="lg"
+              to="/install"
+            >
               Add to agent
             </RouteButton>
-            <RouteButton navigate={navigate} size="lg" to="/store" variant="secondary">
+            <RouteButton
+              navigate={navigate}
+              size="lg"
+              to="/store"
+              variant="secondary"
+            >
               Browse Store
             </RouteButton>
           </div>
@@ -483,17 +1002,25 @@ export function HomeFoundationPage({ navigate }: LaunchPageProps): ReactElement 
       <section className="shared-core-section">
         <h2>Thousands have given Ultralight to their agents</h2>
         <p>
-          Every agent draws from one core: the same context, tools, auth, and payments.
+          Every agent draws from one core: the same context, tools, auth, and
+          payments.
         </p>
         <SharedCore />
       </section>
 
       <Section
-        action={<RouteLink navigate={navigate} to="/store">Browse all</RouteLink>}
+        action={
+          <RouteLink navigate={navigate} to="/store">Browse all</RouteLink>
+        }
         title="Tools shipping now"
       >
         <div className="home-tool-grid">
-          {discoverTools.slice(0, 6).map((tool) => <CompactToolCard key={tool.id} tool={tool} />)}
+          {homeTools.map((tool) => (
+            <CompactToolCard
+              key={tool.id}
+              tool={tool}
+            />
+          ))}
         </div>
       </Section>
 
@@ -514,13 +1041,27 @@ export function HomeFoundationPage({ navigate }: LaunchPageProps): ReactElement 
       <section className="closing-band">
         <div>
           <h2>Give your agent the tool layer.</h2>
-          <p>One endpoint for every capability: discover, call, and settle in Light.</p>
+          <p>
+            One endpoint for every capability: discover, call, and settle in
+            Light.
+          </p>
         </div>
         <div className="hero-actions left">
-          <RouteButton icon="copy" navigate={navigate} size="lg" to="/install" variant="secondary">
+          <RouteButton
+            icon="copy"
+            navigate={navigate}
+            size="lg"
+            to="/install"
+            variant="secondary"
+          >
             Add to agent
           </RouteButton>
-          <RouteButton navigate={navigate} size="lg" to="/store" variant="ghost">
+          <RouteButton
+            navigate={navigate}
+            size="lg"
+            to="/store"
+            variant="ghost"
+          >
             Browse Store
           </RouteButton>
         </div>
@@ -529,24 +1070,39 @@ export function HomeFoundationPage({ navigate }: LaunchPageProps): ReactElement 
   );
 }
 
-export function InstallFoundationPage(_props: LaunchPageProps): ReactElement {
-  const [target, setTarget] = useState("claude_code");
-  const [signedIn, setSignedIn] = useState(false);
-  const selected = installTargets.find((item) => item.target === target) || installTargets[0];
-  const key = signedIn ? "ulk_live_7Qp2sR9vK3mD8xN4" : apiKeyPlaceholder;
+export function InstallFoundationPage({ live }: LaunchPageProps): ReactElement {
+  const targets = liveInstallTargets(live.data.install?.instructions);
+  const firstTarget = targets[0]?.target || "claude_code";
+  const [target, setTarget] = useState(firstTarget);
+  const signedIn = Boolean(live.data.apiKeys?.apiKeys?.length);
+  const selected = targets.find((item) => item.target === target) ||
+    targets[0] || installTargets[0];
+  const firstKey = live.data.apiKeys?.apiKeys[0]?.tokenPrefix || apiKeyMask;
+  const key = signedIn ? firstKey : apiKeyPlaceholder;
+
+  useEffect(() => {
+    if (!targets.some((item) => item.target === target)) {
+      setTarget(firstTarget);
+    }
+  }, [firstTarget, target, targets]);
 
   return (
     <div className="launch-page install-page">
       <PageHeader
         actions={
-          <Button icon="key" onClick={() => setSignedIn((value) => !value)} size="lg" variant={signedIn ? "secondary" : "primary"}>
-            {signedIn ? "Use placeholder" : "Simulate sign in"}
+          <Button
+            icon="key"
+            size="lg"
+            variant={signedIn ? "secondary" : "primary"}
+          >
+            {signedIn ? "Key loaded" : "Sign in"}
           </Button>
         }
         eyebrow="Install"
         intro="One remote MCP endpoint, or the CLI and API, lets any existing agent discover, call, and pay for tools."
         title="Connect Ultralight to your agent."
       />
+      <ApiNotice live={live} noun="install instructions" />
 
       <div className="install-loop">
         {externalLoop.map((step, index) => (
@@ -561,7 +1117,7 @@ export function InstallFoundationPage(_props: LaunchPageProps): ReactElement {
 
       <div className="install-grid">
         <aside className="target-sidebar">
-          <TargetPicker active={target} onPick={setTarget} />
+          <TargetPicker active={target} onPick={setTarget} targets={targets} />
         </aside>
         <section className="target-panel">
           <div className="target-heading">
@@ -581,7 +1137,9 @@ export function InstallFoundationPage(_props: LaunchPageProps): ReactElement {
   );
 }
 
-export function StoreFoundationPage({ location, navigate }: LaunchPageProps): ReactElement {
+export function StoreFoundationPage(
+  { live, location, navigate }: LaunchPageProps,
+): ReactElement {
   const [query, setQuery] = useState(storeQueryFromSearch());
   const [kind, setKind] = useState<StoreKindFilter>(storeKindFromSearch());
   useEffect(() => {
@@ -597,7 +1155,12 @@ export function StoreFoundationPage({ location, navigate }: LaunchPageProps): Re
     setKind(nextKind);
     syncSearchParams({ kind: nextKind === "all" ? null : nextKind });
   };
-  const filteredTools = discoverTools.filter((tool) =>
+  const storeTools = liveStoreTools(live.data.store?.results);
+  const builderRows = liveLeaderboardRows(
+    live.data.builderLeaderboard?.entries,
+  );
+  const feeRows = liveLeaderboardRows(live.data.feeLeaderboard?.entries);
+  const filteredTools = storeTools.filter((tool) =>
     (kind === "all" || tool.kind === kind) &&
     (!query ||
       `${tool.name} ${tool.summary} ${tool.category}`.toLowerCase().includes(
@@ -607,6 +1170,7 @@ export function StoreFoundationPage({ location, navigate }: LaunchPageProps): Re
 
   return (
     <div className="launch-page-narrow store-page">
+      <ApiNotice live={live} noun="store tools" />
       <section className="store-heading">
         <h1>Tools your agent can call.</h1>
         <SearchControls query={query} setQuery={updateQuery} />
@@ -626,7 +1190,10 @@ export function StoreFoundationPage({ location, navigate }: LaunchPageProps): Re
 
       <div className="store-layout">
         <section className="store-results">
-          <RetrievalNote query={query} />
+          <RetrievalNote
+            mode={live.data.store?.retrieval?.mode}
+            query={query}
+          />
           <div className="store-tool-grid">
             {filteredTools.length > 0
               ? filteredTools.map((tool) => (
@@ -644,17 +1211,32 @@ export function StoreFoundationPage({ location, navigate }: LaunchPageProps): Re
         </section>
         <aside className="store-sidebar">
           <PrimitivesRail navigate={navigate} />
-          <Leaderboard title="Top builders" subtitle="By earned Light" rows={builderLeaders} />
-          <Leaderboard title="Fee credit" subtitle="Fee-waiver program" rows={feeLeaders} />
+          <Leaderboard
+            title="Top builders"
+            subtitle="By earned Light"
+            rows={builderRows.length > 0 ? builderRows : builderLeaders}
+          />
+          <Leaderboard
+            title="Fee credit"
+            subtitle="Fee-waiver program"
+            rows={feeRows.length > 0 ? feeRows : feeLeaders}
+          />
         </aside>
       </div>
     </div>
   );
 }
 
-export function ToolFoundationPage({ location, navigate, route }: LaunchPageProps): ReactElement {
+export function ToolFoundationPage(
+  { live, location, navigate, route }: LaunchPageProps,
+): ReactElement {
   const slug = route.params.slug || "get_weather";
-  const tool = toolDetails[slug];
+  const tool = liveDetailTool(
+    live.data.tool?.tool,
+    live.data.toolFunctions?.functions,
+    live.data.toolAgentPermissions,
+    live.data.tool?.trustCard,
+  ) || toolDetails[slug];
   const widgetId = new URLSearchParams(location.search).get("widget");
 
   if (!tool) return <ToolNotFoundPage navigate={navigate} slug={slug} />;
@@ -662,29 +1244,45 @@ export function ToolFoundationPage({ location, navigate, route }: LaunchPageProp
     return (
       <WidgetOpenSurface
         locationSearch={location.search}
+        live={live}
         navigate={navigate}
         tool={tool}
         widgetId={widgetId}
       />
     );
   }
-  return <ToolDetailSurface locationSearch={location.search} navigate={navigate} tool={tool} />;
+  return (
+    <ToolDetailSurface
+      live={live}
+      locationSearch={location.search}
+      navigate={navigate}
+      tool={tool}
+    />
+  );
 }
 
 function ToolDetailSurface({
+  live,
   locationSearch,
   navigate,
   tool,
 }: {
+  live: LaunchPageProps["live"];
   locationSearch: string;
   navigate: (to: string) => void;
   tool: ToolDetailFixture;
 }): ReactElement {
   const hasWidgets = tool.widgetList.length > 0;
   const [installed, setInstalled] = useState(false);
-  const [tab, setTab] = useState<ToolPageTabId>(() => toolTabFromSearch(hasWidgets));
-  const [selectedWidgetId, setSelectedWidgetId] = useState(tool.widgetList[0]?.id || "");
-  const [selectedFunctionName, setSelectedFunctionName] = useState(tool.functions[0]?.name || "");
+  const [tab, setTab] = useState<ToolPageTabId>(() =>
+    toolTabFromSearch(hasWidgets)
+  );
+  const [selectedWidgetId, setSelectedWidgetId] = useState(
+    tool.widgetList[0]?.id || "",
+  );
+  const [selectedFunctionName, setSelectedFunctionName] = useState(
+    tool.functions[0]?.name || "",
+  );
   useEffect(() => {
     setTab(toolTabFromSearch(hasWidgets));
   }, [hasWidgets, locationSearch]);
@@ -698,7 +1296,12 @@ function ToolDetailSurface({
 
   return (
     <div className="launch-page-narrow tool-page">
-      <button className="back-link" onClick={() => navigate("/store")} type="button">
+      <ApiNotice live={live} noun="tool details" />
+      <button
+        className="back-link"
+        onClick={() => navigate("/store")}
+        type="button"
+      >
         Store / <Mono>{tool.slug}</Mono>
       </button>
 
@@ -726,55 +1329,83 @@ function ToolDetailSurface({
             >
               {installed ? "Installed" : "Install"}
             </Button>
-            {hasWidgets ? (
-              <Button
-                icon="grid"
-                onClick={() => navigate(`/tools/${tool.slug}?widget=${selectedWidgetId}`)}
-                size="lg"
-                variant="secondary"
-              >
-                Open widget
-              </Button>
-            ) : (
-              <RouteButton icon="copy" navigate={navigate} size="lg" to="/install" variant="secondary">
-                Copy MCP config
-              </RouteButton>
-            )}
+            {hasWidgets
+              ? (
+                <Button
+                  icon="grid"
+                  onClick={() =>
+                    navigate(`/tools/${tool.slug}?widget=${selectedWidgetId}`)}
+                  size="lg"
+                  variant="secondary"
+                >
+                  Open widget
+                </Button>
+              )
+              : (
+                <RouteButton
+                  icon="copy"
+                  navigate={navigate}
+                  size="lg"
+                  to="/install"
+                  variant="secondary"
+                >
+                  Copy MCP config
+                </RouteButton>
+              )}
           </div>
         </div>
       </section>
 
       <div className="tool-tabs" role="tablist" aria-label="Tool page sections">
-        {hasWidgets ? (
-          <button className={tab === "widgets" ? "active" : ""} onClick={() => activateToolTab("widgets")} type="button">
-            Widgets
-          </button>
-        ) : null}
-        <button className={tab === "functions" ? "active" : ""} onClick={() => activateToolTab("functions")} type="button">
+        {hasWidgets
+          ? (
+            <button
+              className={tab === "widgets" ? "active" : ""}
+              onClick={() => activateToolTab("widgets")}
+              type="button"
+            >
+              Widgets
+            </button>
+          )
+          : null}
+        <button
+          className={tab === "functions" ? "active" : ""}
+          onClick={() => activateToolTab("functions")}
+          type="button"
+        >
           Functions
         </button>
-        <button className={tab === "details" ? "active" : ""} onClick={() => activateToolTab("details")} type="button">
+        <button
+          className={tab === "details" ? "active" : ""}
+          onClick={() => activateToolTab("details")}
+          type="button"
+        >
           Details
         </button>
       </div>
 
       <div className="tool-detail-layout">
         <main className="tool-main-panel">
-          {tab === "widgets" ? (
-            <ToolWidgetsPanel
-              navigate={navigate}
-              selectedWidgetId={selectedWidgetId}
-              setSelectedWidgetId={setSelectedWidgetId}
-              tool={tool}
-            />
-          ) : null}
-          {tab === "functions" ? (
-            <ToolFunctionsPanel
-              selectedFunctionName={selectedFunctionName}
-              setSelectedFunctionName={setSelectedFunctionName}
-              tool={tool}
-            />
-          ) : null}
+          {tab === "widgets"
+            ? (
+              <ToolWidgetsPanel
+                navigate={navigate}
+                selectedWidgetId={selectedWidgetId}
+                setSelectedWidgetId={setSelectedWidgetId}
+                tool={tool}
+              />
+            )
+            : null}
+          {tab === "functions"
+            ? (
+              <ToolFunctionsPanel
+                live={live}
+                selectedFunctionName={selectedFunctionName}
+                setSelectedFunctionName={setSelectedFunctionName}
+                tool={tool}
+              />
+            )
+            : null}
           {tab === "details" ? <ToolDetailsPanel tool={tool} /> : null}
         </main>
         <aside className="tool-rail">
@@ -797,12 +1428,14 @@ function ToolWidgetsPanel({
   tool: ToolDetailFixture;
 }): ReactElement {
   const [state, setState] = useState<WidgetState>("ready");
-  const widget = tool.widgetList.find((item) => item.id === selectedWidgetId) || tool.widgetList[0];
+  const widget = tool.widgetList.find((item) => item.id === selectedWidgetId) ||
+    tool.widgetList[0];
 
   if (!widget) {
     return (
       <EmptyState icon="grid" title="No public widget">
-        This tool exposes functions only. Agents can still install and call it through MCP or API.
+        This tool exposes functions only. Agents can still install and call it
+        through MCP or API.
       </EmptyState>
     );
   }
@@ -823,7 +1456,11 @@ function ToolWidgetsPanel({
           Open widget
         </Button>
       </div>
-      <WidgetSelector selected={widget.id} setSelected={setSelectedWidgetId} widgets={tool.widgetList} />
+      <WidgetSelector
+        selected={widget.id}
+        setSelected={setSelectedWidgetId}
+        widgets={tool.widgetList}
+      />
       <WidgetStateSelector state={state} setState={setState} />
       <WidgetSandboxShell state={state} tool={tool} widget={widget} />
     </Card>
@@ -831,16 +1468,19 @@ function ToolWidgetsPanel({
 }
 
 function ToolFunctionsPanel({
+  live,
   selectedFunctionName,
   setSelectedFunctionName,
   tool,
 }: {
+  live: LaunchPageProps["live"];
   selectedFunctionName: string;
   setSelectedFunctionName: (name: string) => void;
   tool: ToolDetailFixture;
 }): ReactElement {
   const selectedFunction =
-    tool.functions.find((fn) => fn.name === selectedFunctionName) || tool.functions[0];
+    tool.functions.find((fn) => fn.name === selectedFunctionName) ||
+    tool.functions[0];
 
   return (
     <div className="functions-panel">
@@ -861,19 +1501,54 @@ function ToolFunctionsPanel({
           </button>
         ))}
       </div>
-      <FunctionSandboxCard fn={selectedFunction} tool={tool} />
+      <FunctionSandboxCard fn={selectedFunction} live={live} tool={tool} />
     </div>
   );
 }
 
 function FunctionSandboxCard({
   fn,
+  live,
   tool,
 }: {
   fn: ToolFunctionFixture;
+  live: LaunchPageProps["live"];
   tool: ToolDetailFixture;
 }): ReactElement {
-  const [ran, setRan] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  const [response, setResponse] = useState<Record<string, unknown> | null>(
+    null,
+  );
+  const [runState, setRunState] = useState<
+    "idle" | "running" | "success" | "error"
+  >("idle");
+
+  const runFunction = async () => {
+    setRunState("running");
+    const data = new FormData(formRef.current || undefined);
+    const args = Object.fromEntries(
+      fn.args.map((arg) => [arg, data.get(arg) || argDefault(arg)]),
+    );
+    try {
+      const result = await launchApi.runToolFunction(tool.id, fn.name, {
+        args,
+      });
+      setResponse({
+        ...(result.result && typeof result.result === "object" &&
+            !Array.isArray(result.result)
+          ? result.result as Record<string, unknown>
+          : { result: result.result ?? null }),
+        receiptId: result.receiptId || null,
+        success: result.success,
+      });
+      setRunState(result.success ? "success" : "error");
+    } catch (err) {
+      setResponse({
+        error: err instanceof Error ? err.message : String(err),
+      });
+      setRunState("error");
+    }
+  };
 
   return (
     <Card className="function-sandbox-card">
@@ -884,34 +1559,62 @@ function FunctionSandboxCard({
         </div>
         <Pill>{formatToolPrice(fn.price)}/call</Pill>
       </div>
-      <div className="arg-grid">
-        {fn.args.length > 0 ? fn.args.map((arg) => (
-          <label key={arg}>
-            <span>{arg}</span>
-            <input defaultValue={argDefault(arg)} placeholder={argHint(arg)} />
-          </label>
-        )) : <p className="muted-note">No arguments.</p>}
-      </div>
+      <form className="arg-grid" ref={formRef}>
+        {fn.args.length > 0
+          ? fn.args.map((arg) => (
+            <label key={arg}>
+              <span>{arg}</span>
+              <input
+                defaultValue={argDefault(arg)}
+                name={arg}
+                placeholder={argHint(arg)}
+              />
+            </label>
+          ))
+          : <p className="muted-note">No arguments.</p>}
+      </form>
       <div className="manual-run-row">
-        <Button icon="arrow" onClick={() => setRan(true)} size="sm">
-          Run
+        <Button icon="arrow" onClick={runFunction} size="sm">
+          {runState === "running" ? "Running" : "Run"}
         </Button>
-        <span>Manual website runs create receipts; external agents still obey saved permission.</span>
+        <span>
+          Manual website runs create receipts; external agents still obey saved
+          permission.
+        </span>
       </div>
-      {ran ? (
-        <div className="function-response">
-          <p className="section-label">response · 200 · receipt queued</p>
-          <pre>{JSON.stringify(functionResponse(tool.slug, fn.name), null, 2)}</pre>
-        </div>
-      ) : null}
-      <PermissionControl fn={fn} />
+      {response || runState === "running"
+        ? (
+          <div className="function-response">
+            <p className="section-label">
+              {runState === "running"
+                ? "requesting..."
+                : runState === "error"
+                ? "response · error"
+                : "response · receipt queued"}
+            </p>
+            <pre>{JSON.stringify(response || functionResponse(tool.slug, fn.name), null, 2)}</pre>
+          </div>
+        )
+        : null}
+      <PermissionControl fn={fn} live={live} tool={tool} />
     </Card>
   );
 }
 
-function PermissionControl({ fn }: { fn: ToolFunctionFixture }): ReactElement {
+function PermissionControl({
+  fn,
+  live,
+  tool,
+}: {
+  fn: ToolFunctionFixture;
+  live: LaunchPageProps["live"];
+  tool: ToolDetailFixture;
+}): ReactElement {
   const [permission, setPermission] = useState(fn.permission);
   const [savedPermission, setSavedPermission] = useState(fn.permission);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "error">(
+    "idle",
+  );
   const dirty = permission !== savedPermission;
   const options = [
     ["always", "Always"],
@@ -939,11 +1642,30 @@ function PermissionControl({ fn }: { fn: ToolFunctionFixture }): ReactElement {
           ))}
         </div>
         <Button
-          onClick={() => setSavedPermission(permission)}
+          onClick={async () => {
+            if (!dirty) return;
+            setSaveState("saving");
+            try {
+              await launchApi.updateToolAgentPermissions(tool.id, {
+                permissions: [{ functionName: fn.name, policy: permission }],
+              });
+              setSavedPermission(permission);
+              setSaveState("idle");
+              live.reload();
+            } catch {
+              setSaveState("error");
+            }
+          }}
           size="sm"
           variant={dirty ? "primary" : "secondary"}
         >
-          {dirty ? "Save" : "Saved"}
+          {saveState === "saving"
+            ? "Saving"
+            : saveState === "error"
+            ? "Retry"
+            : dirty
+            ? "Save"
+            : "Saved"}
         </Button>
       </div>
     </div>
@@ -971,7 +1693,10 @@ function ToolDetailsPanel({ tool }: { tool: ToolDetailFixture }): ReactElement {
         <p className="section-label">Capabilities</p>
         <div className="capability-list">
           {tool.capabilities.map((capability) => (
-            <ToolCapabilityPill capability={capability} key={`${capability.kind}-${capability.text}`} />
+            <ToolCapabilityPill
+              capability={capability}
+              key={`${capability.kind}-${capability.text}`}
+            />
           ))}
         </div>
       </Card>
@@ -992,7 +1717,9 @@ function ToolTrustRail({ tool }: { tool: ToolDetailFixture }): ReactElement {
           <Icon name="shield" />
           <div>
             <h3>Ready to call</h3>
-            <p>Signed manifest, receipts, and capability disclosure are live.</p>
+            <p>
+              Signed manifest, receipts, and capability disclosure are live.
+            </p>
           </div>
         </div>
         <div className="trust-meta">
@@ -1009,7 +1736,10 @@ function ToolTrustRail({ tool }: { tool: ToolDetailFixture }): ReactElement {
         </div>
         <div className="trust-meta">
           <MetaPair label="metering" value="per call" />
-          <MetaPair label="from" value={minPrice > 0 ? `✦${formatLight(minPrice)}` : "Free"} />
+          <MetaPair
+            label="from"
+            value={minPrice > 0 ? `✦${formatLight(minPrice)}` : "Free"}
+          />
           <MetaPair label="calls/day" value={formatNumber(tool.callsPerDay)} />
         </div>
       </Card>
@@ -1026,9 +1756,9 @@ function ToolTrustRail({ tool }: { tool: ToolDetailFixture }): ReactElement {
       <div className="works-with">
         <p className="section-label">Works with</p>
         <div>
-          {["Claude Code", "Cursor", "Codex", "MCP", "CLI", "API"].map((label) => (
-            <span key={label}>{label}</span>
-          ))}
+          {["Claude Code", "Cursor", "Codex", "MCP", "CLI", "API"].map((
+            label,
+          ) => <span key={label}>{label}</span>)}
         </div>
       </div>
     </div>
@@ -1038,24 +1768,41 @@ function ToolTrustRail({ tool }: { tool: ToolDetailFixture }): ReactElement {
 type WidgetState = "ready" | "loading" | "error" | "setup";
 
 function WidgetOpenSurface({
+  live,
   locationSearch,
   navigate,
   tool,
   widgetId,
 }: {
+  live: LaunchPageProps["live"];
   locationSearch: string;
   navigate: (to: string) => void;
   tool: ToolDetailFixture;
   widgetId: string;
 }): ReactElement {
-  const widget = tool.widgetList.find((item) => item.id === widgetId) || tool.widgetList[0];
+  const widget = tool.widgetList.find((item) => item.id === widgetId) ||
+    tool.widgetList[0];
   const [state, setState] = useState<WidgetState>("ready");
 
-  if (!widget) return <ToolDetailSurface locationSearch={locationSearch} navigate={navigate} tool={tool} />;
+  if (!widget) {
+    return (
+      <ToolDetailSurface
+        live={live}
+        locationSearch={locationSearch}
+        navigate={navigate}
+        tool={tool}
+      />
+    );
+  }
 
   return (
     <div className="launch-page-narrow widget-open-page">
-      <button className="back-link" onClick={() => navigate(`/tools/${tool.slug}`)} type="button">
+      <ApiNotice live={live} noun="widget details" />
+      <button
+        className="back-link"
+        onClick={() => navigate(`/tools/${tool.slug}`)}
+        type="button"
+      >
         <Mono>{tool.slug}</Mono> / {widget.label}
       </button>
       <div className="widget-open-grid">
@@ -1159,7 +1906,9 @@ function WidgetSandboxShell({
       </div>
       <div className="widget-relay-footer">
         <Icon name="shield" size={13} />
-        <span>Calls relay through Ultralight; the widget never sees your API key.</span>
+        <span>
+          Calls relay through Ultralight; the widget never sees your API key.
+        </span>
         <Mono>ulAction("{primaryFunctionFor(tool).name}")</Mono>
         {state === "ready" ? <Mono>session 4:58</Mono> : null}
       </div>
@@ -1188,9 +1937,13 @@ function WidgetBody({
   if (state === "error") {
     return (
       <div className="widget-state-body">
-        <span className="state-icon error"><Icon name="shield" /></span>
+        <span className="state-icon error">
+          <Icon name="shield" />
+        </span>
         <h3>Could not load this widget</h3>
-        <p>The widget UI function failed to render. Your balance was not charged.</p>
+        <p>
+          The widget UI function failed to render. Your balance was not charged.
+        </p>
         <div className="card-row">
           <Button size="sm">Retry</Button>
           <Button size="sm" variant="secondary">Report</Button>
@@ -1201,9 +1954,15 @@ function WidgetBody({
   if (state === "setup") {
     return (
       <div className="widget-state-body">
-        <span className="state-icon setup"><Icon name="shield" /></span>
+        <span className="state-icon setup">
+          <Icon name="shield" />
+        </span>
         <h3>Finish setup to run this widget</h3>
-        <p>{tool.name} needs one connection before this widget can run. Your API key is never shared.</p>
+        <p>
+          {tool.name}{" "}
+          needs one connection before this widget can run. Your API key is never
+          shared.
+        </p>
         <div className="card-row">
           <Button size="sm">Go to setup</Button>
           <Button size="sm" variant="ghost">Why?</Button>
@@ -1212,7 +1971,9 @@ function WidgetBody({
     );
   }
 
-  if (tool.slug === "get_weather" && widget.id === "now_badge") return <WeatherNowBadge />;
+  if (tool.slug === "get_weather" && widget.id === "now_badge") {
+    return <WeatherNowBadge />;
+  }
   if (tool.slug === "get_weather") return <WeatherForecastWidget />;
   if (tool.slug === "stripe_subscribe") return <SubscriptionWidget />;
   if (tool.slug === "maps_route") return <RouteWidget />;
@@ -1294,7 +2055,9 @@ function RouteWidget(): ReactElement {
   );
 }
 
-function GenericToolWidget({ tool }: { tool: ToolDetailFixture }): ReactElement {
+function GenericToolWidget(
+  { tool }: { tool: ToolDetailFixture },
+): ReactElement {
   return (
     <div className="generic-widget">
       <Avatar color={tool.color} name={tool.author} />
@@ -1305,7 +2068,9 @@ function GenericToolWidget({ tool }: { tool: ToolDetailFixture }): ReactElement 
   );
 }
 
-function MetaPair({ label, value }: { label: string; value: string }): ReactElement {
+function MetaPair(
+  { label, value }: { label: string; value: string },
+): ReactElement {
   return (
     <div className="meta-pair">
       <span>{label}</span>
@@ -1314,7 +2079,9 @@ function MetaPair({ label, value }: { label: string; value: string }): ReactElem
   );
 }
 
-function ToolCapabilityPill({ capability }: { capability: ToolCapability }): ReactElement {
+function ToolCapabilityPill(
+  { capability }: { capability: ToolCapability },
+): ReactElement {
   return (
     <div className={`tool-capability tool-capability-${capability.kind}`}>
       <Mono>{capability.kind}</Mono>
@@ -1333,24 +2100,36 @@ function ToolNotFoundPage({
   return (
     <>
       <PageHeader
-        actions={<RouteButton navigate={navigate} size="lg" to="/store">Back to Store</RouteButton>}
+        actions={
+          <RouteButton navigate={navigate} size="lg" to="/store">
+            Back to Store
+          </RouteButton>
+        }
         eyebrow="Public tool page"
         intro="This public tool is not available in the launch fixture set yet."
         title={slug}
       />
       <EmptyState icon="search" title="Tool not found">
-        Public tool pages will load from the launch tool contract when the live store
-        API is connected.
+        Public tool pages will load from the launch tool contract when the live
+        store API is connected.
       </EmptyState>
     </>
   );
 }
 
-export function LibraryFoundationPage({ location, navigate }: LaunchPageProps): ReactElement {
+export function LibraryFoundationPage(
+  { live, location, navigate }: LaunchPageProps,
+): ReactElement {
   const [view, setView] = useState<LibraryView>(libraryViewFromSearch());
-  const installedTools = installedLibrarySlugs.map((slug) => toolDetails[slug]).filter(Boolean);
-  const ownedTools = ownedLibrarySlugs.map((slug) => toolDetails[slug]).filter(Boolean);
-  const count = view === "installed" ? installedTools.length : ownedTools.length;
+  const installedTools = live.data.library?.installed?.length
+    ? live.data.library.installed.map((tool) => liveToolFixture(tool))
+    : installedLibrarySlugs.map((slug) => toolDetails[slug]).filter(Boolean);
+  const ownedTools = live.data.library?.owned?.length
+    ? live.data.library.owned.map((tool) => liveToolFixture(tool))
+    : ownedLibrarySlugs.map((slug) => toolDetails[slug]).filter(Boolean);
+  const count = view === "installed"
+    ? installedTools.length
+    : ownedTools.length;
   useEffect(() => {
     setView(libraryViewFromSearch());
   }, [location.search]);
@@ -1362,6 +2141,7 @@ export function LibraryFoundationPage({ location, navigate }: LaunchPageProps): 
 
   return (
     <div className="launch-page-narrow library-page">
+      <ApiNotice live={live} noun="library" />
       <div className="library-toolbar">
         <div className="library-picker">
           <button
@@ -1380,58 +2160,79 @@ export function LibraryFoundationPage({ location, navigate }: LaunchPageProps): 
           </button>
         </div>
         <Mono>{count}</Mono>
-        <RouteButton icon="grid" navigate={navigate} to="/store" variant="secondary">
+        <RouteButton
+          icon="grid"
+          navigate={navigate}
+          to="/store"
+          variant="secondary"
+        >
           Browse Store
         </RouteButton>
       </div>
 
-      {view === "installed" ? (
-        <div className="library-installed-grid">
-          {installedTools.map((tool) => (
-            <button
-              className="tool-card-button"
-              key={tool.id}
-              onClick={() => navigate(`/tools/${tool.slug}`)}
-              type="button"
-            >
-              <StoreToolCard tool={tool} />
-            </button>
-          ))}
-        </div>
-      ) : (
-        <div className="owned-tool-list">
-          {ownedTools.map((tool) => (
-            <OwnedToolCard key={tool.id} navigate={navigate} tool={tool} />
-          ))}
-        </div>
-      )}
+      {view === "installed"
+        ? (
+          <div className="library-installed-grid">
+            {installedTools.map((tool) => (
+              <button
+                className="tool-card-button"
+                key={tool.id}
+                onClick={() => navigate(`/tools/${tool.slug}`)}
+                type="button"
+              >
+                <StoreToolCard tool={tool} />
+              </button>
+            ))}
+          </div>
+        )
+        : (
+          <div className="owned-tool-list">
+            {ownedTools.map((tool) => (
+              <OwnedToolCard key={tool.id} navigate={navigate} tool={tool} />
+            ))}
+          </div>
+        )}
 
-      {installedTools.length === 0 && ownedTools.length === 0 ? (
-        <div className="library-empty-grid">
-          <LibraryEmptyCard
-            action="Deploy docs"
-            body="Ship your first tool from the CLI and it appears here with installs, calls, widgets, and earnings."
-            title="Tools you own"
-          />
-          <LibraryEmptyCard
-            action="Browse Store"
-            body="Tools you install from the Store appear here, ready to configure and call from agents."
-            title="Installed"
-          />
-        </div>
-      ) : null}
+      {installedTools.length === 0 && ownedTools.length === 0
+        ? (
+          <div className="library-empty-grid">
+            <LibraryEmptyCard
+              action="Deploy docs"
+              body="Ship your first tool from the CLI and it appears here with installs, calls, widgets, and earnings."
+              title="Tools you own"
+            />
+            <LibraryEmptyCard
+              action="Browse Store"
+              body="Tools you install from the Store appear here, ready to configure and call from agents."
+              title="Installed"
+            />
+          </div>
+        )
+        : null}
     </div>
   );
 }
 
-export function AdminFoundationPage({ location, navigate, route }: LaunchPageProps): ReactElement {
-  const tool = adminToolFromRoute(route.params.id);
+export function AdminFoundationPage(
+  { live, location, navigate, route }: LaunchPageProps,
+): ReactElement {
+  const tool = liveDetailTool(
+    live.data.adminTool?.admin.tool,
+    live.data.toolFunctions?.functions,
+    live.data.toolAgentPermissions,
+    live.data.adminTool?.trustCard,
+  ) || adminToolFromRoute(route.params.id);
   const initialTab = adminTabFromSearch();
   const [tab, setTab] = useState<AdminTabId>(initialTab);
-  const [visibility, setVisibility] = useState<ToolDetailFixture["visibility"]>(tool.visibility);
+  const [visibility, setVisibility] = useState<ToolDetailFixture["visibility"]>(
+    tool.visibility,
+  );
   useEffect(() => {
     setTab(adminTabFromSearch());
   }, [location.search, route.params.id]);
+  useEffect(() => {
+    setVisibility(tool.visibility);
+  }, [tool.id, tool.visibility]);
 
   const selectTab = (nextTab: AdminTabId) => {
     setTab(nextTab);
@@ -1440,8 +2241,13 @@ export function AdminFoundationPage({ location, navigate, route }: LaunchPagePro
 
   return (
     <div className="launch-page-narrow admin-page">
+      <ApiNotice live={live} noun="tool admin" />
       <AdminHeader navigate={navigate} tool={tool} visibility={visibility} />
-      <div className="admin-tabs" role="tablist" aria-label="Tool admin sections">
+      <div
+        className="admin-tabs"
+        role="tablist"
+        aria-label="Tool admin sections"
+      >
         {adminTabs.map(([id, label]) => (
           <button
             className={tab === id ? "active" : ""}
@@ -1486,28 +2292,40 @@ function OwnedToolCard({
         <MetricTile label="Earned 30d" value="✦297.6" />
       </div>
       <div className="owned-tool-actions">
-        <RouteButton navigate={navigate} to={`/admin/tools/${tool.id}`} variant="primary">
+        <RouteButton
+          navigate={navigate}
+          to={`/admin/tools/${tool.id}`}
+          variant="primary"
+        >
           Manage
         </RouteButton>
-        <RouteButton navigate={navigate} to={`/tools/${tool.slug}`} variant="secondary">
+        <RouteButton
+          navigate={navigate}
+          to={`/tools/${tool.slug}`}
+          variant="secondary"
+        >
           Public page
         </RouteButton>
-        {tool.widgetList.length > 0 ? (
-          <RouteButton
-            icon="grid"
-            navigate={navigate}
-            to={`/tools/${tool.slug}?widget=${tool.widgetList[0].id}`}
-            variant="ghost"
-          >
-            {tool.widgetList.length} widgets
-          </RouteButton>
-        ) : null}
+        {tool.widgetList.length > 0
+          ? (
+            <RouteButton
+              icon="grid"
+              navigate={navigate}
+              to={`/tools/${tool.slug}?widget=${tool.widgetList[0].id}`}
+              variant="ghost"
+            >
+              {tool.widgetList.length} widgets
+            </RouteButton>
+          )
+          : null}
       </div>
     </Card>
   );
 }
 
-function MetricTile({ label, value }: { label: string; value: string }): ReactElement {
+function MetricTile(
+  { label, value }: { label: string; value: string },
+): ReactElement {
   return (
     <div className="metric-tile">
       <p className="section-label">{label}</p>
@@ -1529,7 +2347,10 @@ function LibraryEmptyCard({
     <div className="library-empty-card">
       <strong>{title}: nothing yet</strong>
       <p>{body}</p>
-      <Button size="sm" variant={title === "Tools you own" ? "primary" : "secondary"}>
+      <Button
+        size="sm"
+        variant={title === "Tools you own" ? "primary" : "secondary"}
+      >
         {action}
       </Button>
     </div>
@@ -1552,13 +2373,22 @@ function AdminHeader({
         <div>
           <div className="admin-title-line">
             <h1>{tool.title}</h1>
-            <Pill tone={visibility === "public" ? "green" : "amber"}>{visibility}</Pill>
+            <Pill tone={visibility === "public" ? "green" : "amber"}>
+              {visibility}
+            </Pill>
           </div>
-          <p>{formatNumber(tool.installs)} installs · {formatNumber(tool.callsPerDay)} calls/day</p>
+          <p>
+            {formatNumber(tool.installs)} installs ·{" "}
+            {formatNumber(tool.callsPerDay)} calls/day
+          </p>
         </div>
       </div>
       <div className="admin-header-actions">
-        <RouteButton navigate={navigate} to={`/tools/${tool.slug}`} variant="secondary">
+        <RouteButton
+          navigate={navigate}
+          to={`/tools/${tool.slug}`}
+          variant="secondary"
+        >
           View public page
         </RouteButton>
         <Button>Save changes</Button>
@@ -1628,7 +2458,9 @@ function AdminEditPanel({
         </AdminField>
         <AdminField label="Tags">
           <div className="admin-tags">
-            {["weather", "forecast", "noaa"].map((tag) => <span key={tag}>{tag}</span>)}
+            {["weather", "forecast", "noaa"].map((tag) => (
+              <span key={tag}>{tag}</span>
+            ))}
           </div>
         </AdminField>
       </div>
@@ -1654,7 +2486,9 @@ function AdminEditPanel({
   );
 }
 
-function AdminPricingPanel({ tool }: { tool: ToolDetailFixture }): ReactElement {
+function AdminPricingPanel(
+  { tool }: { tool: ToolDetailFixture },
+): ReactElement {
   return (
     <div className="admin-panel">
       <div className="admin-table admin-pricing-table">
@@ -1689,7 +2523,8 @@ function AdminWidgetsPanel({
     return (
       <div className="admin-panel">
         <EmptyState icon="grid" title="No widgets yet">
-          Widgets deployed by the tool runtime will appear here with visibility controls.
+          Widgets deployed by the tool runtime will appear here with visibility
+          controls.
         </EmptyState>
       </div>
     );
@@ -1699,18 +2534,26 @@ function AdminWidgetsPanel({
     <div className="admin-panel admin-widget-list">
       {tool.widgetList.map((widget) => (
         <Card className="admin-widget-row" key={widget.id}>
-          <span className="target-icon"><Icon name="grid" /></span>
+          <span className="target-icon">
+            <Icon name="grid" />
+          </span>
           <div>
-            <h3>{widget.label} <Mono>{widget.id}</Mono></h3>
+            <h3>
+              {widget.label} <Mono>{widget.id}</Mono>
+            </h3>
             <p>{widget.description}</p>
           </div>
-          <select defaultValue="public" aria-label={`${widget.label} visibility`}>
+          <select
+            defaultValue="public"
+            aria-label={`${widget.label} visibility`}
+          >
             <option value="public">Public</option>
             <option value="unlisted">Unlisted</option>
             <option value="private">Private</option>
           </select>
           <Button
-            onClick={() => navigate(`/tools/${tool.slug}?widget=${widget.id}`)}
+            onClick={() =>
+              navigate(`/tools/${tool.slug}?widget=${widget.id}`)}
             size="sm"
             variant="secondary"
           >
@@ -1727,7 +2570,10 @@ function AdminSecretsPanel(): ReactElement {
     <div className="admin-panel">
       <div className="secret-note">
         <Icon name="shield" />
-        <span>Secrets are encrypted and never leave the runtime. Agents and widgets cannot read them.</span>
+        <span>
+          Secrets are encrypted and never leave the runtime. Agents and widgets
+          cannot read them.
+        </span>
       </div>
       <div className="secret-list">
         {adminSecrets.map((secret) => (
@@ -1735,7 +2581,9 @@ function AdminSecretsPanel(): ReactElement {
             <Icon name="key" />
             <Mono>{secret.key}</Mono>
             <span>{secret.set ? "•••••••• set" : "not set"}</span>
-            <Button size="sm" variant="secondary">{secret.set ? "Rotate" : "Add"}</Button>
+            <Button size="sm" variant="secondary">
+              {secret.set ? "Rotate" : "Add"}
+            </Button>
           </Card>
         ))}
       </div>
@@ -1751,7 +2599,10 @@ function AdminTrustPanel({ tool }: { tool: ToolDetailFixture }): ReactElement {
           <Icon name="shield" />
           <div>
             <h3>Signed manifest · receipts on</h3>
-            <p>Trust fields are what public tool pages and external agents inspect before calling.</p>
+            <p>
+              Trust fields are what public tool pages and external agents
+              inspect before calling.
+            </p>
           </div>
         </div>
         <div className="manifest-grid">
@@ -1765,7 +2616,10 @@ function AdminTrustPanel({ tool }: { tool: ToolDetailFixture }): ReactElement {
         <p className="section-label">Declared capabilities</p>
         <div className="capability-list">
           {tool.capabilities.map((capability) => (
-            <ToolCapabilityPill capability={capability} key={`${capability.kind}-${capability.text}`} />
+            <ToolCapabilityPill
+              capability={capability}
+              key={`${capability.kind}-${capability.text}`}
+            />
           ))}
         </div>
       </Card>
@@ -1773,12 +2627,17 @@ function AdminTrustPanel({ tool }: { tool: ToolDetailFixture }): ReactElement {
   );
 }
 
-function AdminReceiptsPanel({ tool }: { tool: ToolDetailFixture }): ReactElement {
+function AdminReceiptsPanel(
+  { tool }: { tool: ToolDetailFixture },
+): ReactElement {
   return (
     <div className="admin-panel">
       <div className="admin-receipt-metrics">
         <MetricTile label="Revenue · 30d" value="✦297.6" />
-        <MetricTile label="Calls · 30d" value={formatNumber(tool.callsPerDay * 30)} />
+        <MetricTile
+          label="Calls · 30d"
+          value={formatNumber(tool.callsPerDay * 30)}
+        />
       </div>
       <div className="admin-table admin-receipts-table">
         <div className="admin-table-head">
@@ -1789,7 +2648,10 @@ function AdminReceiptsPanel({ tool }: { tool: ToolDetailFixture }): ReactElement
           <span>When</span>
         </div>
         {adminReceipts.map((receipt) => (
-          <div className="admin-table-row" key={`${receipt.caller}-${receipt.when}`}>
+          <div
+            className="admin-table-row"
+            key={`${receipt.caller}-${receipt.when}`}
+          >
             <span className="status-cell">
               <span className={receipt.status === "error" ? "error" : ""} />
               {receipt.caller}
@@ -1837,9 +2699,22 @@ function AdminField({
   );
 }
 
-export function WalletFoundationPage({ location }: LaunchPageProps): ReactElement {
+export function WalletFoundationPage(
+  { live, location }: LaunchPageProps,
+): ReactElement {
   const [tab, setTab] = useState<WalletTabId>(walletTabFromSearch());
   const showEarnings = tab === "earnings";
+  const totals = liveWalletTotals(live.data.wallet?.wallet);
+  const wallet = live.data.wallet?.wallet;
+  const transactions = live.data.walletDetail?.kind === "transactions"
+    ? live.data.walletDetail.items
+    : wallet?.recentTransactions;
+  const receipts = live.data.walletDetail?.kind === "receipts"
+    ? live.data.walletDetail.items
+    : wallet?.recentReceipts;
+  const earnings = live.data.walletDetail?.kind === "earnings"
+    ? live.data.walletDetail.items
+    : wallet?.recentEarnings;
   useEffect(() => {
     setTab(walletTabFromSearch());
   }, [location.search]);
@@ -1851,20 +2726,27 @@ export function WalletFoundationPage({ location }: LaunchPageProps): ReactElemen
 
   return (
     <div className="launch-page-narrow wallet-page">
+      <ApiNotice live={live} noun="wallet" />
       <div className="wallet-hero">
         <WalletAmount
           label={showEarnings ? "Earned Light" : "Spendable Light"}
-          value={showEarnings ? walletSummary.earned : walletSummary.spendable}
+          value={showEarnings ? totals.earned : totals.spendable}
         />
         <div className="wallet-hero-actions">
-          {showEarnings ? (
-            <>
-              <Button variant="secondary">Withdraw</Button>
-              <Button>Transfer to Balance</Button>
-            </>
-          ) : tab === "topup" ? null : (
-            <Button icon="wallet" onClick={() => selectTab("topup")}>Add Light</Button>
-          )}
+          {showEarnings
+            ? (
+              <>
+                <Button variant="secondary">Withdraw</Button>
+                <Button>Transfer to Balance</Button>
+              </>
+            )
+            : tab === "topup"
+            ? null
+            : (
+              <Button icon="wallet" onClick={() => selectTab("topup")}>
+                Add Light
+              </Button>
+            )}
         </div>
       </div>
 
@@ -1886,21 +2768,60 @@ export function WalletFoundationPage({ location }: LaunchPageProps): ReactElemen
         ))}
       </div>
 
-      {tab === "balance" ? <WalletBalancePanel /> : null}
-      {tab === "topup" ? <WalletTopUpPanel /> : null}
-      {tab === "receipts" ? <WalletReceiptsPanel /> : null}
-      {tab === "earnings" ? <WalletEarningsPanel /> : null}
+      {tab === "balance"
+        ? (
+          <WalletBalancePanel
+            ledger={liveLedgerRows(transactions)}
+            publishRequirement={wallet?.publishRequirement}
+            totals={totals}
+          />
+        )
+        : null}
+      {tab === "topup"
+        ? <WalletTopUpPanel earnedLight={totals.earned} />
+        : null}
+      {tab === "receipts"
+        ? <WalletReceiptsPanel receipts={liveReceiptRows(receipts)} />
+        : null}
+      {tab === "earnings"
+        ? <WalletEarningsPanel earnings={liveEarningRows(earnings)} />
+        : null}
     </div>
   );
 }
 
-export function SettingsFoundationPage({ navigate }: LaunchPageProps): ReactElement {
+export function SettingsFoundationPage(
+  { live, navigate }: LaunchPageProps,
+): ReactElement {
   const [newKeyVisible, setNewKeyVisible] = useState(false);
-  const [newToolPermission, setNewToolPermission] = useState<"always" | "ask" | "never">("ask");
-  const [installedPermission, setInstalledPermission] = useState<"always" | "ask" | "never">("ask");
+  const [newToolPermission, setNewToolPermission] = useState<
+    "always" | "ask" | "never"
+  >("ask");
+  const [installedPermission, setInstalledPermission] = useState<
+    "always" | "ask" | "never"
+  >("ask");
+  const [visibleKeys, setVisibleKeys] = useState<ApiKeyFixture[]>(() =>
+    liveApiKeyFixtures(live.data.apiKeys?.apiKeys)
+  );
+
+  useEffect(() => {
+    setVisibleKeys(liveApiKeyFixtures(live.data.apiKeys?.apiKeys));
+  }, [live.data.apiKeys]);
+
+  const revokeKey = async (apiKey: ApiKeyFixture) => {
+    if (!apiKey.id) return;
+    try {
+      await launchApi.revokeApiKey(apiKey.id);
+      setVisibleKeys((keys) => keys.filter((key) => key.id !== apiKey.id));
+      live.reload();
+    } catch {
+      // Keep the row visible; the fallback state remains usable without auth.
+    }
+  };
 
   return (
     <div className="launch-page-narrow settings-page">
+      <ApiNotice live={live} noun="settings" />
       <div className="profile-strip">
         <Avatar color="#0a0a0a" name="@you" />
         <div>
@@ -1911,7 +2832,11 @@ export function SettingsFoundationPage({ navigate }: LaunchPageProps): ReactElem
       </div>
 
       <SettingsCard
-        action={<Button onClick={() => setNewKeyVisible(true)} size="sm">Create key</Button>}
+        action={
+          <Button onClick={() => setNewKeyVisible(true)} size="sm">
+            Create key
+          </Button>
+        }
         subtitle="Tokens your agents use to call Ultralight. New keys reveal once."
         title="API keys"
       >
@@ -1919,46 +2844,94 @@ export function SettingsFoundationPage({ navigate }: LaunchPageProps): ReactElem
           <Icon name="key" />
           <Mono>{apiKeyMask}</Mono>
           <Button size="sm" variant="secondary">Copy</Button>
-          <Button onClick={() => setNewKeyVisible(true)} size="sm" variant="secondary">
+          <Button
+            onClick={() => setNewKeyVisible(true)}
+            size="sm"
+            variant="secondary"
+          >
             Rotate & copy
           </Button>
         </div>
-        <p className="settings-help">Rotating issues a new key and revokes the old one. Connected agents must be updated.</p>
+        <p className="settings-help">
+          Rotating issues a new key and revokes the old one. Connected agents
+          must be updated.
+        </p>
         <div className="api-key-list">
-          {apiKeys.map((key) => <ApiKeyRow key={key.prefix} apiKey={key} />)}
+          {visibleKeys.map((key) => (
+            <ApiKeyRow
+              key={key.id || key.prefix}
+              apiKey={key}
+              onRevoke={revokeKey}
+            />
+          ))}
         </div>
       </SettingsCard>
 
-      <SettingsCard subtitle="Launch-safe defaults only. No BYOK or web-search controls in this MVP." title="Preferences">
+      <SettingsCard
+        subtitle="Launch-safe defaults only. No BYOK or web-search controls in this MVP."
+        title="Preferences"
+      >
         <PreferenceRow
-          control={<PermissionSelect onChange={setNewToolPermission} value={newToolPermission} />}
+          control={
+            <PermissionSelect
+              onChange={setNewToolPermission}
+              value={newToolPermission}
+            />
+          }
           description="How agents may call functions on tools you deploy."
           title="Default new tool permissions"
         />
         <PreferenceRow
-          control={<PermissionSelect onChange={setInstalledPermission} value={installedPermission} />}
+          control={
+            <PermissionSelect
+              onChange={setInstalledPermission}
+              value={installedPermission}
+            />
+          }
           description="How agents may call functions on tools you install."
           title="Default installed tool permissions"
         />
       </SettingsCard>
 
       <div className="connect-agent-callout">
-        <span className="target-icon"><Icon name="copy" /></span>
+        <span className="target-icon">
+          <Icon name="copy" />
+        </span>
         <div>
           <strong>Connecting an agent?</strong>
-          <p>Use Add to agent. It bundles your API key into install instructions without passing it to widgets.</p>
+          <p>
+            Use Add to agent. It bundles your API key into install instructions
+            without passing it to widgets.
+          </p>
         </div>
-        <RouteButton icon="copy" navigate={navigate} to="/install" variant="secondary">
+        <RouteButton
+          icon="copy"
+          navigate={navigate}
+          to="/install"
+          variant="secondary"
+        >
           Add to agent
         </RouteButton>
       </div>
 
-      {newKeyVisible ? <NewApiKeyModal onClose={() => setNewKeyVisible(false)} /> : null}
+      {newKeyVisible
+        ? (
+          <NewApiKeyModal
+            onClose={() => setNewKeyVisible(false)}
+            onCreated={(apiKey) => {
+              setVisibleKeys((keys) => [apiKey, ...keys]);
+              live.reload();
+            }}
+          />
+        )
+        : null}
     </div>
   );
 }
 
-function WalletAmount({ label, value }: { label: string; value: number }): ReactElement {
+function WalletAmount(
+  { label, value }: { label: string; value: number },
+): ReactElement {
   const [whole, fraction] = value.toFixed(3).split(".");
   return (
     <div className="wallet-amount">
@@ -1972,13 +2945,36 @@ function WalletAmount({ label, value }: { label: string; value: number }): React
   );
 }
 
-function WalletBalancePanel(): ReactElement {
+function WalletBalancePanel({
+  ledger,
+  publishRequirement,
+  totals,
+}: {
+  ledger: LedgerRow[];
+  publishRequirement?: LaunchPublisherPublishRequirement | null;
+  totals: typeof walletSummary;
+}): ReactElement {
   return (
     <div className="wallet-panel">
       <div className="wallet-metric-grid">
-        <MetricTile label="Deposited" value={`✦${formatNumber(walletSummary.deposited)}`} />
-        <MetricTile label="Earned" value={`✦${formatNumber(walletSummary.earned)}`} />
-        <MetricTile label="Escrow" value={`✦${formatNumber(walletSummary.escrow)}`} />
+        <MetricTile
+          label="Deposited"
+          value={`✦${formatNumber(totals.deposited)}`}
+        />
+        <MetricTile label="Earned" value={`✦${formatNumber(totals.earned)}`} />
+        <MetricTile label="Escrow" value={`✦${formatNumber(totals.escrow)}`} />
+        {publishRequirement?.enabled
+          ? (
+            <MetricTile
+              label={publishRequirement.met
+                ? "Publish ready"
+                : "Publish minimum"}
+              value={`✦${
+                formatNumber(lightValue(publishRequirement.requiredBalance))
+              }`}
+            />
+          )
+          : null}
       </div>
       <Card className="wallet-ledger-card">
         <div className="wallet-section-head">
@@ -1986,7 +2982,13 @@ function WalletBalancePanel(): ReactElement {
           <Pill>infinite scroll</Pill>
         </div>
         <div className="wallet-ledger">
-          {walletLedger.map((row, index) => <WalletLedgerRow first={index === 0} key={`${row.detail}-${row.when}`} row={row} />)}
+          {ledger.map((row, index) => (
+            <WalletLedgerRow
+              first={index === 0}
+              key={`${row.detail}-${row.when}-${index}`}
+              row={row}
+            />
+          ))}
           <WalletLoadingFooter />
         </div>
       </Card>
@@ -1994,13 +2996,74 @@ function WalletBalancePanel(): ReactElement {
   );
 }
 
-function WalletTopUpPanel(): ReactElement {
+function WalletTopUpPanel(
+  { earnedLight }: { earnedLight: number },
+): ReactElement {
   const [method, setMethod] = useState<PaymentMethod>("card");
   const [lightAmount, setLightAmount] = useState(10000);
-  const quote = quoteTopUp(lightAmount, method);
+  const [checkoutState, setCheckoutState] = useState<
+    "idle" | "creating" | "ready" | "error"
+  >("idle");
+  const [checkoutMessage, setCheckoutMessage] = useState("");
+  const [liveQuote, setLiveQuote] = useState<
+    {
+      baseDollars: number;
+      feeDollars: number;
+      feeNote: string;
+      totalDollars: number;
+    } | null
+  >(null);
+  const quote = liveQuote || quoteTopUp(lightAmount, method);
   const presets = method === "earnings"
-    ? [1000, 2500, 10000, 25000, Math.floor(walletSummary.earned)]
+    ? [1000, 2500, 10000, 25000, Math.floor(earnedLight)]
     : [1000, 2500, 10000, 25000, 50000];
+
+  useEffect(() => {
+    if (method === "earnings") {
+      setLiveQuote(null);
+      return;
+    }
+    let cancelled = false;
+    launchApi.walletTopUpQuote({ amountLight: lightAmount, method })
+      .then((response) => {
+        if (cancelled) return;
+        setLiveQuote({
+          baseDollars: response.quote.baseAmountCents / 100,
+          feeDollars: response.quote.processingFeeCents / 100,
+          feeNote: response.quote.feeFormula,
+          totalDollars: response.quote.totalAmountCents / 100,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setLiveQuote(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [lightAmount, method]);
+
+  const createTopUpIntent = async () => {
+    if (method === "earnings") {
+      setCheckoutState("ready");
+      setCheckoutMessage(
+        "Earnings transfer is not wired into the launch API yet.",
+      );
+      return;
+    }
+    setCheckoutState("creating");
+    try {
+      const response = await launchApi.createWalletTopUpIntent({
+        amountLight: lightAmount,
+        method,
+        termsAccepted: true,
+      });
+      setCheckoutState("ready");
+      setCheckoutMessage(`PaymentIntent ${response.paymentIntentId} created.`);
+    } catch (err) {
+      setCheckoutState("error");
+      setCheckoutMessage(err instanceof Error ? err.message : String(err));
+    }
+  };
 
   return (
     <div className="wallet-topup-grid">
@@ -2019,20 +3082,34 @@ function WalletTopUpPanel(): ReactElement {
               onClick={() => setLightAmount(amount)}
               type="button"
             >
-              {amount === Math.floor(walletSummary.earned) && method === "earnings" ? "Max" : amount.toLocaleString()}
+              {amount === Math.floor(earnedLight) && method === "earnings"
+                ? "Max"
+                : amount.toLocaleString()}
             </button>
           ))}
         </div>
         <div className="payment-methods">
-          <button className={method === "card" ? "active" : ""} onClick={() => setMethod("card")} type="button">
+          <button
+            className={method === "card" ? "active" : ""}
+            onClick={() => setMethod("card")}
+            type="button"
+          >
             <strong>Card</strong>
             <span>2.9% + $0.30 gross-up</span>
           </button>
-          <button className={method === "ach" ? "active" : ""} onClick={() => setMethod("ach")} type="button">
+          <button
+            className={method === "ach" ? "active" : ""}
+            onClick={() => setMethod("ach")}
+            type="button"
+          >
             <strong>Bank (ACH)</strong>
             <span>0.8% gross-up, capped at $5</span>
           </button>
-          <button className={method === "earnings" ? "active" : ""} onClick={() => setMethod("earnings")} type="button">
+          <button
+            className={method === "earnings" ? "active" : ""}
+            onClick={() => setMethod("earnings")}
+            type="button"
+          >
             <strong>Transfer from earnings</strong>
             <span>Instant, no fee</span>
           </button>
@@ -2040,10 +3117,22 @@ function WalletTopUpPanel(): ReactElement {
       </Card>
 
       <Card className="wallet-quote-card">
-        <p className="section-label">{method === "earnings" ? "Transfer summary" : "Order summary"}</p>
-        <QuoteLine label={method === "earnings" ? "From earnings" : "Base value"} value={formatCurrency(quote.baseDollars)} />
-        <QuoteLine label="Processing fee" muted={quote.feeNote} value={formatCurrency(quote.feeDollars)} />
-        <QuoteLine label="Rate" value={method === "earnings" ? "1:1 · no fee" : "✦100 / $1"} />
+        <p className="section-label">
+          {method === "earnings" ? "Transfer summary" : "Order summary"}
+        </p>
+        <QuoteLine
+          label={method === "earnings" ? "From earnings" : "Base value"}
+          value={formatCurrency(quote.baseDollars)}
+        />
+        <QuoteLine
+          label="Processing fee"
+          muted={quote.feeNote}
+          value={formatCurrency(quote.feeDollars)}
+        />
+        <QuoteLine
+          label="Rate"
+          value={method === "earnings" ? "1:1 · no fee" : "✦100 / $1"}
+        />
         <div className="quote-total">
           <span>{method === "earnings" ? "Transfer" : "Total"}</span>
           <strong>{formatCurrency(quote.totalDollars)}</strong>
@@ -2052,19 +3141,40 @@ function WalletTopUpPanel(): ReactElement {
           <span>You receive</span>
           <strong>✦{lightAmount.toLocaleString()}</strong>
         </div>
-        <Button size="lg">
-          {method === "earnings" ? `Transfer ✦${lightAmount.toLocaleString()}` : `Pay ${formatCurrency(quote.totalDollars)}`}
+        <Button onClick={createTopUpIntent} size="lg">
+          {checkoutState === "creating"
+            ? "Creating checkout"
+            : method === "earnings"
+            ? `Transfer ✦${lightAmount.toLocaleString()}`
+            : `Pay ${formatCurrency(quote.totalDollars)}`}
         </Button>
+        {checkoutMessage
+          ? (
+            <p
+              className={checkoutState === "error"
+                ? "settings-help error"
+                : "settings-help"}
+            >
+              {checkoutMessage}
+            </p>
+          )
+          : null}
         <div className="secure-note">
           <Icon name="shield" size={12} />
-          <span>{method === "earnings" ? "Instant internal transfer" : "Secure checkout · Stripe"}</span>
+          <span>
+            {method === "earnings"
+              ? "Instant internal transfer"
+              : "Secure checkout · Stripe"}
+          </span>
         </div>
       </Card>
     </div>
   );
 }
 
-function WalletReceiptsPanel(): ReactElement {
+function WalletReceiptsPanel(
+  { receipts }: { receipts: ReceiptRowFixture[] },
+): ReactElement {
   return (
     <Card className="wallet-table-card">
       <div className="wallet-section-head">
@@ -2079,20 +3189,32 @@ function WalletReceiptsPanel(): ReactElement {
           <span>Status</span>
           <span>When</span>
         </div>
-        {walletReceipts.map((receipt) => <WalletReceiptRow key={`${receipt.tool}-${receipt.when}`} receipt={receipt} />)}
+        {receipts.map((receipt, index) => (
+          <WalletReceiptRow
+            key={`${receipt.tool}-${receipt.when}-${index}`}
+            receipt={receipt}
+          />
+        ))}
       </div>
     </Card>
   );
 }
 
-function WalletEarningsPanel(): ReactElement {
+function WalletEarningsPanel(
+  { earnings }: { earnings: LedgerRow[] },
+): ReactElement {
   return (
     <div className="wallet-panel">
       <Card className="payout-banner">
-        <span className="target-icon"><Icon name="shield" /></span>
+        <span className="target-icon">
+          <Icon name="shield" />
+        </span>
         <div>
           <h3>Payouts ready</h3>
-          <p>Stripe Connect payouts are enabled. Withdraw earned Light to your bank or transfer to spendable balance.</p>
+          <p>
+            Stripe Connect payouts are enabled. Withdraw earned Light to your
+            bank or transfer to spendable balance.
+          </p>
         </div>
         <Button size="sm">Withdraw earnings</Button>
       </Card>
@@ -2102,7 +3224,13 @@ function WalletEarningsPanel(): ReactElement {
           <Pill>creator income</Pill>
         </div>
         <div className="wallet-ledger">
-          {walletEarnings.map((row, index) => <WalletLedgerRow first={index === 0} key={`${row.detail}-${row.when}`} row={row} />)}
+          {earnings.map((row, index) => (
+            <WalletLedgerRow
+              first={index === 0}
+              key={`${row.detail}-${row.when}-${index}`}
+              row={row}
+            />
+          ))}
           <WalletLoadingFooter />
         </div>
       </Card>
@@ -2110,7 +3238,9 @@ function WalletEarningsPanel(): ReactElement {
   );
 }
 
-function WalletLedgerRow({ first, row }: { first: boolean; row: LedgerRow }): ReactElement {
+function WalletLedgerRow(
+  { first, row }: { first: boolean; row: LedgerRow },
+): ReactElement {
   const positive = row.amount > 0;
   const glyphs: Record<LedgerRow["kind"], string> = {
     call: "→",
@@ -2125,22 +3255,34 @@ function WalletLedgerRow({ first, row }: { first: boolean; row: LedgerRow }): Re
       <span>{row.detail}</span>
       <Mono>{row.when}</Mono>
       <span className={positive ? "mono positive" : "mono"}>
-        {positive ? "+" : "-"}✦{Math.abs(row.amount).toLocaleString(undefined, { maximumFractionDigits: 3, minimumFractionDigits: 3 })}
+        {positive ? "+" : "-"}✦{Math.abs(row.amount).toLocaleString(undefined, {
+          maximumFractionDigits: 3,
+          minimumFractionDigits: 3,
+        })}
       </span>
     </div>
   );
 }
 
-function WalletReceiptRow({ receipt }: { receipt: ReceiptRowFixture }): ReactElement {
+function WalletReceiptRow(
+  { receipt }: { receipt: ReceiptRowFixture },
+): ReactElement {
   return (
     <div className="wallet-receipt-row">
       <span className="status-cell">
         <span className={receipt.status === "error" ? "error" : ""} />
-        <Mono>{receipt.tool}<em>·{receipt.fn}</em></Mono>
+        <Mono>
+          {receipt.tool}
+          <em>·{receipt.fn}</em>
+        </Mono>
       </span>
       <Mono>✦{receipt.light.toFixed(3)}</Mono>
       <Mono>{receipt.latency}ms</Mono>
-      <span className={receipt.status === "error" ? "mono error" : "mono positive"}>{receipt.status}</span>
+      <span
+        className={receipt.status === "error" ? "mono error" : "mono positive"}
+      >
+        {receipt.status}
+      </span>
       <Mono>{receipt.when}</Mono>
     </div>
   );
@@ -2155,10 +3297,12 @@ function WalletLoadingFooter(): ReactElement {
   );
 }
 
-function QuoteLine({ label, muted, value }: { label: string; muted?: string; value: string }): ReactElement {
+function QuoteLine(
+  { label, muted, value }: { label: string; muted?: string; value: string },
+): ReactElement {
   return (
     <div className="quote-line">
-      <span>{label}{muted ? <small> · {muted}</small> : null}</span>
+      <span>{label}{muted ? <small>· {muted}</small> : null}</span>
       <strong>{value}</strong>
     </div>
   );
@@ -2189,7 +3333,13 @@ function SettingsCard({
   );
 }
 
-function ApiKeyRow({ apiKey }: { apiKey: ApiKeyFixture }): ReactElement {
+function ApiKeyRow({
+  apiKey,
+  onRevoke,
+}: {
+  apiKey: ApiKeyFixture;
+  onRevoke?: (apiKey: ApiKeyFixture) => void;
+}): ReactElement {
   return (
     <div className="api-key-row">
       <Icon name="key" />
@@ -2201,7 +3351,7 @@ function ApiKeyRow({ apiKey }: { apiKey: ApiKeyFixture }): ReactElement {
         <span>Last used</span>
         <Mono>{apiKey.lastUsed}</Mono>
       </div>
-      <button type="button">Revoke</button>
+      <button onClick={() => onRevoke?.(apiKey)} type="button">Revoke</button>
     </div>
   );
 }
@@ -2233,7 +3383,11 @@ function PermissionSelect({
   onChange: (value: "always" | "ask" | "never") => void;
   value: "always" | "ask" | "never";
 }): ReactElement {
-  const labels = { always: "Always", ask: "Always ask", never: "Never" } as const;
+  const labels = {
+    always: "Always",
+    ask: "Always ask",
+    never: "Never",
+  } as const;
   return (
     <div className="permission-select">
       {(["always", "ask", "never"] as const).map((option) => (
@@ -2250,21 +3404,93 @@ function PermissionSelect({
   );
 }
 
-function NewApiKeyModal({ onClose }: { onClose: () => void }): ReactElement {
+function NewApiKeyModal({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: (apiKey: ApiKeyFixture) => void;
+}): ReactElement {
+  const [plaintextToken, setPlaintextToken] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [creating, setCreating] = useState(true);
+  const onCreatedRef = useRef(onCreated);
+
+  useEffect(() => {
+    onCreatedRef.current = onCreated;
+  }, [onCreated]);
+
+  useEffect(() => {
+    let cancelled = false;
+    launchApi.createApiKey({
+      expiresInDays: 90,
+      name: `Launch web ${new Date().toLocaleDateString()}`,
+      scopes: ["apps:call"],
+    })
+      .then((response) => {
+        if (cancelled) return;
+        setPlaintextToken(response.plaintextToken);
+        onCreatedRef.current({
+          created: shortDate(response.apiKey.createdAt),
+          id: response.apiKey.id,
+          lastUsed: "never",
+          name: response.apiKey.name,
+          prefix: response.apiKey.tokenPrefix,
+          scopes: response.apiKey.scopes.join(" · ") || "all",
+        });
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setErrorMessage(err instanceof Error ? err.message : String(err));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setCreating(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const copyToken = () => {
+    const token = plaintextToken || apiKeyMask;
+    navigator.clipboard?.writeText(token).catch(() => {});
+  };
+
   return (
     <div className="settings-modal-backdrop">
       <Card className="new-key-modal">
         <div className="modal-title-row">
-          <span className="target-icon"><Icon name="key" /></span>
-          <h2>API key created</h2>
+          <span className="target-icon">
+            <Icon name="key" />
+          </span>
+          <h2>
+            {creating
+              ? "Creating API key"
+              : errorMessage
+              ? "Could not create key"
+              : "API key created"}
+          </h2>
         </div>
-        <p>Copy it now. For your security, you will not be able to see it again.</p>
+        <p>
+          {errorMessage
+            ? "Sign in with an account session or set a launch auth token before creating a key."
+            : "Copy it now. For your security, you will not be able to see it again."}
+        </p>
         <div className="new-key-value">
-          <Mono>ulk_live_7Qp2sR9vK3mD8xN4</Mono>
-          <Button icon="copy" size="sm" variant="secondary">Copy</Button>
+          <Mono>
+            {creating
+              ? "issuing..."
+              : errorMessage || plaintextToken || apiKeyMask}
+          </Mono>
+          <Button icon="copy" onClick={copyToken} size="sm" variant="secondary">
+            Copy
+          </Button>
         </div>
         <div className="modal-actions">
-          <Button onClick={onClose} size="sm" variant="secondary">Add to install config</Button>
+          <Button onClick={onClose} size="sm" variant="secondary">
+            Add to install config
+          </Button>
           <Button onClick={onClose} size="sm">Done</Button>
         </div>
       </Card>
@@ -2274,10 +3500,22 @@ function NewApiKeyModal({ onClose }: { onClose: () => void }): ReactElement {
 
 function ValueProps(): ReactElement {
   const items = [
-    ["01", "One core", "Plug in and inherit context, tools, balance, and preferences."],
+    [
+      "01",
+      "One core",
+      "Plug in and inherit context, tools, balance, and preferences.",
+    ],
     ["02", "No subscriptions", "Agents pay per call, only for what they use."],
-    ["03", "Open marketplace", "Every published tool is discoverable and callable by any agent."],
-    ["04", "Inherited power", "Every deployed tool inherits composability and distribution."],
+    [
+      "03",
+      "Open marketplace",
+      "Every published tool is discoverable and callable by any agent.",
+    ],
+    [
+      "04",
+      "Inherited power",
+      "Every deployed tool inherits composability and distribution.",
+    ],
   ] as const;
   return (
     <section className="value-grid">
@@ -2295,7 +3533,9 @@ function ValueProps(): ReactElement {
 function SharedCore(): ReactElement {
   return (
     <div className="shared-core">
-      {["Context", "Tools", "Auth", "Payments"].map((item) => <span key={item}>{item}</span>)}
+      {["Context", "Tools", "Auth", "Payments"].map((item) => (
+        <span key={item}>{item}</span>
+      ))}
     </div>
   );
 }
@@ -2309,7 +3549,9 @@ function AgentOrbit(): ReactElement {
         <ellipse cx="220" cy="220" rx="136" ry="68" />
         <ellipse cx="220" cy="220" rx="96" ry="48" />
       </svg>
-      <span className="orbit-node node-center"><Icon name="spark" size={34} /></span>
+      <span className="orbit-node node-center">
+        <Icon name="spark" size={34} />
+      </span>
       {orbitAgents.map((agent) => (
         <img
           alt={agent.alt}
@@ -2369,7 +3611,9 @@ function CompactToolCard({ tool }: { tool: ToolFixture }): ReactElement {
       <p>{tool.summary}</p>
       <div className="compact-tool-footer">
         <Mono>{formatNumber(tool.installs)} installs</Mono>
-        {free ? <span>Free</span> : <span>{formatLight(tool.callPrice)}/call</span>}
+        {free
+          ? <span>Free</span>
+          : <span>{formatLight(tool.callPrice)}/call</span>}
       </div>
     </Card>
   );
@@ -2378,13 +3622,30 @@ function CompactToolCard({ tool }: { tool: ToolFixture }): ReactElement {
 function KeyBanner({ signedIn }: { signedIn: boolean }): ReactElement {
   return (
     <section className={signedIn ? "key-banner signed-in" : "key-banner"}>
-      <span className="target-icon"><Icon name="key" /></span>
+      <span className="target-icon">
+        <Icon name="key" />
+      </span>
       <div>
-        <h2>{signedIn ? "Your API key is included below" : "Sign in to drop your key into these snippets"}</h2>
+        <h2>
+          {signedIn
+            ? "Your API key is included below"
+            : "Sign in to drop your key into these snippets"}
+        </h2>
         <p>
           {signedIn
-            ? <>Copy any snippet and it is ready to run: <Mono>{apiKeyMask}</Mono>.</>
-            : <>Until then they show <Mono>{apiKeyPlaceholder}</Mono>; replace it with your own token.</>}
+            ? (
+              <>
+                Copy any snippet and it is ready to run:{" "}
+                <Mono>{apiKeyMask}</Mono>.
+              </>
+            )
+            : (
+              <>
+                Until then they show{" "}
+                <Mono>{apiKeyPlaceholder}</Mono>; replace it with your own
+                token.
+              </>
+            )}
         </p>
       </div>
       <Button size="sm" variant={signedIn ? "secondary" : "primary"}>
@@ -2397,17 +3658,23 @@ function KeyBanner({ signedIn }: { signedIn: boolean }): ReactElement {
 function TargetPicker({
   active,
   onPick,
+  targets = installTargets,
 }: {
   active: string;
   onPick: (target: string) => void;
+  targets?: InstallTarget[];
 }): ReactElement {
   return (
     <div className="target-picker">
       {(["MCP", "Direct"] as const).map((group) => (
         <div key={group}>
-          <p className="section-label">{group === "MCP" ? "Remote MCP servers" : "CLI and API"}</p>
+          <p className="section-label">
+            {group === "MCP" ? "Remote MCP servers" : "CLI and API"}
+          </p>
           <div className="target-list">
-            {installTargets.filter((target) => target.group === group).map((target) => (
+            {targets.filter((target) => target.group === group).map((
+              target,
+            ) => (
               <button
                 className={active === target.target ? "active" : ""}
                 key={target.target}
@@ -2442,24 +3709,26 @@ function SearchControls({
         type="search"
         value={query}
       />
-      {query ? (
-        <button onClick={() => setQuery("")} type="button">Clear</button>
-      ) : null}
+      {query
+        ? <button onClick={() => setQuery("")} type="button">Clear</button>
+        : null}
     </label>
   );
 }
 
-function RetrievalNote({ query }: { query: string }): ReactElement {
+function RetrievalNote(
+  { mode, query }: { mode?: string; query: string },
+): ReactElement {
   if (!query) {
     return (
       <div className="retrieval-note">
-        Browsing all public tools · top by install
+        Browsing all public tools · {mode || "top by install"}
       </div>
     );
   }
   return (
     <div className="retrieval-note active">
-      <span /> hybrid retrieval · semantic + lexical fallback
+      <span /> {mode || "hybrid"} retrieval · semantic + lexical fallback
     </div>
   );
 }
@@ -2478,14 +3747,22 @@ function StoreToolCard({ tool }: { tool: ToolFixture }): ReactElement {
       <p>{tool.summary}</p>
       <div className="store-card-meta">
         <Mono>{formatNumber(tool.installs)} installs</Mono>
-        {tool.widgets > 0 ? <span><Icon name="grid" size={12} /> {tool.widgets} widgets</span> : <span>functions only</span>}
+        {tool.widgets > 0
+          ? (
+            <span>
+              <Icon name="grid" size={12} /> {tool.widgets} widgets
+            </span>
+          )
+          : <span>functions only</span>}
       </div>
       <Sparkline points={tool.spark} growth={tool.growth} />
     </Card>
   );
 }
 
-function Sparkline({ growth, points }: { growth: number; points: number[] }): ReactElement {
+function Sparkline(
+  { growth, points }: { growth: number; points: number[] },
+): ReactElement {
   const max = Math.max(...points);
   const min = Math.min(...points);
   const range = max - min || 1;
@@ -2495,20 +3772,27 @@ function Sparkline({ growth, points }: { growth: number; points: number[] }): Re
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(" ");
   return (
-    <svg className={growth > 0.1 ? "sparkline growing" : "sparkline"} viewBox="0 0 74 28" aria-hidden="true">
+    <svg
+      className={growth > 0.1 ? "sparkline growing" : "sparkline"}
+      viewBox="0 0 74 28"
+      aria-hidden="true"
+    >
       <polyline points={polyline} />
     </svg>
   );
 }
 
-function PrimitivesRail({ navigate }: { navigate: (to: string) => void }): ReactElement {
+function PrimitivesRail(
+  { navigate }: { navigate: (to: string) => void },
+): ReactElement {
   return (
     <Card className="primitives-rail">
       <p className="section-label">For agents · platform primitives</p>
       {primitives.map(([key, label, description, route]) => (
         <button
           key={key}
-          onClick={() => navigate(route === "/tools/:slug" ? "/tools/get_weather" : route)}
+          onClick={() =>
+            navigate(route === "/tools/:slug" ? "/tools/get_weather" : route)}
           type="button"
         >
           <span>
@@ -2573,10 +3857,12 @@ function NoResults({ onClear }: { onClear: () => void }): ReactElement {
   return (
     <div className="store-empty">
       <EmptyState icon="search" title="No tools match that yet">
-        Semantic search would fall back to lexical results here. Try broader terms,
-        or browse by kind.
+        Semantic search would fall back to lexical results here. Try broader
+        terms, or browse by kind.
       </EmptyState>
-      <Button onClick={onClear} size="sm" variant="secondary">Clear search</Button>
+      <Button onClick={onClear} size="sm" variant="secondary">
+        Clear search
+      </Button>
     </div>
   );
 }
@@ -2615,7 +3901,9 @@ function CapabilityTag({
   );
 }
 
-export function FoundationNotice({ children }: { children: ReactNode }): ReactElement {
+export function FoundationNotice(
+  { children }: { children: ReactNode },
+): ReactElement {
   return <EmptyState title="Ready for page port">{children}</EmptyState>;
 }
 
@@ -2641,7 +3929,11 @@ function createToolDetail(tool: ToolFixture): ToolDetailFixture {
     version: "1.0.0",
     visibility: "public",
     widgetList: tool.widgets > 0
-      ? [{ id: "overview", label: "Overview", description: "Public tool UI preview." }]
+      ? [{
+        id: "overview",
+        label: "Overview",
+        description: "Public tool UI preview.",
+      }]
       : [],
   };
 
@@ -2734,12 +4026,14 @@ function createToolDetail(tool: ToolFixture): ToolDetailFixture {
         {
           id: "forecast_card",
           label: "Forecast card",
-          description: "Five-day outlook with highs, lows, and current conditions.",
+          description:
+            "Five-day outlook with highs, lows, and current conditions.",
         },
         {
           id: "now_badge",
           label: "Now badge",
-          description: "Compact current-conditions chip for quick agent responses.",
+          description:
+            "Compact current-conditions chip for quick agent responses.",
         },
       ],
     },
@@ -2861,7 +4155,8 @@ function createToolDetail(tool: ToolFixture): ToolDetailFixture {
         {
           id: "checkout_action",
           label: "Checkout action",
-          description: "Small UI for creating and confirming subscription actions.",
+          description:
+            "Small UI for creating and confirming subscription actions.",
         },
       ],
     },
@@ -2872,7 +4167,9 @@ function createToolDetail(tool: ToolFixture): ToolDetailFixture {
 
 function adminToolFromRoute(id?: string): ToolDetailFixture {
   if (!id) return toolDetails.get_weather;
-  return Object.values(toolDetails).find((tool) => tool.id === id || tool.slug === id) || toolDetails.get_weather;
+  return Object.values(toolDetails).find((tool) =>
+    tool.id === id || tool.slug === id
+  ) || toolDetails.get_weather;
 }
 
 function queryParam(name: string): string {
@@ -2885,7 +4182,11 @@ function syncSearchParams(updates: Record<string, string | null>): void {
     if (value) next.searchParams.set(key, value);
     else next.searchParams.delete(key);
   });
-  window.history.replaceState(null, "", `${next.pathname}${next.search}${next.hash}`);
+  window.history.replaceState(
+    null,
+    "",
+    `${next.pathname}${next.search}${next.hash}`,
+  );
 }
 
 function storeQueryFromSearch(): string {
@@ -2928,7 +4229,12 @@ function quoteTopUp(lightAmount: number, method: PaymentMethod): {
 } {
   const baseDollars = lightAmount / 100;
   if (method === "earnings") {
-    return { baseDollars, feeDollars: 0, feeNote: "none", totalDollars: baseDollars };
+    return {
+      baseDollars,
+      feeDollars: 0,
+      feeNote: "none",
+      totalDollars: baseDollars,
+    };
   }
   if (method === "ach") {
     const uncappedTotal = baseDollars / 0.992;
@@ -3049,7 +4355,8 @@ function functionResponse(slug: string, name: string): Record<string, unknown> {
       tempC: 17,
     },
   };
-  return responses[`${slug}.${name}`] || { ok: true, receipt: "rec_launch_demo" };
+  return responses[`${slug}.${name}`] ||
+    { ok: true, receipt: "rec_launch_demo" };
 }
 
 function primaryFunctionFor(tool: ToolDetailFixture): ToolFunctionFixture {

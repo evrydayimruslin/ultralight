@@ -37,6 +37,14 @@ CREATE TABLE IF NOT EXISTS public.gpu_build_events (
   created_at timestamp with time zone NOT NULL DEFAULT now()
 );
 
+ALTER TABLE public.gpu_build_events
+  ADD COLUMN IF NOT EXISTS provider text NOT NULL DEFAULT 'github_actions',
+  ADD COLUMN IF NOT EXISTS run_id text,
+  ADD COLUMN IF NOT EXISTS stage text,
+  ADD COLUMN IF NOT EXISTS status text,
+  ADD COLUMN IF NOT EXISTS message text,
+  ADD COLUMN IF NOT EXISTS metadata jsonb NOT NULL DEFAULT '{}'::jsonb;
+
 CREATE INDEX IF NOT EXISTS idx_gpu_build_events_app_version
   ON public.gpu_build_events(app_id, version, created_at DESC);
 

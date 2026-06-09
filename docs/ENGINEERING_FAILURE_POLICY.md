@@ -1,6 +1,6 @@
 # Engineering Failure Policy
 
-Last reviewed: `2026-04-20`
+Last reviewed: `2026-06-08`
 
 This is the Wave 0 failure-policy standard for launch hardening.
 
@@ -39,6 +39,23 @@ truly noise-level cleanup.
 | Cleanup / teardown | Best effort | Yes | Warn log unless obviously harmless |
 | Telemetry / analytics / quality reporting | Best effort | Yes | Warn or error log when repeated/high-volume failures matter |
 | Cache invalidation / search indexing / summaries | Best effort only if stale data is tolerable and rebuild exists | Yes | Warn log and documented rebuild path |
+
+## Economic Integrity Guardrail
+
+For launch economic work, use
+[ECONOMIC_INTEGRITY_GUARDRAILS.md](ECONOMIC_INTEGRITY_GUARDRAILS.md) as the
+source of truth for approved Light-moving mutation paths.
+
+The launch guardrail runner checks for new direct SQL, REST, and RPC economic
+mutations outside reviewed allowlists:
+
+```sh
+node scripts/checks/run-guardrail-checks.mjs
+```
+
+Any PR that adds a new balance mutation, transfer, billing log, cloud usage
+event, hold, skill pull receipt, or embedding charge path must update the
+economic guardrail document and explain the failure mode in the PR description.
 
 ## What Is Not Allowed
 

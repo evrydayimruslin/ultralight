@@ -26,6 +26,8 @@ Deno.test("manifest generation: uses entry filename when building contracts from
 
   assertEquals(manifest.entry.functions, "functions.ts");
   assertExists(manifest.functions?.greet);
+  assertExists(manifest.skills?.context);
+  assertEquals(manifest.skills?.context.resource, "skills.md");
   assertEquals(manifest.version, "1.2.3");
 });
 
@@ -37,6 +39,11 @@ Deno.test("manifest generation: preserves rich uploaded manifests and merges mis
       version: "1.0.0",
       type: "mcp",
       entry: { functions: "planner.ts" },
+      access_policy: {
+        mode: "module",
+        module: "policy.ts",
+        export: "planAccess",
+      },
       functions: {
         listTasks: {
           description: "List all tasks",
@@ -57,6 +64,7 @@ Deno.test("manifest generation: preserves rich uploaded manifests and merges mis
     hydrated.manifest.functions?.listTasks?.description,
     "List all tasks",
   );
+  assertEquals(hydrated.manifest.access_policy?.module, "policy.ts");
   assertExists(hydrated.manifest.functions?.addTask);
 });
 
@@ -173,6 +181,96 @@ Deno.test("manifest validation: command cards are native, fixed-size, and read-o
   );
   assertEquals(
     invalid.errors.some((error) => error.path.endsWith(".access")),
+    true,
+  );
+});
+
+Deno.test("manifest validation: skills are first-class semantic context entries", () => {
+  const valid = validateManifest({
+    name: "Skillful App",
+    version: "1.0.0",
+    type: "mcp",
+    entry: { functions: "index.ts" },
+    functions: {
+      search: { description: "Search documents" },
+    },
+    skills: {
+      context: {
+        description: "Full operating context.",
+        semantic_description: "How to use search for research workflows.",
+        resource: "skills.md",
+        format: "markdown",
+      },
+    },
+  });
+
+  assertEquals(valid.valid, true);
+
+  const invalid = validateManifest({
+    name: "Broken Skill App",
+    version: "1.0.0",
+    type: "mcp",
+    entry: { functions: "index.ts" },
+    skills: {
+      context: {
+        resource: 42,
+        format: "pdf",
+      },
+    },
+  });
+
+  assertEquals(invalid.valid, false);
+  assertEquals(
+    invalid.errors.some((error) => error.path === "skills.context.description"),
+    true,
+  );
+  assertEquals(
+    invalid.errors.some((error) => error.path === "skills.context.resource"),
+    true,
+  );
+  assertEquals(
+    invalid.errors.some((error) => error.path === "skills.context.format"),
+    true,
+  );
+});
+
+Deno.test("manifest validation: access policy declares a safe versioned policy hook", () => {
+  const valid = validateManifest({
+    name: "Policy App",
+    version: "1.0.0",
+    type: "mcp",
+    entry: { functions: "index.ts" },
+    functions: {
+      search: { description: "Search documents" },
+    },
+    access_policy: {
+      mode: "module",
+      module: "policies/access-policy.ts",
+      export: "planAccess",
+    },
+  });
+
+  assertEquals(valid.valid, true);
+
+  const invalid = validateManifest({
+    name: "Broken Policy App",
+    version: "1.0.0",
+    type: "mcp",
+    entry: { functions: "index.ts" },
+    access_policy: {
+      mode: "module",
+      module: "../policy.ts",
+      export: "plan-access",
+    },
+  });
+
+  assertEquals(invalid.valid, false);
+  assertEquals(
+    invalid.errors.some((error) => error.path === "access_policy.module"),
+    true,
+  );
+  assertEquals(
+    invalid.errors.some((error) => error.path === "access_policy.export"),
     true,
   );
 });

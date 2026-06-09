@@ -4,6 +4,18 @@
       "description": "Protects live trees from shipping .bak copies and preview-only HTML artifacts by accident.",
       "matches": []
     },
+    "economic-direct-rest-mutations": {
+      "description": "Protects Light-moving tables from new direct REST writes outside approved secondary ledger/receipt writers.",
+      "matches": []
+    },
+    "economic-direct-rpc-mutations": {
+      "description": "Protects Light-moving RPC call sites from spreading outside approved service boundaries.",
+      "matches": []
+    },
+    "economic-sql-mutations": {
+      "description": "Protects Light-moving database state by requiring new direct SQL mutations to be reviewed in the economic mutation allowlist.",
+      "matches": []
+    },
     "guarded-direct-console": {
       "description": "Protects the Wave 5 logging-conversion surfaces from regressing back to raw console.* calls in product code.",
       "matches": []

@@ -16,6 +16,7 @@ import type { GpuExecuteResult } from "./executor.ts";
 import type { App } from "../../../shared/types/index.ts";
 import { formatLight, PLATFORM_FEE_RATE } from "../../../shared/types/index.ts";
 import { getEnv } from "../../lib/env.ts";
+import { buildEconomicIdempotencyKey } from "../economic-idempotency.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -61,6 +62,7 @@ export interface GpuSettlementResult {
 
 interface GpuSettlementDeps {
   fetchFn?: typeof fetch;
+  receiptId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -306,6 +308,14 @@ export async function settleGpuExecution(
             p_allow_partial: false,
             p_app_id: app.id,
             p_function_name: functionName,
+            p_idempotency_key: deps?.receiptId
+              ? buildEconomicIdempotencyKey("gpu_compute_debit", [
+                deps.receiptId,
+                userId,
+                app.id,
+                functionName,
+              ])
+              : null,
             p_metadata: {
               gpu_type: gpuResult.gpuType,
               execution_duration_ms: breakdown.executionDurationMs,
@@ -426,6 +436,14 @@ export async function settleGpuExecution(
             p_reason: "gpu_call",
             p_app_id: app.id,
             p_function_name: functionName,
+            p_idempotency_key: deps?.receiptId
+              ? buildEconomicIdempotencyKey("gpu_developer_transfer", [
+                deps.receiptId,
+                userId,
+                app.id,
+                functionName,
+              ])
+              : null,
             p_metadata: {
               gpu_type: gpuResult.gpuType,
               execution_duration_ms: breakdown.executionDurationMs,

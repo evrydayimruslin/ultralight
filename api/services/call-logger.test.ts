@@ -51,6 +51,7 @@ Deno.test("call logger: persists widget action audit columns", () => {
     success: true,
     inputArgs: { draft_id: "draft-1" },
     outputResult: { ok: true },
+    billingConfigVersion: 42,
     widgetAction: {
       surfaceId: "surface-1",
       widgetId: "email_inbox",
@@ -64,6 +65,7 @@ Deno.test("call logger: persists widget action audit columns", () => {
   assertEquals(payload.widget_id, "email_inbox");
   assertEquals(payload.widget_action_id, "send_selected_draft");
   assertEquals(payload.widget_turn_id, "turn-1");
+  assertEquals(payload.billing_config_version, 42);
   assertEquals(payload.input_args, { draft_id: "draft-1" });
 });
 
