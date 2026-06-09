@@ -32,7 +32,7 @@ import {
   hasLaunchAuthToken,
   signOutLaunch,
 } from "../lib/auth";
-import { launchApi } from "../lib/api";
+import { launchApi, LaunchApiAuthenticationError } from "../lib/api";
 import {
   buildLaunchWidgetDocument,
   createLaunchWidgetSurfaceId,
@@ -2051,6 +2051,14 @@ function useLaunchWidgetRender(
       })
       .catch((err) => {
         if (cancelled) return;
+        if (err instanceof LaunchApiAuthenticationError) {
+          setRuntime({
+            documentHtml: null,
+            error: err.message,
+            status: "setup",
+          });
+          return;
+        }
         setRuntime({
           documentHtml: null,
           error: err instanceof Error ? err.message : String(err),

@@ -2,7 +2,9 @@ const launchApiBaseUrl =
   import.meta.env.VITE_LAUNCH_API_BASE_URL?.trim().replace(/\/$/u, "") || "";
 
 export const LAUNCH_AUTH_TOKEN_KEY = "ultralight.launch.authToken";
+export const LAUNCH_AUTH_EXPIRES_AT_KEY = "ultralight.launch.authExpiresAt";
 export const LAUNCH_AUTH_DIAGNOSTIC_KEY = "ultralight.launch.authDiagnostic";
+const AUTH_EXPIRY_SKEW_MS = 30_000;
 
 export type LaunchAuthDiagnosticStatus =
   | "redirecting"
@@ -11,6 +13,7 @@ export type LaunchAuthDiagnosticStatus =
   | "exchange_started"
   | "exchange_succeeded"
   | "provider_code_misrouted"
+  | "session_expired"
   | "token_stored"
   | "exchange_failed";
 
@@ -35,19 +38,42 @@ export interface LaunchAuthExchangeResponse {
 }
 
 export function getLaunchAuthToken(): string | null {
-  return window.localStorage.getItem(LAUNCH_AUTH_TOKEN_KEY);
+  const token = window.localStorage.getItem(LAUNCH_AUTH_TOKEN_KEY);
+  if (!token) return null;
+  const expiresAt = launchAuthExpiresAt();
+  if (expiresAt && Date.now() + AUTH_EXPIRY_SKEW_MS >= expiresAt) {
+    clearLaunchAuthToken();
+    recordLaunchAuthDiagnostic({
+      message: "The launch web session expired before an API request.",
+      status: "session_expired",
+    });
+    return null;
+  }
+  return token;
 }
 
 export function hasLaunchAuthToken(): boolean {
   return Boolean(getLaunchAuthToken());
 }
 
-export function setLaunchAuthToken(token: string): void {
+export function setLaunchAuthToken(
+  token: string,
+  expiresInSeconds?: number | null,
+): void {
   window.localStorage.setItem(LAUNCH_AUTH_TOKEN_KEY, token);
+  if (typeof expiresInSeconds === "number" && expiresInSeconds > 0) {
+    window.localStorage.setItem(
+      LAUNCH_AUTH_EXPIRES_AT_KEY,
+      String(Date.now() + expiresInSeconds * 1000),
+    );
+  } else {
+    window.localStorage.removeItem(LAUNCH_AUTH_EXPIRES_AT_KEY);
+  }
 }
 
 export function clearLaunchAuthToken(): void {
   window.localStorage.removeItem(LAUNCH_AUTH_TOKEN_KEY);
+  window.localStorage.removeItem(LAUNCH_AUTH_EXPIRES_AT_KEY);
 }
 
 export function getLaunchAuthDiagnostic(): LaunchAuthDiagnostic | null {
@@ -134,4 +160,11 @@ export function normalizeLocalPath(value: string | null | undefined): string {
 
 function currentLaunchPath(): string {
   return `${window.location.pathname}${window.location.search}`;
+}
+
+function launchAuthExpiresAt(): number | null {
+  const raw = window.localStorage.getItem(LAUNCH_AUTH_EXPIRES_AT_KEY);
+  if (!raw) return null;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : null;
 }

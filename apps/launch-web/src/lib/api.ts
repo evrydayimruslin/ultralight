@@ -33,7 +33,11 @@ import type {
   LaunchWidgetRenderRequest,
   LaunchWidgetRenderResponse,
 } from "../../../../shared/contracts/launch.ts";
-import { getLaunchAuthToken } from "./auth";
+import {
+  clearLaunchAuthToken,
+  getLaunchAuthToken,
+  recordLaunchAuthDiagnostic,
+} from "./auth";
 
 export interface LaunchToolResponse {
   tool: LaunchToolSummary;
@@ -69,6 +73,10 @@ export interface LaunchToolAdminResponse {
 export interface LaunchApiClientOptions {
   baseUrl?: string;
   getAuthToken?: () => string | null;
+}
+
+export class LaunchApiAuthenticationError extends Error {
+  override name = "LaunchApiAuthenticationError";
 }
 
 const configuredLaunchApiBaseUrl =
@@ -318,6 +326,18 @@ export class LaunchApiClient {
         message = String(parsed.error || parsed.message || text);
       } catch {
         // Keep the raw text response.
+      }
+      if (response.status === 401) {
+        if (token) {
+          clearLaunchAuthToken();
+          recordLaunchAuthDiagnostic({
+            message: message || "The launch API rejected the stored session.",
+            status: "session_expired",
+          });
+        }
+        throw new LaunchApiAuthenticationError(
+          message || "Authentication required",
+        );
       }
       throw new Error(
         message || `Launch API request failed (${response.status})`,

@@ -246,7 +246,7 @@ function AuthCallbackPage(
           nextPath,
           status: "exchange_succeeded",
         });
-        setLaunchAuthToken(response.access_token);
+        setLaunchAuthToken(response.access_token, response.expires_in);
         if (!getLaunchAuthToken()) {
           throw new Error("Browser storage rejected the launch session token.");
         }
