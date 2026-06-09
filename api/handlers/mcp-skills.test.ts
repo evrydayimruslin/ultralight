@@ -156,8 +156,12 @@ function installMcpSkillHarness(): () => void {
       }]);
     }
 
-    if (url.pathname === '/rest/v1/skill_pull_receipts') {
-      return jsonResponse([{ id: 'receipt-1' }]);
+    if (url.pathname === '/rest/v1/rpc/record_skill_pull_receipt') {
+      return jsonResponse([{
+        receipt_id: 'receipt-1',
+        transfer_id: 'transfer-1',
+        waiver_event_id: null,
+      }]);
     }
 
     throw new Error(`Unexpected ${method} ${url.pathname}${url.search}`);

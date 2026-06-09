@@ -7,9 +7,27 @@
       ]
     },
     {
+      "file": "handlers/admin-cloud-usage-reconciliation.test.ts",
+      "files": [
+        "handlers/admin-cloud-usage-reconciliation.test.ts"
+      ]
+    },
+    {
       "file": "handlers/admin-flash-training-export.test.ts",
       "files": [
         "handlers/admin-flash-training-export.test.ts"
+      ]
+    },
+    {
+      "file": "handlers/app-referrals.test.ts",
+      "files": [
+        "handlers/app-referrals.test.ts"
+      ]
+    },
+    {
+      "file": "handlers/auth-referrals.test.ts",
+      "files": [
+        "handlers/auth-referrals.test.ts"
       ]
     },
     {
@@ -22,6 +40,67 @@
       "file": "handlers/cron.ts",
       "files": [
         "handlers/cron.ts"
+      ]
+    },
+    {
+      "file": "handlers/discover.test.ts",
+      "files": [
+        "handlers/discover.test.ts"
+      ]
+    },
+    {
+      "file": "handlers/fee-waivers.test.ts",
+      "files": [
+        "handlers/fee-waivers.test.ts"
+      ]
+    },
+    {
+      "file": "handlers/http-options.test.ts",
+      "files": [
+        "handlers/http-options.test.ts"
+      ]
+    },
+    {
+      "file": "handlers/launch.test.ts",
+      "files": [
+        "handlers/launch.test.ts"
+      ]
+    },
+    {
+      "file": "handlers/mcp-skills.test.ts",
+      "files": [
+        "handlers/mcp-skills.test.ts"
+      ]
+    },
+    {
+      "file": "handlers/platform-mcp-discovery.test.ts",
+      "files": [
+        "handlers/platform-mcp-discovery.test.ts"
+      ]
+    },
+    {
+      "file": "handlers/platform-mcp-docs.test.ts",
+      "files": [
+        "handlers/platform-mcp-docs.test.ts"
+      ]
+    },
+    {
+      "file": "handlers/platform-mcp-scaffold.test.ts",
+      "files": [
+        "handlers/platform-mcp-scaffold.test.ts"
+      ]
+    },
+    {
+      "exports": [
+        "executeDiscoverAppstore",
+        "executeScaffold"
+      ],
+      "file": "handlers/platform-mcp.ts"
+    },
+    {
+      "file": "handlers/publisher-publish-readiness.test.ts",
+      "files": [
+        "handlers/publisher-publish-readiness.test.ts"
       ]
     },
     {
@@ -48,15 +127,30 @@
       ]
     },
     {
-      "exports": [
-        "CANONICAL_BASE"
-      ],
-      "file": "lib/urls.ts"
-    },
-    {
       "file": "runtime/dynamic-executor.ts",
       "types": [
         "DynamicExecuteOptions"
+      ]
+    },
+    {
+      "file": "services/access-policy-runtime.ts",
+      "types": [
+        "RuntimeAccessPolicyApp",
+        "RuntimeAccessPolicyExecutionResult",
+        "RuntimeAccessPolicyExecutorOptions"
+      ]
+    },
+    {
+      "exports": [
+        "getStaticSubjectFreeQuotaCounterKey",
+        "getStaticSubjectFreeQuotaLimit",
+        "getStaticSubjectPriceLight"
+      ],
+      "file": "services/access-policy.ts",
+      "types": [
+        "AccessPolicyDecision",
+        "AccessPolicyDenyDecision",
+        "AccessPolicyEvaluationOptions"
       ]
     },
     {
@@ -66,12 +160,71 @@
         "CreateGapPayload",
         "FlashTrainingExportQuery",
         "FlashTrainingExportResponseFormat",
+        "GrantFeeWaiverCreditPayload",
         "RecordAssessmentPayload",
         "SetAppCategoryPayload",
         "SetAppFeaturedPayload",
         "TopUpBalancePayload",
         "UpdateBillingConfigPayload",
         "UpdateGapPayload"
+      ]
+    },
+    {
+      "exports": [
+        "AGENT_FUNCTION_PERMISSION_RPC_CODE",
+        "DEFAULT_AGENT_FUNCTION_POLICY",
+        "normalizeAgentFunctionPolicy",
+        "resolveAgentFunctionPermission"
+      ],
+      "file": "services/agent-function-permissions.ts",
+      "types": [
+        "AgentFunctionPermissionEnforcement",
+        "AgentFunctionPermissionEnforcementInput",
+        "AgentFunctionPermissionListInput",
+        "AgentFunctionPermissionResolution",
+        "AgentFunctionPermissionUpdateInput"
+      ]
+    },
+    {
+      "file": "services/agentic-interface-actions.ts",
+      "types": [
+        "AgenticInterfaceActionAudit",
+        "AgenticInterfaceActionDependencies",
+        "AgenticInterfaceActionRequest",
+        "AgenticInterfaceActionResult",
+        "AgenticInterfaceActionStatus"
+      ]
+    },
+    {
+      "file": "services/agentic-interface-data.ts",
+      "types": [
+        "AgenticInterfaceBindingData",
+        "AgenticInterfaceDataDependencies",
+        "AgenticInterfaceDataRequest",
+        "AgenticInterfaceDataResult"
+      ]
+    },
+    {
+      "file": "services/agentic-interface-planner.ts",
+      "types": [
+        "AgenticInterfacePlannerDependencies",
+        "AgenticInterfacePlannerInput",
+        "BuildAgenticInterfacePlanOptions"
+      ]
+    },
+    {
+      "file": "services/agentic-interface-storage.ts",
+      "types": [
+        "AgenticInterfaceStorageDependencies",
+        "AgenticInterfaceStorageInput",
+        "AgenticInterfaceSummary",
+        "StoredAgenticInterface"
+      ]
+    },
+    {
+      "file": "services/agentic-interface-validate.ts",
+      "types": [
+        "AgenticInterfaceVerifyOptions"
       ]
     },
     {
@@ -108,7 +261,8 @@
     {
       "exports": [
         "APP_ENTRY_FILES",
-        "resolveAppEnvVars"
+        "resolveAppEnvVars",
+        "resolveRoutineActorAppCallDependencies"
       ],
       "file": "services/app-runtime-resources.ts",
       "types": [
@@ -229,6 +383,19 @@
       ]
     },
     {
+      "file": "services/capability-suggestion-telemetry.ts",
+      "types": [
+        "CapabilityGapShortcomingInput",
+        "CapabilitySuggestionSetInput"
+      ]
+    },
+    {
+      "file": "services/capability-suggestion-validation.ts",
+      "types": [
+        "CapabilitySuggestionEventPayload"
+      ]
+    },
+    {
       "exports": [
         "CHAT_MIN_BALANCE_LIGHT"
       ],
@@ -251,8 +418,16 @@
       ]
     },
     {
+      "file": "services/cloud-usage-reconciliation.ts",
+      "types": [
+        "CloudUsageReconciliationOptions",
+        "CloudUsageReconciliationReport",
+        "ReleaseExpiredCloudUsageHoldsOptions"
+      ]
+    },
+    {
       "duplicates": [
-        "{\"0\":{\"col\":17,\"line\":208,\"name\":\"calculateCloudUsageLight\",\"pos\":4890},\"1\":{\"col\":14,\"line\":222,\"name\":\"calcCloudUsageLight\",\"pos\":5379}}"
+        "{\"0\":{\"col\":17,\"line\":216,\"name\":\"calculateCloudUsageLight\",\"pos\":5201},\"1\":{\"col\":14,\"line\":230,\"name\":\"calcCloudUsageLight\",\"pos\":5690}}"
       ],
       "file": "services/cloud-usage.ts",
       "types": [
@@ -278,6 +453,9 @@
       "file": "services/codecache.ts"
     },
     {
+      "exports": [
+        "buildContextSourceIndexForApp"
+      ],
       "file": "services/codemode-tools.ts",
       "types": [
         "JsonSchemaToolDescriptor"
@@ -289,8 +467,43 @@
       ],
       "file": "services/command-dashboard.ts",
       "types": [
-        "CommandDashboardSummary",
         "StoredCommandDashboardLayout"
+      ]
+    },
+    {
+      "exports": [
+        "getCommandDescriptorCacheStatsForTests"
+      ],
+      "file": "services/command-descriptor-cache.ts",
+      "types": [
+        "CommandDescriptorCacheEntry",
+        "CommandDescriptorCacheNamespace"
+      ]
+    },
+    {
+      "exports": [
+        "deriveInterfacePromptShape"
+      ],
+      "file": "services/command-interface-reply.ts",
+      "types": [
+        "InterfaceReplyResult",
+        "ProposeInterfaceReplyInput"
+      ]
+    },
+    {
+      "file": "services/command-next-steps.ts",
+      "types": [
+        "ProposeNextStepsInput"
+      ]
+    },
+    {
+      "exports": [
+        "suggestionSeedToTelemetryInput"
+      ],
+      "file": "services/command-suggestions.ts",
+      "types": [
+        "CommandSuggestionSetResult",
+        "RecordCommandSuggestionSetInput"
       ]
     },
     {
@@ -307,7 +520,8 @@
     },
     {
       "exports": [
-        "isCorsOriginAllowed"
+        "isCorsOriginAllowed",
+        "isRouteCorsOriginAllowed"
       ],
       "file": "services/cors.ts",
       "types": [
@@ -400,6 +614,8 @@
       ],
       "file": "services/docgen.ts",
       "types": [
+        "DocgenHttpRoute",
+        "GenerateSkillsMdOptions",
         "GenerationError",
         "GenerationResult",
         "ValidationError",
@@ -414,9 +630,22 @@
     },
     {
       "exports": [
+        "getEmbeddingLightRatePer1kTokens"
+      ],
+      "file": "services/embedding-billing.ts",
+      "types": [
+        "RecordEmbeddingChargeInput"
+      ]
+    },
+    {
+      "exports": [
+        "processToolSemanticEmbeddingBackfill",
         "startEmbeddingProcessorJob"
       ],
-      "file": "services/embedding-processor.ts"
+      "file": "services/embedding-processor.ts",
+      "types": [
+        "ToolSemanticBackfillResult"
+      ]
     },
     {
       "exports": [
@@ -425,7 +654,11 @@
       "file": "services/embedding.ts",
       "types": [
         "EmbeddingConfig",
-        "EmbeddingResult"
+        "EmbeddingResult",
+        "GenerateToolSemanticEmbeddingsParams",
+        "ToolSemanticEmbeddingGenerationResult",
+        "ToolSemanticEmbeddingSubject",
+        "ToolSemanticEmbeddingSubjectResult"
       ]
     },
     {
@@ -463,9 +696,22 @@
       ]
     },
     {
+      "file": "services/fee-waivers.ts",
+      "types": [
+        "FeeWaiverCreditAccount",
+        "FeeWaiverCreditLedgerEntry",
+        "FeeWaiverCreditSummary",
+        "FeeWaiverLeaderboard",
+        "FeeWaiverLeaderboardEntry",
+        "FeeWaiverLeaderboardOptions",
+        "FeeWaiverLeaderboardPeriod",
+        "GrantPublisherFeeWaiverCreditInput",
+        "GrantPublisherFeeWaiverCreditResult"
+      ]
+    },
+    {
       "file": "services/flash-broker.ts",
       "types": [
-        "FlashBrokerTelemetryContext",
         "FlashCallOptions",
         "FlashCallTelemetryContext",
         "FlashEvent",
@@ -571,6 +817,32 @@
       ]
     },
     {
+      "exports": [
+        "assertGpuSupportEnabled",
+        "GPU_SUPPORT_FLAG_ENV"
+      ],
+      "file": "services/gpu/feature-flag.ts"
+    },
+    {
+      "file": "services/gpu/image-builder.test.ts",
+      "files": [
+        "services/gpu/image-builder.test.ts"
+      ]
+    },
+    {
+      "exports": [
+        "generateGpuImageDockerfile",
+        "resolveBaseImage"
+      ],
+      "file": "services/gpu/image-builder.ts",
+      "types": [
+        "DispatchGpuImageBuildParams",
+        "DispatchGpuImageBuildResult",
+        "GpuImageBuildConfig",
+        "GpuImageBuildReadiness"
+      ]
+    },
+    {
       "file": "services/gpu/index.ts",
       "files": [
         "services/gpu/index.ts"
@@ -651,7 +923,7 @@
     },
     {
       "duplicates": [
-        "{\"0\":{\"col\":23,\"line\":150,\"name\":\"processHostingBilling\",\"pos\":4264},\"1\":{\"col\":14,\"line\":417,\"name\":\"processStorageBilling\",\"pos\":12257}}"
+        "{\"0\":{\"col\":23,\"line\":151,\"name\":\"processHostingBilling\",\"pos\":4337},\"1\":{\"col\":14,\"line\":426,\"name\":\"processStorageBilling\",\"pos\":12565}}"
       ],
       "exports": [
         "processStorageBilling",
@@ -661,6 +933,38 @@
       "types": [
         "BillingResult",
         "StorageAtRestCharge"
+      ]
+    },
+    {
+      "file": "services/http-execution-policy.ts",
+      "types": [
+        "HttpCallerAuthOptions",
+        "HttpInvalidAuthPolicy",
+        "HttpRouteExecutionPolicyIssue"
+      ]
+    },
+    {
+      "file": "services/http-policy.ts",
+      "types": [
+        "HttpPolicyAppLike"
+      ]
+    },
+    {
+      "exports": [
+        "getHttpClientIpForRateLimit"
+      ],
+      "file": "services/http-rate-limit.ts",
+      "types": [
+        "CheckHttpRouteRateLimitParams",
+        "HttpRateLimitResult"
+      ]
+    },
+    {
+      "file": "services/http-route-catalog.ts",
+      "types": [
+        "BuildHttpRouteCatalogOptions",
+        "HttpRouteCatalogEntry",
+        "HttpRouteCatalogIssue"
       ]
     },
     {
@@ -676,6 +980,10 @@
       ]
     },
     {
+      "exports": [
+        "getInferenceRouteCapabilities",
+        "routeSupportsRealtime"
+      ],
       "file": "services/inference-route.ts",
       "types": [
         "InferenceRouteErrorCode",
@@ -883,9 +1191,6 @@
       ]
     },
     {
-      "exports": [
-        "validateBillingAddressValue"
-      ],
       "file": "services/platform-request-validation.ts",
       "types": [
         "UploadOptionInput",
@@ -928,6 +1233,15 @@
       ]
     },
     {
+      "file": "services/referrals.ts",
+      "types": [
+        "ReferralClaimResult",
+        "ReferralLandingMetadata",
+        "ReferralLandingResult",
+        "ReferralTransferResult"
+      ]
+    },
+    {
       "file": "services/request-auth.ts",
       "types": [
         "ResolvedPendingPermissionRow",
@@ -936,8 +1250,7 @@
     },
     {
       "exports": [
-        "ANONYMOUS_USER_ID",
-        "callerUsesApiToken"
+        "ANONYMOUS_USER_ID"
       ],
       "file": "services/request-caller-context.ts"
     },
@@ -948,11 +1261,84 @@
       "file": "services/request-validation.ts"
     },
     {
+      "exports": [
+        "routineActorTokenInputFromStoredRun"
+      ],
+      "file": "services/routine-auth.ts",
+      "types": [
+        "CreatedRoutineActorToken",
+        "CreateRoutineActorTokenInput",
+        "RoutineActorCapabilityInput",
+        "RoutineActorRoutineInput",
+        "RoutineActorStoredRoutineInput",
+        "RoutineActorStoredRunInput",
+        "RoutineActorTokenCryptoOptions",
+        "VerifiedRoutineActorToken"
+      ]
+    },
+    {
+      "file": "services/routine-executor.ts",
+      "types": [
+        "RoutineExecutorOptions",
+        "RoutineExecutorSummary"
+      ]
+    },
+    {
+      "file": "services/routine-monitoring.ts",
+      "types": [
+        "RoutineMonitorAction",
+        "RoutineMonitorDetailResponse",
+        "RoutineMonitorItem",
+        "RoutineMonitorOptions",
+        "RoutineMonitorResponse",
+        "RoutineMonitorSummary"
+      ]
+    },
+    {
+      "exports": [
+        "ROUTINE_PLATFORM_ACTIONS",
+        "ROUTINE_PLATFORM_FORBIDDEN",
+        "ROUTINE_PLATFORM_INVALID_PARAMS",
+        "ROUTINE_PLATFORM_NOT_FOUND"
+      ],
+      "file": "services/routine-platform.ts",
+      "types": [
+        "RoutinePlatformAction",
+        "RoutineTemplateSummary"
+      ]
+    },
+    {
+      "file": "services/routine-rollups.ts",
+      "types": [
+        "RoutineCallContributionInput"
+      ]
+    },
+    {
+      "file": "services/routines.ts",
+      "types": [
+        "NormalizedRoutineCapabilityInput",
+        "NormalizedRoutineCreateInput",
+        "NormalizedRoutineDashboardBindingInput",
+        "RoutineRunStepRow",
+        "RoutineRunStepStatus"
+      ]
+    },
+    {
       "file": "services/runtime-ai.ts",
       "types": [
         "RuntimeAIContext",
         "RuntimeAIService",
         "RuntimeAIUser"
+      ]
+    },
+    {
+      "exports": [
+        "SALES_TAX_BALANCE_TRIGGER_RATIO"
+      ],
+      "file": "services/sales-tax.ts",
+      "types": [
+        "SalesTaxAccrualState",
+        "SalesTaxChargeDecision"
       ]
     },
     {
@@ -972,9 +1358,19 @@
       ]
     },
     {
+      "file": "services/skill-pulls.ts",
+      "types": [
+        "AppSkillSummary",
+        "PullSkillContextParams",
+        "SkillPullAppRow",
+        "SkillPullPricing",
+        "SkillPullReceipt",
+        "SkillPullResult"
+      ]
+    },
+    {
       "exports": [
-        "reclaimVersionStorage",
-        "setAppStorageBytes"
+        "reclaimVersionStorage"
       ],
       "file": "services/storage-quota.ts",
       "types": [
@@ -1018,6 +1414,21 @@
       ]
     },
     {
+      "file": "services/stripe-launch-wallet-funding.ts",
+      "types": [
+        "LaunchWalletPaymentIntentParams",
+        "LaunchWalletPaymentIntentResult"
+      ]
+    },
+    {
+      "exports": [
+        "LAUNCH_WALLET_LIGHT_PER_DOLLAR",
+        "LAUNCH_WALLET_MAX_TOPUP_LIGHT",
+        "LAUNCH_WALLET_MIN_TOPUP_LIGHT"
+      ],
+      "file": "services/stripe-processing-fees.ts"
+    },
+    {
       "file": "services/stripe-wallet-funding.ts",
       "types": [
         "WalletExpressPaymentIntentParams",
@@ -1040,9 +1451,44 @@
       ]
     },
     {
+      "file": "services/suggestion-acceptance.ts",
+      "types": [
+        "AcceptSuggestionInput"
+      ]
+    },
+    {
+      "file": "services/suggestion-preview.ts",
+      "types": [
+        "BuildSuggestionPreviewBatchInput",
+        "BuildSuggestionPreviewInput",
+        "SuggestionPreviewDependencies"
+      ]
+    },
+    {
+      "exports": [
+        "SYSTEM_AGENT_DESCRIPTORS"
+      ],
+      "file": "services/system-agent-descriptors.ts",
+      "types": [
+        "SystemAgentDescriptor"
+      ]
+    },
+    {
       "file": "services/tcp-protocols.ts",
       "types": [
         "ParsedEmail"
+      ]
+    },
+    {
+      "exports": [
+        "PublishReadinessError"
+      ],
+      "file": "services/tier-enforcement.ts",
+      "types": [
+        "PublishReadinessBlock",
+        "PublishReadinessBlockReason",
+        "PublishReadinessErrorPayload",
+        "PublishReadinessResult"
       ]
     },
     {
@@ -1051,7 +1497,6 @@
       ],
       "file": "services/tokens.ts",
       "types": [
-        "ApiToken",
         "ApiTokenCompatibilityState",
         "ApiTokenVerificationOutcome",
         "CreateTokenResult",
@@ -1076,6 +1521,12 @@
       "types": [
         "ManifestDiff",
         "TrustArtifactFile"
+      ]
+    },
+    {
+      "file": "services/turn-cancel.ts",
+      "types": [
+        "TurnCancelMutationResult"
       ]
     },
     {
