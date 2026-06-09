@@ -2264,7 +2264,7 @@ function LaunchWidgetFrame({
         sendWidgetDocument(iframeRef.current, surfaceId, documentHtml, sentDocumentRef)}
       ref={iframeRef}
       sandbox="allow-scripts"
-      src="/widget-frame.html"
+      src="/__widget-frame/"
       style={{ height }}
       title={`${tool.title} ${widget.label} widget`}
     />
