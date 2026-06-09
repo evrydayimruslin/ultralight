@@ -24,7 +24,9 @@ import {
 import { LaunchShell } from "./components/launch-chrome";
 import {
   exchangeLaunchBridgeToken,
+  getLaunchAuthToken,
   normalizeLocalPath,
+  recordLaunchAuthDiagnostic,
   setLaunchAuthToken,
 } from "./lib/auth";
 
@@ -124,22 +126,64 @@ function AuthCallbackPage({ location }: { location: LocationState }): ReactEleme
     const hash = new URLSearchParams(window.location.hash.replace(/^#/u, ""));
     const query = new URLSearchParams(location.search);
     const bridgeToken = hash.get("bridge_token");
+    const expiresIn = hash.get("expires_in");
     const nextPath = normalizeLocalPath(query.get("next"));
+    recordLaunchAuthDiagnostic({
+      bridgeTokenPresent: Boolean(bridgeToken),
+      expiresIn,
+      nextPath,
+      status: "callback_loaded",
+    });
 
     if (!bridgeToken) {
+      recordLaunchAuthDiagnostic({
+        bridgeTokenPresent: false,
+        message: "The launch callback URL did not contain a bridge token.",
+        nextPath,
+        status: "callback_missing_bridge",
+      });
       setMessage("Sign-in callback is missing a session token.");
       return;
     }
 
+    recordLaunchAuthDiagnostic({
+      bridgeTokenPresent: true,
+      expiresIn,
+      nextPath,
+      status: "exchange_started",
+    });
     exchangeLaunchBridgeToken(bridgeToken)
       .then((response) => {
         if (cancelled) return;
+        recordLaunchAuthDiagnostic({
+          bridgeTokenPresent: true,
+          expiresIn: String(response.expires_in ?? expiresIn ?? ""),
+          nextPath,
+          status: "exchange_succeeded",
+        });
         setLaunchAuthToken(response.access_token);
+        if (!getLaunchAuthToken()) {
+          throw new Error("Browser storage rejected the launch session token.");
+        }
+        recordLaunchAuthDiagnostic({
+          bridgeTokenPresent: true,
+          expiresIn: String(response.expires_in ?? expiresIn ?? ""),
+          nextPath,
+          status: "token_stored",
+        });
         window.location.replace(nextPath);
       })
       .catch((err) => {
         if (cancelled) return;
-        setMessage(err instanceof Error ? err.message : String(err));
+        const message = err instanceof Error ? err.message : String(err);
+        recordLaunchAuthDiagnostic({
+          bridgeTokenPresent: true,
+          expiresIn,
+          message,
+          nextPath,
+          status: "exchange_failed",
+        });
+        setMessage(message);
       });
 
     return () => {

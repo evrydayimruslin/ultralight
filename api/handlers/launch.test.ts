@@ -32,8 +32,9 @@ async function withLaunchEnv<T>(
   }
 }
 
-function jsonResponse(value: unknown): Response {
+function jsonResponse(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), {
+    status,
     headers: { 'Content-Type': 'application/json' },
   });
 }
@@ -567,6 +568,61 @@ Deno.test('launch facade: widget detail exposes render surface metadata', async 
             created_at: '2026-06-01T00:00:00.000Z',
           },
         ]);
+      }
+      if (url.startsWith('https://supabase.test/rest/v1/users?')) {
+        return jsonResponse([
+          {
+            id: 'owner-1',
+            display_name: 'Ada',
+            profile_slug: 'ada',
+            avatar_url: null,
+          },
+        ]);
+      }
+      return jsonResponse([]);
+    },
+  );
+});
+
+Deno.test('launch facade: public slug lookups avoid uuid id comparisons', async () => {
+  await withLaunchEnv(
+    async () => {
+      const endpoints = [
+        '/api/launch/tools/deploy-helper',
+        '/api/launch/tools/deploy-helper/widgets',
+        '/api/launch/tools/deploy-helper/widgets/ops',
+        '/api/launch/tools/deploy-helper/functions',
+        '/api/launch/tools/deploy-helper/skills',
+      ];
+
+      for (const endpoint of endpoints) {
+        const response = await handleLaunch(
+          new Request(`https://ultralight.test${endpoint}`),
+        );
+        const body = await response.json() as {
+          tool?: { slug?: string };
+          error?: string;
+        };
+
+        assertEquals(response.status, 200, `${endpoint}: ${body.error || ''}`);
+        assertEquals(body.tool?.slug, 'deploy-helper');
+      }
+    },
+    async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.startsWith('https://supabase.test/rest/v1/apps?')) {
+        const parsed = new URL(url);
+        const orParam = parsed.searchParams.get('or') || '';
+        if (orParam.includes('id.eq.deploy-helper')) {
+          return jsonResponse(
+            { error: 'invalid input syntax for type uuid: "deploy-helper"' },
+            400,
+          );
+        }
+        if (parsed.searchParams.get('slug') === 'eq.deploy-helper') {
+          return jsonResponse([launchPermissionTestApp()]);
+        }
+        return jsonResponse([]);
       }
       if (url.startsWith('https://supabase.test/rest/v1/users?')) {
         return jsonResponse([

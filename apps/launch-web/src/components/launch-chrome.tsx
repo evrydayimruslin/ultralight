@@ -3,6 +3,7 @@ import type { ReactElement, ReactNode } from "react";
 import {
   buildLaunchSignInUrl,
   hasLaunchAuthToken,
+  recordLaunchAuthDiagnostic,
   signOutLaunch,
 } from "../lib/auth";
 import type { LaunchRouteDefinition, LaunchRouteKey } from "../lib/routes";
@@ -83,6 +84,10 @@ export function LaunchShell({
   const signedIn = hasLaunchAuthToken();
   const handleAuthClick = () => {
     if (!signedIn) {
+      recordLaunchAuthDiagnostic({
+        nextPath: `${window.location.pathname}${window.location.search}`,
+        status: "redirecting",
+      });
       window.location.href = buildLaunchSignInUrl();
       return;
     }

@@ -25,7 +25,7 @@ import {
   type LaunchWalletTransaction,
 } from "../../../../shared/contracts/launch.ts";
 import type { LaunchPageProps } from "../App";
-import { signOutLaunch } from "../lib/auth";
+import { getLaunchAuthDiagnostic, signOutLaunch } from "../lib/auth";
 import { launchApi } from "../lib/api";
 import {
   Avatar,
@@ -835,8 +835,11 @@ function liveInstallTargets(
   }));
 }
 
-function liveApiKeyFixtures(keys?: LaunchApiKeySummary[]): ApiKeyFixture[] {
-  if (!keys || keys.length === 0) return apiKeys;
+function liveApiKeyFixtures(
+  keys?: LaunchApiKeySummary[],
+  useFallback = true,
+): ApiKeyFixture[] {
+  if (!keys || keys.length === 0) return useFallback ? apiKeys : [];
   return keys.map((key) => ({
     created: shortDate(key.createdAt),
     id: key.id,
@@ -951,9 +954,18 @@ function ApiNotice({
     return <div className="api-notice">Loading live {noun}...</div>;
   }
   if (live.status === "error") {
+    const diagnostic = getLaunchAuthDiagnostic();
     return (
       <div className="api-notice warning">
-        Showing design fallback. {live.error}
+        Live {noun} unavailable. {live.error}
+        {diagnostic
+          ? (
+            <small>
+              Last sign-in: {diagnostic.status}
+              {diagnostic.message ? ` (${diagnostic.message})` : ""}
+            </small>
+          )
+          : null}
       </div>
     );
   }
@@ -2122,12 +2134,17 @@ export function LibraryFoundationPage(
   { live, location, navigate }: LaunchPageProps,
 ): ReactElement {
   const [view, setView] = useState<LibraryView>(libraryViewFromSearch());
+  const useFixtureFallback = live.status !== "ready" && live.status !== "error";
   const installedTools = live.data.library?.installed?.length
     ? live.data.library.installed.map((tool) => liveToolFixture(tool))
-    : installedLibrarySlugs.map((slug) => toolDetails[slug]).filter(Boolean);
+    : useFixtureFallback
+    ? installedLibrarySlugs.map((slug) => toolDetails[slug]).filter(Boolean)
+    : [];
   const ownedTools = live.data.library?.owned?.length
     ? live.data.library.owned.map((tool) => liveToolFixture(tool))
-    : ownedLibrarySlugs.map((slug) => toolDetails[slug]).filter(Boolean);
+    : useFixtureFallback
+    ? ownedLibrarySlugs.map((slug) => toolDetails[slug]).filter(Boolean)
+    : [];
   const count = view === "installed"
     ? installedTools.length
     : ownedTools.length;
@@ -2174,27 +2191,42 @@ export function LibraryFoundationPage(
       {view === "installed"
         ? (
           <div className="library-installed-grid">
-            {installedTools.map((tool) => (
-              <button
-                className="tool-card-button"
-                key={tool.id}
-                onClick={() => navigate(`/tools/${tool.slug}`)}
-                type="button"
-              >
-                <StoreToolCard tool={tool} />
-              </button>
-            ))}
+            {installedTools.length > 0
+              ? installedTools.map((tool) => (
+                <button
+                  className="tool-card-button"
+                  key={tool.id}
+                  onClick={() => navigate(`/tools/${tool.slug}`)}
+                  type="button"
+                >
+                  <StoreToolCard tool={tool} />
+                </button>
+              ))
+              : (
+                <EmptyState icon="key" title="Sign in to load your library">
+                  The live library endpoint needs an account session before it
+                  can show installed tools.
+                </EmptyState>
+              )}
           </div>
         )
         : (
           <div className="owned-tool-list">
-            {ownedTools.map((tool) => (
-              <OwnedToolCard key={tool.id} navigate={navigate} tool={tool} />
-            ))}
+            {ownedTools.length > 0
+              ? ownedTools.map((tool) => (
+                <OwnedToolCard key={tool.id} navigate={navigate} tool={tool} />
+              ))
+              : (
+                <EmptyState icon="key" title="Sign in to load owned tools">
+                  The live library endpoint needs an account session before it
+                  can show tools you own.
+                </EmptyState>
+              )}
           </div>
         )}
 
-      {installedTools.length === 0 && ownedTools.length === 0
+      {useFixtureFallback && installedTools.length === 0 &&
+          ownedTools.length === 0
         ? (
           <div className="library-empty-grid">
             <LibraryEmptyCard
@@ -2794,6 +2826,9 @@ export function WalletFoundationPage(
 export function SettingsFoundationPage(
   { live, navigate }: LaunchPageProps,
 ): ReactElement {
+  const canManageKeys = live.status !== "error";
+  const useKeyFixtureFallback = live.status !== "ready" &&
+    live.status !== "error";
   const [newKeyVisible, setNewKeyVisible] = useState(false);
   const [newToolPermission, setNewToolPermission] = useState<
     "always" | "ask" | "never"
@@ -2802,12 +2837,14 @@ export function SettingsFoundationPage(
     "always" | "ask" | "never"
   >("ask");
   const [visibleKeys, setVisibleKeys] = useState<ApiKeyFixture[]>(() =>
-    liveApiKeyFixtures(live.data.apiKeys?.apiKeys)
+    liveApiKeyFixtures(live.data.apiKeys?.apiKeys, useKeyFixtureFallback)
   );
 
   useEffect(() => {
-    setVisibleKeys(liveApiKeyFixtures(live.data.apiKeys?.apiKeys));
-  }, [live.data.apiKeys]);
+    setVisibleKeys(
+      liveApiKeyFixtures(live.data.apiKeys?.apiKeys, useKeyFixtureFallback),
+    );
+  }, [live.data.apiKeys, useKeyFixtureFallback]);
 
   const revokeKey = async (apiKey: ApiKeyFixture) => {
     if (!apiKey.id) return;
@@ -2826,55 +2863,79 @@ export function SettingsFoundationPage(
       <div className="profile-strip">
         <Avatar color="#0a0a0a" name="@you" />
         <div>
-          <h1>Ada Lovelace</h1>
-          <p>ada@analytical.engine · @you</p>
+          <h1>{canManageKeys ? "Account" : "Not signed in"}</h1>
+          <p>
+            {canManageKeys
+              ? "Launch account session"
+              : "Complete Google sign-in to manage keys"}
+          </p>
         </div>
-        <Button
-          onClick={() => {
-            void signOutLaunch().finally(() => {
-              window.location.href = "/";
-            });
-          }}
-          size="sm"
-          variant="secondary"
-        >
-          Sign out
-        </Button>
+        {canManageKeys
+          ? (
+            <Button
+              onClick={() => {
+                void signOutLaunch().finally(() => {
+                  window.location.href = "/";
+                });
+              }}
+              size="sm"
+              variant="secondary"
+            >
+              Sign out
+            </Button>
+          )
+          : null}
       </div>
 
       <SettingsCard
-        action={
-          <Button onClick={() => setNewKeyVisible(true)} size="sm">
-            Create key
-          </Button>
-        }
+        action={canManageKeys
+          ? (
+            <Button onClick={() => setNewKeyVisible(true)} size="sm">
+              Create key
+            </Button>
+          )
+          : null}
         subtitle="Tokens your agents use to call Ultralight. New keys reveal once."
         title="API keys"
       >
         <div className="api-key-primary">
           <Icon name="key" />
-          <Mono>{apiKeyMask}</Mono>
-          <Button size="sm" variant="secondary">Copy</Button>
-          <Button
-            onClick={() => setNewKeyVisible(true)}
-            size="sm"
-            variant="secondary"
-          >
-            Rotate & copy
-          </Button>
+          <Mono>{canManageKeys ? apiKeyMask : "No account session"}</Mono>
+          {canManageKeys
+            ? (
+              <>
+                <Button size="sm" variant="secondary">Copy</Button>
+                <Button
+                  onClick={() => setNewKeyVisible(true)}
+                  size="sm"
+                  variant="secondary"
+                >
+                  Rotate & copy
+                </Button>
+              </>
+            )
+            : null}
         </div>
         <p className="settings-help">
-          Rotating issues a new key and revokes the old one. Connected agents
-          must be updated.
+          {canManageKeys
+            ? "Rotating issues a new key and revokes the old one. Connected agents must be updated."
+            : "The live settings endpoint needs an account session before it can show or create API keys."}
         </p>
         <div className="api-key-list">
-          {visibleKeys.map((key) => (
-            <ApiKeyRow
-              key={key.id || key.prefix}
-              apiKey={key}
-              onRevoke={revokeKey}
-            />
-          ))}
+          {visibleKeys.length > 0
+            ? visibleKeys.map((key) => (
+              <ApiKeyRow
+                key={key.id || key.prefix}
+                apiKey={key}
+                onRevoke={revokeKey}
+              />
+            ))
+            : (
+              <EmptyState icon="key" title="Sign in to load API keys">
+                Once the launch session is active, your real agent keys will
+                appear here.
+              </EmptyState>
+            )}
         </div>
       </SettingsCard>
 

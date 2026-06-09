@@ -3963,15 +3963,24 @@ async function fetchToolByLocator(
 ): Promise<LaunchAppRow | null> {
   const db = getDbConfig();
   const params: Record<string, string> = {
-    or: `(id.eq.${locator},slug.eq.${locator})`,
     deleted_at: "is.null",
     select: APP_SELECT,
     limit: "1",
   };
+  if (isUuid(locator)) {
+    params.or = `(id.eq.${locator},slug.eq.${locator})`;
+  } else {
+    params.slug = `eq.${locator}`;
+  }
   if (options.publicOnly) params.visibility = "in.(public,unlisted)";
   if (options.ownerId) params.owner_id = `eq.${options.ownerId}`;
   const rows = await dbGet<LaunchAppRow>(db, "apps", params);
   return rows[0] || null;
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    .test(value);
 }
 
 async function resolvePublicLaunchTool(

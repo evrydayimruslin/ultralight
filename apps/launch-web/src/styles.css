@@ -184,6 +184,12 @@ button {
   color: var(--ul-amber-deep);
 }
 
+.api-notice small {
+  display: block;
+  margin-top: 4px;
+  color: inherit;
+}
+
 .page-hero {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

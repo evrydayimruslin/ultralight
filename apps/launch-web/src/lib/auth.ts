@@ -2,6 +2,25 @@ const launchApiBaseUrl =
   import.meta.env.VITE_LAUNCH_API_BASE_URL?.trim().replace(/\/$/u, "") || "";
 
 export const LAUNCH_AUTH_TOKEN_KEY = "ultralight.launch.authToken";
+export const LAUNCH_AUTH_DIAGNOSTIC_KEY = "ultralight.launch.authDiagnostic";
+
+export type LaunchAuthDiagnosticStatus =
+  | "redirecting"
+  | "callback_loaded"
+  | "callback_missing_bridge"
+  | "exchange_started"
+  | "exchange_succeeded"
+  | "token_stored"
+  | "exchange_failed";
+
+export interface LaunchAuthDiagnostic {
+  at: string;
+  bridgeTokenPresent?: boolean;
+  expiresIn?: string | null;
+  message?: string;
+  nextPath?: string;
+  status: LaunchAuthDiagnosticStatus;
+}
 
 export interface LaunchAuthExchangeResponse {
   access_token: string;
@@ -28,6 +47,30 @@ export function setLaunchAuthToken(token: string): void {
 
 export function clearLaunchAuthToken(): void {
   window.localStorage.removeItem(LAUNCH_AUTH_TOKEN_KEY);
+}
+
+export function getLaunchAuthDiagnostic(): LaunchAuthDiagnostic | null {
+  try {
+    const raw = window.localStorage.getItem(LAUNCH_AUTH_DIAGNOSTIC_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as LaunchAuthDiagnostic;
+    return parsed && typeof parsed.status === "string" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function recordLaunchAuthDiagnostic(
+  diagnostic: Omit<LaunchAuthDiagnostic, "at">,
+): void {
+  try {
+    window.localStorage.setItem(
+      LAUNCH_AUTH_DIAGNOSTIC_KEY,
+      JSON.stringify({ ...diagnostic, at: new Date().toISOString() }),
+    );
+  } catch {
+    // Diagnostics are best-effort and should never block sign-in.
+  }
 }
 
 export function buildLaunchSignInUrl(nextPath = currentLaunchPath()): string {
