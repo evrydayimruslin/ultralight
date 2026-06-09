@@ -1,15 +1,21 @@
-import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
+import {
+  type ReactElement,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 import {
   accountRoutes,
-  primaryRoutes,
-  resolveLaunchRoute,
   type LaunchRouteKey,
+  primaryRoutes,
   type ResolvedLaunchRoute,
+  resolveLaunchRoute,
 } from "./lib/routes";
 import {
-  useLaunchRouteLiveData,
   type LaunchRouteLiveState,
+  useLaunchRouteLiveData,
 } from "./lib/live-data";
 import {
   AdminFoundationPage,
@@ -81,6 +87,18 @@ export function App(): ReactElement {
     [location.pathname],
   );
   const live = useLaunchRouteLiveData(location, route);
+  const providerCodeMisrouted = route.definition.key !== "authCallback" &&
+    new URLSearchParams(location.search).has("code");
+
+  useEffect(() => {
+    if (!providerCodeMisrouted) return;
+    recordLaunchAuthDiagnostic({
+      message:
+        "Supabase returned an OAuth authorization code to the launch web origin instead of the API callback.",
+      nextPath: location.pathname,
+      status: "provider_code_misrouted",
+    });
+  }, [location.pathname, providerCodeMisrouted]);
 
   return (
     <LaunchShell
@@ -90,35 +108,102 @@ export function App(): ReactElement {
       primaryRoutes={primaryRoutes()}
       title={routeTitles[route.definition.key]}
     >
-      <RouteSwitch live={live} location={location} route={route} navigate={navigate} />
+      {providerCodeMisrouted ? <MisroutedAuthCallbackPage /> : (
+        <RouteSwitch
+          live={live}
+          location={location}
+          route={route}
+          navigate={navigate}
+        />
+      )}
     </LaunchShell>
   );
 }
 
-function RouteSwitch({ live, location, route, navigate }: LaunchPageProps): ReactElement {
+function RouteSwitch(
+  { live, location, route, navigate }: LaunchPageProps,
+): ReactElement {
   switch (route.definition.key) {
     case "home":
-      return <HomeFoundationPage live={live} location={location} route={route} navigate={navigate} />;
+      return (
+        <HomeFoundationPage
+          live={live}
+          location={location}
+          route={route}
+          navigate={navigate}
+        />
+      );
     case "install":
-      return <InstallFoundationPage live={live} location={location} route={route} navigate={navigate} />;
+      return (
+        <InstallFoundationPage
+          live={live}
+          location={location}
+          route={route}
+          navigate={navigate}
+        />
+      );
     case "library":
-      return <LibraryFoundationPage live={live} location={location} route={route} navigate={navigate} />;
+      return (
+        <LibraryFoundationPage
+          live={live}
+          location={location}
+          route={route}
+          navigate={navigate}
+        />
+      );
     case "store":
-      return <StoreFoundationPage live={live} location={location} route={route} navigate={navigate} />;
+      return (
+        <StoreFoundationPage
+          live={live}
+          location={location}
+          route={route}
+          navigate={navigate}
+        />
+      );
     case "tool":
-      return <ToolFoundationPage live={live} location={location} route={route} navigate={navigate} />;
+      return (
+        <ToolFoundationPage
+          live={live}
+          location={location}
+          route={route}
+          navigate={navigate}
+        />
+      );
     case "wallet":
-      return <WalletFoundationPage live={live} location={location} route={route} navigate={navigate} />;
+      return (
+        <WalletFoundationPage
+          live={live}
+          location={location}
+          route={route}
+          navigate={navigate}
+        />
+      );
     case "settings":
-      return <SettingsFoundationPage live={live} location={location} route={route} navigate={navigate} />;
+      return (
+        <SettingsFoundationPage
+          live={live}
+          location={location}
+          route={route}
+          navigate={navigate}
+        />
+      );
     case "adminTool":
-      return <AdminFoundationPage live={live} location={location} route={route} navigate={navigate} />;
+      return (
+        <AdminFoundationPage
+          live={live}
+          location={location}
+          route={route}
+          navigate={navigate}
+        />
+      );
     case "authCallback":
       return <AuthCallbackPage location={location} />;
   }
 }
 
-function AuthCallbackPage({ location }: { location: LocationState }): ReactElement {
+function AuthCallbackPage(
+  { location }: { location: LocationState },
+): ReactElement {
   const [message, setMessage] = useState("Finishing sign in...");
 
   useEffect(() => {
@@ -196,6 +281,21 @@ function AuthCallbackPage({ location }: { location: LocationState }): ReactEleme
       <div className="auth-callback-panel">
         <p className="section-label">Google sign in</p>
         <h1>{message}</h1>
+      </div>
+    </div>
+  );
+}
+
+function MisroutedAuthCallbackPage(): ReactElement {
+  return (
+    <div className="launch-page-narrow auth-callback-page">
+      <div className="auth-callback-panel">
+        <p className="section-label">Google sign in</p>
+        <h1>Sign-in callback landed on the web app.</h1>
+        <p>
+          The account provider returned an OAuth code here instead of sending it
+          through the Ultralight API callback, so no launch session was created.
+        </p>
       </div>
     </div>
   );

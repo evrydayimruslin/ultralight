@@ -21,21 +21,39 @@ Deno.test("auth session bootstrap claims pending referral visitor landings", asy
     SUPABASE_ANON_KEY: "anon-key",
   } as typeof globalThis.__env;
 
-  globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
+  globalThis.fetch = async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ) => {
     const url = input instanceof Request ? input.url : String(input);
     const method = init?.method || "GET";
-    const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+    const body = init?.body
+      ? JSON.parse(String(init.body)) as Record<string, unknown>
+      : undefined;
 
     if (method === "GET" && url === "https://supabase.test/auth/v1/user") {
-      return jsonResponse({ id: "user-1", email: "user@example.com", user_metadata: {} });
+      return jsonResponse({
+        id: "user-1",
+        email: "user@example.com",
+        user_metadata: {},
+      });
     }
-    if (method === "GET" && url.startsWith("https://supabase.test/rest/v1/users?id=eq.user-1")) {
+    if (
+      method === "GET" &&
+      url.startsWith("https://supabase.test/rest/v1/users?id=eq.user-1")
+    ) {
       return jsonResponse([{ id: "user-1" }]);
     }
-    if (method === "GET" && url.startsWith("https://supabase.test/rest/v1/pending_permissions")) {
+    if (
+      method === "GET" &&
+      url.startsWith("https://supabase.test/rest/v1/pending_permissions")
+    ) {
       return jsonResponse([]);
     }
-    if (method === "GET" && url.includes("/publisher_referral_landings?anonymous_visitor_id=")) {
+    if (
+      method === "GET" &&
+      url.includes("/publisher_referral_landings?anonymous_visitor_id=")
+    ) {
       return jsonResponse([{
         id: "landing-1",
         referral_link_id: "link-1",
@@ -52,23 +70,33 @@ Deno.test("auth session bootstrap claims pending referral visitor landings", asy
     }
     if (method === "POST" && url.endsWith("/publisher_fee_waiver_grants")) {
       grantPosts.push(body || {});
-      return jsonResponse([{ id: "grant-1", starts_at: body?.starts_at, expires_at: body?.expires_at }]);
+      return jsonResponse([{
+        id: "grant-1",
+        starts_at: body?.starts_at,
+        expires_at: body?.expires_at,
+      }]);
     }
-    if (method === "PATCH" && url.includes("/publisher_referral_landings?id=eq.landing-1")) {
+    if (
+      method === "PATCH" &&
+      url.includes("/publisher_referral_landings?id=eq.landing-1")
+    ) {
       return jsonResponse([]);
     }
     throw new Error(`Unexpected fetch ${method} ${url}`);
   };
 
   try {
-    const response = await handleAuth(new Request("https://ul.test/auth/session", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "cookie": "__Host-ul_ref_visitor=11111111-1111-4111-8111-111111111111",
-      },
-      body: JSON.stringify({ access_token: "supabase-access-token" }),
-    }));
+    const response = await handleAuth(
+      new Request("https://ul.test/auth/session", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "cookie":
+            "__Host-ul_ref_visitor=11111111-1111-4111-8111-111111111111",
+        },
+        body: JSON.stringify({ access_token: "supabase-access-token" }),
+      }),
+    );
 
     assertEquals(response.status, 200);
     assertEquals(grantPosts.length, 1);
@@ -92,11 +120,17 @@ Deno.test("auth callback redirects launch web return targets through opaque brid
     CORS_ALLOWED_ORIGINS: "https://api.ul.test,https://staging.launch.test",
   } as typeof globalThis.__env;
 
-  globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
+  globalThis.fetch = async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ) => {
     const url = input instanceof Request ? input.url : String(input);
     const method = init?.method || "GET";
 
-    if (method === "POST" && url === "https://supabase.test/auth/v1/token?grant_type=pkce") {
+    if (
+      method === "POST" &&
+      url === "https://supabase.test/auth/v1/token?grant_type=pkce"
+    ) {
       return jsonResponse({
         access_token: "supabase-access-token",
         refresh_token: "supabase-refresh-token",
@@ -104,9 +138,16 @@ Deno.test("auth callback redirects launch web return targets through opaque brid
       });
     }
     if (method === "GET" && url === "https://supabase.test/auth/v1/user") {
-      return jsonResponse({ id: "user-1", email: "user@example.com", user_metadata: {} });
+      return jsonResponse({
+        id: "user-1",
+        email: "user@example.com",
+        user_metadata: {},
+      });
     }
-    if (method === "GET" && url.startsWith("https://supabase.test/rest/v1/users?id=eq.user-1")) {
+    if (
+      method === "GET" &&
+      url.startsWith("https://supabase.test/rest/v1/users?id=eq.user-1")
+    ) {
       return jsonResponse([{ id: "user-1" }]);
     }
     throw new Error(`Unexpected fetch ${method} ${url}`);
@@ -114,9 +155,16 @@ Deno.test("auth callback redirects launch web return targets through opaque brid
 
   try {
     const verifier = "a".repeat(43);
-    const returnTo = encodeURIComponent("https://staging.launch.test/settings?tab=keys");
+    const returnTo = "https://staging.launch.test/settings?tab=keys";
     const response = await handleAuth(
-      new Request(`https://api.ul.test/auth/callback?code=oauth-code&v=${verifier}&return_to=${returnTo}`),
+      new Request("https://api.ul.test/auth/callback?code=oauth-code", {
+        headers: {
+          cookie: [
+            `__Host-ul_oauth_verifier=${verifier}`,
+            `__Host-ul_oauth_return_to=${encodeURIComponent(returnTo)}`,
+          ].join("; "),
+        },
+      }),
     );
 
     assertEquals(response.status, 302);
@@ -129,8 +177,51 @@ Deno.test("auth callback redirects launch web return targets through opaque brid
     const fragment = new URLSearchParams(target.hash.slice(1));
     assertEquals(fragment.get("bridge_token")?.startsWith("ul_embed_"), true);
     assertEquals(location.includes("supabase-access-token"), false);
+    assertEquals(
+      (response.headers.get("set-cookie") || "").includes(
+        "__Host-ul_oauth_verifier=;",
+      ),
+      true,
+    );
   } finally {
     globalThis.fetch = originalFetch;
+    globalThis.__env = originalEnv;
+  }
+});
+
+Deno.test("auth login keeps Supabase redirect_to stable and stores callback state in cookies", async () => {
+  const originalEnv = globalThis.__env;
+
+  globalThis.__env = {
+    ...(originalEnv || {}),
+    SUPABASE_URL: "https://supabase.test",
+    SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+    SUPABASE_ANON_KEY: "anon-key",
+  } as typeof globalThis.__env;
+
+  try {
+    const response = await handleAuth(
+      new Request(
+        "https://api.ul.test/auth/login?return_to=https%3A%2F%2Fstaging.launch.test%2Flibrary",
+      ),
+    );
+
+    assertEquals(response.status, 302);
+    const location = response.headers.get("location") || "";
+    const target = new URL(location);
+    assertEquals(target.origin, "https://supabase.test");
+    assertEquals(target.pathname, "/auth/v1/authorize");
+    assertEquals(
+      target.searchParams.get("redirect_to"),
+      "https://api.ul.test/auth/callback",
+    );
+
+    const cookies = response.headers.get("set-cookie") || "";
+    assertEquals(cookies.includes("__Host-ul_oauth_verifier="), true);
+    assertEquals(cookies.includes("__Host-ul_oauth_return_to="), true);
+    assertEquals(location.includes("return_to="), false);
+    assertEquals(location.includes("v="), false);
+  } finally {
     globalThis.__env = originalEnv;
   }
 });

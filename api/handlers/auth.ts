@@ -1,45 +1,53 @@
 // Auth Handler
 // Handles authentication via Supabase Google OAuth and API tokens
 
-import { error, json } from './response.ts';
-import { isApiToken } from '../services/tokens.ts';
-import { createProvisionalUser, isProvisionalUser, mergeProvisionalUser, markOnboardingProvisionalCreated, type MergeMethod } from '../services/provisional.ts';
+import { error, json } from "./response.ts";
+import { isApiToken } from "../services/tokens.ts";
+import {
+  createProvisionalUser,
+  isProvisionalUser,
+  markOnboardingProvisionalCreated,
+  type MergeMethod,
+  mergeProvisionalUser,
+} from "../services/provisional.ts";
 import {
   consumeDesktopOAuthSession,
   createDesktopOAuthSession,
   storeDesktopOAuthSessionToken,
-} from '../services/desktop-oauth-sessions.ts';
+} from "../services/desktop-oauth-sessions.ts";
 import {
   appendAuthSessionCookies,
+  appendCookie,
   clearAuthSessionCookies,
+  clearCookie,
   getAuthAccessTokenFromRequest,
   getAuthRefreshTokenFromRequest,
   getCookieValueFromRequest,
-} from '../services/auth-cookies.ts';
+} from "../services/auth-cookies.ts";
 import {
-  authenticateRequest,
   type AuthenticatedRequestUser,
+  authenticateRequest,
   ensureUserExists,
   extractBearerToken,
   hasScope,
   verifySupabaseAccessToken,
-} from '../services/request-auth.ts';
-import { logLegacyAuthTransport } from '../services/auth-transport.ts';
+} from "../services/request-auth.ts";
+import { logLegacyAuthTransport } from "../services/auth-transport.ts";
 import {
   consumeEmbedBridgeToken,
   getAccessTokenRemainingLifetimeSeconds,
   issueEmbedBridgeToken,
-} from '../services/embed-bridge.ts';
-import { appendPageShareSessionCookie } from '../services/page-share-session.ts';
-import { normalizeOAuthPrompt } from '../services/oauth-login.ts';
-import { revokeSupabaseSession } from '../services/session-revocation.ts';
+} from "../services/embed-bridge.ts";
+import { appendPageShareSessionCookie } from "../services/page-share-session.ts";
+import { normalizeOAuthPrompt } from "../services/oauth-login.ts";
+import { revokeSupabaseSession } from "../services/session-revocation.ts";
 import {
   claimReferralLandingsForUser,
   claimReferralTokenForUser,
   REFERRAL_VISITOR_COOKIE_NAME,
   transferReferralAttributionBetweenUsers,
-} from '../services/referrals.ts';
-import { withAuthRouteRateLimit } from '../services/auth-rate-limit.ts';
+} from "../services/referrals.ts";
+import { withAuthRouteRateLimit } from "../services/auth-rate-limit.ts";
 import {
   RequestValidationError,
   validateEmbedBridgeExchangeRequest,
@@ -47,14 +55,13 @@ import {
   validateRefreshRequest,
   validateSessionBootstrapRequest,
   validateSignoutRequest,
-} from '../services/auth-request-validation.ts';
+} from "../services/auth-request-validation.ts";
 // Base64 URL encoding for PKCE (replaces Deno std encodeBase64Url)
 function encodeBase64Url(data: Uint8Array): string {
   const base64 = btoa(String.fromCharCode(...data));
-  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
-import { getEnv } from '../lib/env.ts';
-
+import { getEnv } from "../lib/env.ts";
 
 // PKCE helpers
 function generateCodeVerifier(): string {
@@ -66,15 +73,80 @@ function generateCodeVerifier(): string {
 async function generateCodeChallenge(verifier: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(verifier);
-  const digest = await crypto.subtle.digest('SHA-256', data);
+  const digest = await crypto.subtle.digest("SHA-256", data);
   return encodeBase64Url(new Uint8Array(digest));
 }
 
 function getSupabaseAuthHeaders(): Record<string, string> {
   return {
-    'Content-Type': 'application/json',
-    'apikey': (getEnv('SUPABASE_ANON_KEY') || getEnv('SUPABASE_SERVICE_ROLE_KEY')),
+    "Content-Type": "application/json",
+    "apikey": getEnv("SUPABASE_ANON_KEY") ||
+      getEnv("SUPABASE_SERVICE_ROLE_KEY"),
   };
+}
+
+const OAUTH_CALLBACK_COOKIE_MAX_AGE_SECONDS = 10 * 60;
+const OAUTH_VERIFIER_COOKIE_NAME = "__Host-ul_oauth_verifier";
+const OAUTH_RETURN_TO_COOKIE_NAME = "__Host-ul_oauth_return_to";
+const OAUTH_DESKTOP_SESSION_COOKIE_NAME = "__Host-ul_oauth_desktop_session";
+
+function appendOAuthCallbackStateCookies(
+  headers: Headers,
+  state: {
+    codeVerifier: string;
+    desktopSession?: string | null;
+    returnTo?: string | null;
+  },
+): void {
+  appendCookie(headers, OAUTH_VERIFIER_COOKIE_NAME, state.codeVerifier, {
+    maxAge: OAUTH_CALLBACK_COOKIE_MAX_AGE_SECONDS,
+    httpOnly: true,
+  });
+
+  if (state.returnTo) {
+    appendCookie(headers, OAUTH_RETURN_TO_COOKIE_NAME, state.returnTo, {
+      maxAge: OAUTH_CALLBACK_COOKIE_MAX_AGE_SECONDS,
+      httpOnly: true,
+    });
+  } else {
+    clearCookie(headers, OAUTH_RETURN_TO_COOKIE_NAME, { httpOnly: true });
+  }
+
+  if (state.desktopSession) {
+    appendCookie(
+      headers,
+      OAUTH_DESKTOP_SESSION_COOKIE_NAME,
+      state.desktopSession,
+      {
+        maxAge: OAUTH_CALLBACK_COOKIE_MAX_AGE_SECONDS,
+        httpOnly: true,
+      },
+    );
+  } else {
+    clearCookie(headers, OAUTH_DESKTOP_SESSION_COOKIE_NAME, { httpOnly: true });
+  }
+}
+
+function clearOAuthCallbackStateCookies(headers: Headers): void {
+  clearCookie(headers, OAUTH_VERIFIER_COOKIE_NAME, { httpOnly: true });
+  clearCookie(headers, OAUTH_RETURN_TO_COOKIE_NAME, { httpOnly: true });
+  clearCookie(headers, OAUTH_DESKTOP_SESSION_COOKIE_NAME, { httpOnly: true });
+}
+
+function withClearedOAuthCallbackStateCookies(response: Response): Response {
+  clearOAuthCallbackStateCookies(response.headers);
+  return response;
+}
+
+function callbackStateValue(
+  request: Request,
+  url: URL,
+  searchParam: string,
+  cookieName: string,
+): string {
+  return url.searchParams.get(searchParam) ||
+    getCookieValueFromRequest(request, cookieName) ||
+    "";
 }
 
 async function exchangeRefreshToken(refreshToken: string): Promise<{
@@ -83,16 +155,16 @@ async function exchangeRefreshToken(refreshToken: string): Promise<{
   expires_in?: number;
 }> {
   const tokenResponse = await fetch(
-    `${getEnv('SUPABASE_URL')}/auth/v1/token?grant_type=refresh_token`,
+    `${getEnv("SUPABASE_URL")}/auth/v1/token?grant_type=refresh_token`,
     {
-      method: 'POST',
+      method: "POST",
       headers: getSupabaseAuthHeaders(),
       body: JSON.stringify({ refresh_token: refreshToken }),
     },
   );
 
   if (!tokenResponse.ok) {
-    throw new Error('Token refresh failed');
+    throw new Error("Token refresh failed");
   }
 
   return await tokenResponse.json();
@@ -110,13 +182,22 @@ function appendBrowserSession(
   return response;
 }
 
-async function claimReferralCookieForUser(request: Request, userId: string): Promise<void> {
-  const visitorId = getCookieValueFromRequest(request, REFERRAL_VISITOR_COOKIE_NAME);
+async function claimReferralCookieForUser(
+  request: Request,
+  userId: string,
+): Promise<void> {
+  const visitorId = getCookieValueFromRequest(
+    request,
+    REFERRAL_VISITOR_COOKIE_NAME,
+  );
   if (!visitorId) return;
   try {
-    await claimReferralLandingsForUser({ userId, anonymousVisitorId: visitorId });
+    await claimReferralLandingsForUser({
+      userId,
+      anonymousVisitorId: visitorId,
+    });
   } catch (err) {
-    console.warn('[auth] Failed to claim referral landings:', err);
+    console.warn("[auth] Failed to claim referral landings:", err);
   }
 }
 
@@ -133,7 +214,7 @@ async function claimReferralCookieForAccessToken(
 
 function allowedLaunchWebOrigins(): Set<string> {
   const origins = new Set<string>();
-  for (const rawOrigin of (getEnv('CORS_ALLOWED_ORIGINS') || '').split(',')) {
+  for (const rawOrigin of (getEnv("CORS_ALLOWED_ORIGINS") || "").split(",")) {
     const trimmed = rawOrigin.trim();
     if (!trimmed) continue;
     try {
@@ -146,7 +227,8 @@ function allowedLaunchWebOrigins(): Set<string> {
 }
 
 function isSafeLaunchPath(value: string): boolean {
-  return value.startsWith('/') && !value.startsWith('//') && !value.includes('\\');
+  return value.startsWith("/") && !value.startsWith("//") &&
+    !value.includes("\\");
 }
 
 function resolveLaunchWebReturnTarget(
@@ -165,11 +247,11 @@ function resolveLaunchWebReturnTarget(
   if (parsed.origin === new URL(request.url).origin) return null;
   if (!allowedLaunchWebOrigins().has(parsed.origin)) return null;
 
-  const nextPath = `${parsed.pathname || '/'}${parsed.search || ''}`;
-  const callbackUrl = new URL('/auth/callback', parsed.origin);
+  const nextPath = `${parsed.pathname || "/"}${parsed.search || ""}`;
+  const callbackUrl = new URL("/auth/callback", parsed.origin);
   callbackUrl.searchParams.set(
-    'next',
-    isSafeLaunchPath(nextPath) ? nextPath : '/settings',
+    "next",
+    isSafeLaunchPath(nextPath) ? nextPath : "/settings",
   );
   return { callbackUrl };
 }
@@ -185,7 +267,7 @@ async function buildLaunchWebBridgeRedirect(
 
   const issued = await issueEmbedBridgeToken({
     accessToken,
-    audience: 'launch_web',
+    audience: "launch_web",
     userId,
   });
   target.callbackUrl.hash = new URLSearchParams({
@@ -196,8 +278,8 @@ async function buildLaunchWebBridgeRedirect(
   return new Response(null, {
     status: 302,
     headers: {
-      'Location': target.callbackUrl.toString(),
-      'Cache-Control': 'no-store',
+      "Location": target.callbackUrl.toString(),
+      "Cache-Control": "no-store",
     },
   });
 }
@@ -207,23 +289,33 @@ export async function handleAuth(request: Request): Promise<Response> {
   const path = url.pathname;
 
   // Initiate Google OAuth - redirects to Supabase Auth with PKCE
-  if (path === '/auth/login') {
-    return withAuthRouteRateLimit(request, 'auth:login', async () => {
+  if (path === "/auth/login") {
+    return withAuthRouteRateLimit(request, "auth:login", async () => {
       // Force HTTPS — DigitalOcean terminates TLS at load balancer so request.url is HTTP internally
-      const origin = url.origin.replace('http://', 'https://');
-      const returnTo = url.searchParams.get('return_to');
-      const desktopSession = url.searchParams.get('desktop_session');
-      const desktopPollSecretHash = url.searchParams.get('desktop_poll_secret_hash');
-      const oauthPrompt = normalizeOAuthPrompt(url.searchParams.get('prompt'));
+      const origin = url.origin.replace("http://", "https://");
+      const returnTo = url.searchParams.get("return_to");
+      const desktopSession = url.searchParams.get("desktop_session");
+      const desktopPollSecretHash = url.searchParams.get(
+        "desktop_poll_secret_hash",
+      );
+      const oauthPrompt = normalizeOAuthPrompt(url.searchParams.get("prompt"));
 
       if (desktopSession) {
         try {
-          await createDesktopOAuthSession(desktopSession, desktopPollSecretHash);
+          await createDesktopOAuthSession(
+            desktopSession,
+            desktopPollSecretHash,
+          );
         } catch (err) {
-          console.error('[auth] Failed to create desktop OAuth session:', err);
-          return new Response(getCallbackErrorHTML('Unable to start desktop sign-in. Please try again.'), {
-            headers: { 'Content-Type': 'text/html' },
-          });
+          console.error("[auth] Failed to create desktop OAuth session:", err);
+          return new Response(
+            getCallbackErrorHTML(
+              "Unable to start desktop sign-in. Please try again.",
+            ),
+            {
+              headers: { "Content-Type": "text/html" },
+            },
+          );
         }
       }
 
@@ -231,54 +323,67 @@ export async function handleAuth(request: Request): Promise<Response> {
       const codeVerifier = generateCodeVerifier();
       const codeChallenge = await generateCodeChallenge(codeVerifier);
 
-      // Embed verifier in callback URL so it survives the redirect chain
-      const callbackParams = new URLSearchParams();
-      callbackParams.set('v', codeVerifier);
-      if (returnTo) callbackParams.set('return_to', returnTo);
-      if (desktopSession) callbackParams.set('desktop_session', desktopSession);
-      const callbackUrl = `${origin}/auth/callback?${callbackParams.toString()}`;
+      const callbackUrl = `${origin}/auth/callback`;
 
-      const authUrl = new URL(`${getEnv('SUPABASE_URL')}/auth/v1/authorize`);
-      authUrl.searchParams.set('provider', 'google');
-      authUrl.searchParams.set('redirect_to', callbackUrl);
-      authUrl.searchParams.set('code_challenge', codeChallenge);
-      authUrl.searchParams.set('code_challenge_method', 'S256');
+      const authUrl = new URL(`${getEnv("SUPABASE_URL")}/auth/v1/authorize`);
+      authUrl.searchParams.set("provider", "google");
+      authUrl.searchParams.set("redirect_to", callbackUrl);
+      authUrl.searchParams.set("code_challenge", codeChallenge);
+      authUrl.searchParams.set("code_challenge_method", "S256");
       if (oauthPrompt) {
-        authUrl.searchParams.set('prompt', oauthPrompt);
+        authUrl.searchParams.set("prompt", oauthPrompt);
       }
 
-      return new Response(null, {
+      const response = new Response(null, {
         status: 302,
-        headers: { 'Location': authUrl.toString() },
+        headers: {
+          "Location": authUrl.toString(),
+          "Cache-Control": "no-store",
+        },
       });
+      appendOAuthCallbackStateCookies(response.headers, {
+        codeVerifier,
+        desktopSession,
+        returnTo,
+      });
+      return response;
     });
   }
 
   // Google OAuth callback - handle token from hash or code exchange
-  if (path === '/auth/callback') {
+  if (path === "/auth/callback") {
     // Check for explicit error first
-    const errorDesc = url.searchParams.get('error_description');
+    const errorDesc = url.searchParams.get("error_description");
     if (errorDesc) {
-      return new Response(getCallbackErrorHTML(errorDesc), {
-        headers: { 'Content-Type': 'text/html' },
-      });
+      return withClearedOAuthCallbackStateCookies(
+        new Response(getCallbackErrorHTML(errorDesc), {
+          headers: { "Content-Type": "text/html" },
+        }),
+      );
     }
 
-    const code = url.searchParams.get('code');
+    const code = url.searchParams.get("code");
 
     if (code) {
-      // Read PKCE code_verifier from query param (embedded in redirect_to URL)
-      const codeVerifier = url.searchParams.get('v') || '';
+      const codeVerifier = callbackStateValue(
+        request,
+        url,
+        "v",
+        OAUTH_VERIFIER_COOKIE_NAME,
+      );
 
       // Exchange code + verifier for tokens (Supabase PKCE grant)
-      const tokenResponse = await fetch(`${getEnv('SUPABASE_URL')}/auth/v1/token?grant_type=pkce`, {
-        method: 'POST',
-        headers: getSupabaseAuthHeaders(),
-        body: JSON.stringify({
-          auth_code: code,
-          code_verifier: codeVerifier,
-        }),
-      });
+      const tokenResponse = await fetch(
+        `${getEnv("SUPABASE_URL")}/auth/v1/token?grant_type=pkce`,
+        {
+          method: "POST",
+          headers: getSupabaseAuthHeaders(),
+          body: JSON.stringify({
+            auth_code: code,
+            code_verifier: codeVerifier,
+          }),
+        },
+      );
 
       if (tokenResponse.ok) {
         const tokens = await tokenResponse.json() as {
@@ -286,67 +391,129 @@ export async function handleAuth(request: Request): Promise<Response> {
           refresh_token?: string;
           expires_in?: number;
         };
-        const desktopSession = url.searchParams.get('desktop_session');
-        const verifiedUser = await claimReferralCookieForAccessToken(request, tokens.access_token);
+        const desktopSession = callbackStateValue(
+          request,
+          url,
+          "desktop_session",
+          OAUTH_DESKTOP_SESSION_COOKIE_NAME,
+        );
+        const verifiedUser = await claimReferralCookieForAccessToken(
+          request,
+          tokens.access_token,
+        );
         if (!verifiedUser) {
-          return new Response(getCallbackErrorHTML('Unable to verify the signed-in account. Please try again.'), {
-            headers: { 'Content-Type': 'text/html' },
-          });
+          return withClearedOAuthCallbackStateCookies(
+            new Response(
+              getCallbackErrorHTML(
+                "Unable to verify the signed-in account. Please try again.",
+              ),
+              {
+                headers: { "Content-Type": "text/html" },
+              },
+            ),
+          );
         }
 
         // Desktop OAuth flow: store token for polling, show "close this tab" page
         if (desktopSession) {
-          const stored = await storeDesktopOAuthSessionToken(desktopSession, tokens.access_token);
+          const stored = await storeDesktopOAuthSessionToken(
+            desktopSession,
+            tokens.access_token,
+          );
           if (!stored) {
-            return new Response(getCallbackErrorHTML('Desktop sign-in expired. Please return to the app and try again.'), {
-              headers: { 'Content-Type': 'text/html' },
-            });
+            return withClearedOAuthCallbackStateCookies(
+              new Response(
+                getCallbackErrorHTML(
+                  "Desktop sign-in expired. Please return to the app and try again.",
+                ),
+                {
+                  headers: { "Content-Type": "text/html" },
+                },
+              ),
+            );
           }
-          return new Response(getDesktopCallbackHTML(), {
-            headers: { 'Content-Type': 'text/html' },
-          });
+          return withClearedOAuthCallbackStateCookies(
+            new Response(getDesktopCallbackHTML(), {
+              headers: { "Content-Type": "text/html" },
+            }),
+          );
         }
 
-        const returnTo = url.searchParams.get('return_to') || undefined;
+        const returnTo = callbackStateValue(
+          request,
+          url,
+          "return_to",
+          OAUTH_RETURN_TO_COOKIE_NAME,
+        ) || undefined;
         const launchWebRedirect = await buildLaunchWebBridgeRedirect(
           request,
           returnTo,
           tokens.access_token,
           verifiedUser.id,
         );
-        if (launchWebRedirect) return launchWebRedirect;
+        if (launchWebRedirect) {
+          return withClearedOAuthCallbackStateCookies(launchWebRedirect);
+        }
 
-        return appendBrowserSession(new Response(getCallbackSuccessHTML(returnTo), {
-          headers: { 'Content-Type': 'text/html' },
-        }), {
-          accessToken: tokens.access_token,
-          refreshToken: tokens.refresh_token,
-          accessTokenTtlSeconds: tokens.expires_in,
-        });
+        return withClearedOAuthCallbackStateCookies(
+          appendBrowserSession(
+            new Response(getCallbackSuccessHTML(returnTo), {
+              headers: { "Content-Type": "text/html" },
+            }),
+            {
+              accessToken: tokens.access_token,
+              refreshToken: tokens.refresh_token,
+              accessTokenTtlSeconds: tokens.expires_in,
+            },
+          ),
+        );
       }
 
       // Code exchange failed — show error with full details for debugging
-      let errBody = '';
-      try { errBody = await tokenResponse.text(); } catch {}
-      console.error('[auth] Code exchange failed:', tokenResponse.status, errBody);
-      const hasVerifier = codeVerifier ? 'yes (' + codeVerifier.length + ' chars)' : 'MISSING';
-      let supabaseError = '';
-      try { const parsed = JSON.parse(errBody); supabaseError = parsed.error_description || parsed.msg || parsed.error || ''; } catch { supabaseError = errBody.substring(0, 200); }
-      return new Response(getCallbackErrorHTML('Code exchange failed (status ' + tokenResponse.status + ', verifier: ' + hasVerifier + '). Supabase says: ' + supabaseError), {
-        headers: { 'Content-Type': 'text/html' },
-      });
+      let errBody = "";
+      try {
+        errBody = await tokenResponse.text();
+      } catch {}
+      console.error(
+        "[auth] Code exchange failed:",
+        tokenResponse.status,
+        errBody,
+      );
+      const hasVerifier = codeVerifier
+        ? "yes (" + codeVerifier.length + " chars)"
+        : "MISSING";
+      let supabaseError = "";
+      try {
+        const parsed = JSON.parse(errBody);
+        supabaseError = parsed.error_description || parsed.msg ||
+          parsed.error || "";
+      } catch {
+        supabaseError = errBody.substring(0, 200);
+      }
+      return withClearedOAuthCallbackStateCookies(
+        new Response(
+          getCallbackErrorHTML(
+            "Code exchange failed (status " + tokenResponse.status +
+              ", verifier: " + hasVerifier + "). Supabase says: " +
+              supabaseError,
+          ),
+          {
+            headers: { "Content-Type": "text/html" },
+          },
+        ),
+      );
     }
 
     // No code param — return HTML that handles hash-based implicit tokens (fallback)
     return new Response(getCallbackHTML(), {
       headers: {
-        'Content-Type': 'text/html',
+        "Content-Type": "text/html",
       },
     });
   }
 
   // Get current user from JWT
-  if (path === '/auth/user') {
+  if (path === "/auth/user") {
     try {
       const user = await authenticate(request);
       return json(user);
@@ -356,25 +523,27 @@ export async function handleAuth(request: Request): Promise<Response> {
   }
 
   // Establish a browser session into HttpOnly cookies.
-  if (path === '/auth/session' && request.method === 'POST') {
-    return withAuthRouteRateLimit(request, 'auth:session', async () => {
+  if (path === "/auth/session" && request.method === "POST") {
+    return withAuthRouteRateLimit(request, "auth:session", async () => {
       try {
         const payload = await validateSessionBootstrapRequest(request);
-        let accessToken = payload.accessToken || '';
-        let refreshToken = payload.refreshToken || '';
+        let accessToken = payload.accessToken || "";
+        let refreshToken = payload.refreshToken || "";
         let expiresIn: number | undefined;
 
         if (accessToken || refreshToken) {
           logLegacyAuthTransport({
-            kind: 'body_token_bootstrap',
-            surface: 'browser_session_bootstrap',
+            kind: "body_token_bootstrap",
+            surface: "browser_session_bootstrap",
             request,
             token: accessToken || refreshToken,
-            note: accessToken ? 'access_token_body' : 'refresh_token_body',
+            note: accessToken ? "access_token_body" : "refresh_token_body",
           });
         }
 
-        let verifiedUser = accessToken ? await verifySupabaseAccessToken(accessToken) : null;
+        let verifiedUser = accessToken
+          ? await verifySupabaseAccessToken(accessToken)
+          : null;
         if (!verifiedUser && refreshToken) {
           const refreshed = await exchangeRefreshToken(refreshToken);
           accessToken = refreshed.access_token;
@@ -384,7 +553,7 @@ export async function handleAuth(request: Request): Promise<Response> {
         }
 
         if (!verifiedUser || !accessToken) {
-          return error('Invalid or expired session tokens', 401);
+          return error("Invalid or expired session tokens", 401);
         }
 
         await ensureUserExists(verifiedUser).catch(() => {});
@@ -399,26 +568,30 @@ export async function handleAuth(request: Request): Promise<Response> {
         if (err instanceof RequestValidationError) {
           return error(err.message, err.status);
         }
-        console.error('[auth] Session establishment failed:', err);
-        return error('Failed to establish session', 500);
+        console.error("[auth] Session establishment failed:", err);
+        return error("Failed to establish session", 500);
       }
     });
   }
 
   // Exchange a short-lived launch web bridge token into a Supabase bearer token
   // for the Pages-hosted launch frontend.
-  if (path === '/auth/launch/exchange' && request.method === 'POST') {
-    return withAuthRouteRateLimit(request, 'auth:launch_exchange', async () => {
+  if (path === "/auth/launch/exchange" && request.method === "POST") {
+    return withAuthRouteRateLimit(request, "auth:launch_exchange", async () => {
       try {
-        const { bridgeToken } = await validateEmbedBridgeExchangeRequest(request);
+        const { bridgeToken } = await validateEmbedBridgeExchangeRequest(
+          request,
+        );
         const bridgePayload = await consumeEmbedBridgeToken(bridgeToken);
-        if (!bridgePayload || bridgePayload.aud !== 'launch_web') {
-          return error('Invalid or expired launch sign-in token', 401);
+        if (!bridgePayload || bridgePayload.aud !== "launch_web") {
+          return error("Invalid or expired launch sign-in token", 401);
         }
 
-        const verifiedUser = await verifySupabaseAccessToken(bridgePayload.access_token);
+        const verifiedUser = await verifySupabaseAccessToken(
+          bridgePayload.access_token,
+        );
         if (!verifiedUser || verifiedUser.id !== bridgePayload.sub) {
-          return error('Launch sign-in session is invalid', 401);
+          return error("Launch sign-in session is invalid", 401);
         }
 
         await ensureUserExists(verifiedUser).catch(() => {});
@@ -426,8 +599,10 @@ export async function handleAuth(request: Request): Promise<Response> {
 
         return json({
           access_token: bridgePayload.access_token,
-          expires_in: getAccessTokenRemainingLifetimeSeconds(bridgePayload.access_token),
-          audience: 'launch_web',
+          expires_in: getAccessTokenRemainingLifetimeSeconds(
+            bridgePayload.access_token,
+          ),
+          audience: "launch_web",
           user: {
             id: verifiedUser.id,
             email: verifiedUser.email,
@@ -438,28 +613,33 @@ export async function handleAuth(request: Request): Promise<Response> {
         if (err instanceof RequestValidationError) {
           return error(err.message, err.status);
         }
-        console.error('[auth] Launch web exchange failed:', err);
-        return error('Failed to complete launch web sign-in', 500);
+        console.error("[auth] Launch web exchange failed:", err);
+        return error("Failed to complete launch web sign-in", 500);
       }
     });
   }
 
   // Create a short-lived opaque bridge token for desktop embed flows.
-  if (path === '/auth/embed/bridge' && request.method === 'POST') {
-    return withAuthRouteRateLimit(request, 'auth:embed_bridge', async () => {
+  if (path === "/auth/embed/bridge" && request.method === "POST") {
+    return withAuthRouteRateLimit(request, "auth:embed_bridge", async () => {
       const accessToken = extractBearerToken(request);
       if (!accessToken || isApiToken(accessToken)) {
-        return error('Desktop embed bridge requires a signed-in user token', 401);
+        return error(
+          "Desktop embed bridge requires a signed-in user token",
+          401,
+        );
       }
 
       const verifiedUser = await verifySupabaseAccessToken(accessToken);
       if (!verifiedUser) {
-        return error('Invalid or expired session token', 401);
+        return error("Invalid or expired session token", 401);
       }
 
-      const remainingLifetime = getAccessTokenRemainingLifetimeSeconds(accessToken);
+      const remainingLifetime = getAccessTokenRemainingLifetimeSeconds(
+        accessToken,
+      );
       if (remainingLifetime !== null && remainingLifetime <= 0) {
-        return error('Session token is expired', 401);
+        return error("Session token is expired", 401);
       }
 
       const issued = await issueEmbedBridgeToken({
@@ -470,126 +650,155 @@ export async function handleAuth(request: Request): Promise<Response> {
       return json({
         bridge_token: issued.token,
         expires_in: issued.expiresIn,
-        audience: 'desktop_embed',
-        transport: 'fragment',
+        audience: "desktop_embed",
+        transport: "fragment",
       });
     });
   }
 
   // Exchange a desktop embed bridge token into the cookie session context used by embedded pages.
-  if (path === '/auth/embed/exchange' && request.method === 'POST') {
-    return withAuthRouteRateLimit(request, 'auth:embed_exchange', async () => {
+  if (path === "/auth/embed/exchange" && request.method === "POST") {
+    return withAuthRouteRateLimit(request, "auth:embed_exchange", async () => {
       try {
-        const { bridgeToken } = await validateEmbedBridgeExchangeRequest(request);
+        const { bridgeToken } = await validateEmbedBridgeExchangeRequest(
+          request,
+        );
 
         const bridgePayload = await consumeEmbedBridgeToken(bridgeToken);
-        if (!bridgePayload || bridgePayload.aud !== 'desktop_embed') {
-          return error('Invalid or expired bridge token', 401);
+        if (!bridgePayload || bridgePayload.aud !== "desktop_embed") {
+          return error("Invalid or expired bridge token", 401);
         }
 
-        const verifiedUser = await verifySupabaseAccessToken(bridgePayload.access_token);
+        const verifiedUser = await verifySupabaseAccessToken(
+          bridgePayload.access_token,
+        );
         if (!verifiedUser || verifiedUser.id !== bridgePayload.sub) {
-          return error('Bridge token session is invalid', 401);
+          return error("Bridge token session is invalid", 401);
         }
 
         await ensureUserExists(verifiedUser).catch(() => {});
         await claimReferralCookieForUser(request, verifiedUser.id);
 
-        const accessTokenTtlSeconds = getAccessTokenRemainingLifetimeSeconds(bridgePayload.access_token);
-        return appendBrowserSession(json({
-          ok: true,
-          expires_in: accessTokenTtlSeconds ?? null,
-          audience: bridgePayload.aud,
-        }), {
-          accessToken: bridgePayload.access_token,
-          accessTokenTtlSeconds: accessTokenTtlSeconds ?? undefined,
-        });
+        const accessTokenTtlSeconds = getAccessTokenRemainingLifetimeSeconds(
+          bridgePayload.access_token,
+        );
+        return appendBrowserSession(
+          json({
+            ok: true,
+            expires_in: accessTokenTtlSeconds ?? null,
+            audience: bridgePayload.aud,
+          }),
+          {
+            accessToken: bridgePayload.access_token,
+            accessTokenTtlSeconds: accessTokenTtlSeconds ?? undefined,
+          },
+        );
       } catch (err) {
         if (err instanceof RequestValidationError) {
           return error(err.message, err.status);
         }
-        console.error('[auth] Embed bridge exchange failed:', err);
-        return error('Failed to establish embed session', 500);
+        console.error("[auth] Embed bridge exchange failed:", err);
+        return error("Failed to establish embed session", 500);
       }
     });
   }
 
   // Exchange a shared-page secret into a short-lived page-scoped session cookie.
-  if (path === '/auth/page-share/exchange' && request.method === 'POST') {
-    return withAuthRouteRateLimit(request, 'auth:page_share_exchange', async () => {
-      try {
-        const { ownerId, slug, shareToken } = await validatePageShareExchangeRequest(request);
-        const serviceRoleKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
-        const contentResponse = await fetch(
-          `${getEnv('SUPABASE_URL')}/rest/v1/content?owner_id=eq.${ownerId}&type=eq.page&slug=eq.${encodeURIComponent(slug)}&visibility=eq.shared&select=id,access_token&limit=1`,
-          {
-            headers: {
-              'apikey': serviceRoleKey,
-              'Authorization': `Bearer ${serviceRoleKey}`,
+  if (path === "/auth/page-share/exchange" && request.method === "POST") {
+    return withAuthRouteRateLimit(
+      request,
+      "auth:page_share_exchange",
+      async () => {
+        try {
+          const { ownerId, slug, shareToken } =
+            await validatePageShareExchangeRequest(request);
+          const serviceRoleKey = getEnv("SUPABASE_SERVICE_ROLE_KEY");
+          const contentResponse = await fetch(
+            `${
+              getEnv("SUPABASE_URL")
+            }/rest/v1/content?owner_id=eq.${ownerId}&type=eq.page&slug=eq.${
+              encodeURIComponent(slug)
+            }&visibility=eq.shared&select=id,access_token&limit=1`,
+            {
+              headers: {
+                "apikey": serviceRoleKey,
+                "Authorization": `Bearer ${serviceRoleKey}`,
+              },
             },
-          },
-        );
+          );
 
-        if (!contentResponse.ok) {
-          console.error('[auth] Shared page lookup failed:', await contentResponse.text());
-          return error('Failed to authorize shared page', 500);
-        }
+          if (!contentResponse.ok) {
+            console.error(
+              "[auth] Shared page lookup failed:",
+              await contentResponse.text(),
+            );
+            return error("Failed to authorize shared page", 500);
+          }
 
-        const rows = await contentResponse.json() as Array<{ id: string; access_token: string | null }>;
-        const contentRow = rows[0];
-        if (!contentRow) {
-          return error('Shared page not found', 404);
-        }
-        if (!contentRow.access_token || shareToken !== contentRow.access_token) {
-          return error('Invalid or expired shared page token', 401);
-        }
+          const rows = await contentResponse.json() as Array<
+            { id: string; access_token: string | null }
+          >;
+          const contentRow = rows[0];
+          if (!contentRow) {
+            return error("Shared page not found", 404);
+          }
+          if (
+            !contentRow.access_token || shareToken !== contentRow.access_token
+          ) {
+            return error("Invalid or expired shared page token", 401);
+          }
 
-        const response = new Response(null, {
-          status: 200,
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        });
-        const issued = await appendPageShareSessionCookie(response.headers, {
-          contentId: contentRow.id,
-          ownerId,
-          slug,
-          accessToken: shareToken,
-        });
-        response.headers.set('Content-Type', 'application/json');
-        return new Response(JSON.stringify({
-          ok: true,
-          expires_in: issued.expiresIn,
-          audience: 'shared_page',
-          page_path: `/p/${ownerId}/${slug}`,
-        }), {
-          status: 200,
-          headers: response.headers,
-        });
-      } catch (err) {
-        if (err instanceof RequestValidationError) {
-          return error(err.message, err.status);
+          const response = new Response(null, {
+            status: 200,
+            headers: {
+              "Content-Type": "application/json",
+            },
+          });
+          const issued = await appendPageShareSessionCookie(response.headers, {
+            contentId: contentRow.id,
+            ownerId,
+            slug,
+            accessToken: shareToken,
+          });
+          response.headers.set("Content-Type", "application/json");
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              expires_in: issued.expiresIn,
+              audience: "shared_page",
+              page_path: `/p/${ownerId}/${slug}`,
+            }),
+            {
+              status: 200,
+              headers: response.headers,
+            },
+          );
+        } catch (err) {
+          if (err instanceof RequestValidationError) {
+            return error(err.message, err.status);
+          }
+          console.error("[auth] Shared page exchange failed:", err);
+          return error("Failed to authorize shared page", 500);
         }
-        console.error('[auth] Shared page exchange failed:', err);
-        return error('Failed to authorize shared page', 500);
-      }
-    });
+      },
+    );
   }
 
   // Sign out - revokes the current Supabase session when possible, then clears cookies.
-  if (path === '/auth/signout') {
-    if (request.method !== 'POST') {
-      return new Response('Method not allowed', {
+  if (path === "/auth/signout") {
+    if (request.method !== "POST") {
+      return new Response("Method not allowed", {
         status: 405,
-        headers: { 'Allow': 'POST' },
+        headers: { "Allow": "POST" },
       });
     }
 
-    return withAuthRouteRateLimit(request, 'auth:signout', async () => {
+    return withAuthRouteRateLimit(request, "auth:signout", async () => {
       try {
         await validateSignoutRequest(request);
-        const accessToken = extractBearerToken(request) || getAuthAccessTokenFromRequest(request);
-        await revokeSupabaseSession(accessToken, 'local');
+        const accessToken = extractBearerToken(request) ||
+          getAuthAccessTokenFromRequest(request);
+        await revokeSupabaseSession(accessToken, "local");
         const response = json({ ok: true });
         clearAuthSessionCookies(response.headers);
         return response;
@@ -597,8 +806,8 @@ export async function handleAuth(request: Request): Promise<Response> {
         if (err instanceof RequestValidationError) {
           return error(err.message, err.status);
         }
-        console.error('[auth] Sign-out revocation failed:', err);
-        const response = json({ error: 'Failed to revoke session' }, 502);
+        console.error("[auth] Sign-out revocation failed:", err);
+        const response = json({ error: "Failed to revoke session" }, 502);
         clearAuthSessionCookies(response.headers);
         return response;
       }
@@ -607,25 +816,26 @@ export async function handleAuth(request: Request): Promise<Response> {
 
   // Refresh token - exchange refresh_token for a new access_token.
   // Body-based refresh remains for non-cookie clients; cookie refresh powers browser sessions.
-  if (path === '/auth/refresh' && request.method === 'POST') {
-    return withAuthRouteRateLimit(request, 'auth:refresh', async () => {
+  if (path === "/auth/refresh" && request.method === "POST") {
+    return withAuthRouteRateLimit(request, "auth:refresh", async () => {
       try {
         const payload = await validateRefreshRequest(request);
-        const bodyRefreshToken = payload.refreshToken || '';
-        const refreshToken = bodyRefreshToken || getAuthRefreshTokenFromRequest(request);
+        const bodyRefreshToken = payload.refreshToken || "";
+        const refreshToken = bodyRefreshToken ||
+          getAuthRefreshTokenFromRequest(request);
 
         if (bodyRefreshToken) {
           logLegacyAuthTransport({
-            kind: 'body_token_bootstrap',
-            surface: 'refresh_body_bootstrap',
+            kind: "body_token_bootstrap",
+            surface: "refresh_body_bootstrap",
             request,
             token: bodyRefreshToken,
-            note: 'refresh_token_body',
+            note: "refresh_token_body",
           });
         }
 
         if (!refreshToken) {
-          return error('Missing refresh_token', 400);
+          return error("Missing refresh_token", 400);
         }
 
         const tokens = await exchangeRefreshToken(refreshToken);
@@ -644,21 +854,24 @@ export async function handleAuth(request: Request): Promise<Response> {
         if (err instanceof RequestValidationError) {
           return error(err.message, err.status);
         }
-        return error('Token refresh failed', 500);
+        return error("Token refresh failed", 500);
       }
     });
   }
 
   // Create provisional user (no auth required) — pre-auth onboarding
-  if (path === '/auth/provisional' && request.method === 'POST') {
+  if (path === "/auth/provisional" && request.method === "POST") {
     try {
-      const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-        || request.headers.get('x-real-ip')
-        || '0.0.0.0';
+      const clientIp =
+        request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+        request.headers.get("x-real-ip") ||
+        "0.0.0.0";
 
       console.log(`[AUTH] Provisional request from IP: ${clientIp}`);
       const result = await createProvisionalUser(clientIp);
-      console.log(`[AUTH] Provisional user created: ${result.id}, token_id: ${result.tokenId}`);
+      console.log(
+        `[AUTH] Provisional user created: ${result.id}, token_id: ${result.tokenId}`,
+      );
 
       // Correlate with onboarding template request (fire-and-forget)
       markOnboardingProvisionalCreated(clientIp);
@@ -676,27 +889,31 @@ export async function handleAuth(request: Request): Promise<Response> {
         },
       });
     } catch (err: any) {
-      console.error(`[AUTH] Provisional creation failed:`, err.message, err.status);
+      console.error(
+        `[AUTH] Provisional creation failed:`,
+        err.message,
+        err.status,
+      );
       if (err.status === 429) {
         return new Response(JSON.stringify({ error: err.message }), {
           status: 429,
-          headers: { 'Content-Type': 'application/json' },
+          headers: { "Content-Type": "application/json" },
         });
       }
       if (err.status === 503) {
         return new Response(JSON.stringify({ error: err.message }), {
           status: 503,
-          headers: { 'Content-Type': 'application/json' },
+          headers: { "Content-Type": "application/json" },
         });
       }
-      console.error('[AUTH] Provisional creation failed:', err);
-      return error('Failed to create provisional account', 500);
+      console.error("[AUTH] Provisional creation failed:", err);
+      return error("Failed to create provisional account", 500);
     }
   }
 
   // Merge provisional user into authenticated account (JWT auth required)
-  if (path === '/auth/merge' && request.method === 'POST') {
-    return withAuthRouteRateLimit(request, 'auth:merge', async () => {
+  if (path === "/auth/merge" && request.method === "POST") {
+    return withAuthRouteRateLimit(request, "auth:merge", async () => {
       try {
         const user = await authenticate(request);
         const body = await request.json() as {
@@ -704,48 +921,60 @@ export async function handleAuth(request: Request): Promise<Response> {
           merge_method?: string;
         };
         const provisionalUserId = body.provisional_user_id;
-        const mergeMethod = (body.merge_method || 'api_merge') as MergeMethod;
+        const mergeMethod = (body.merge_method || "api_merge") as MergeMethod;
 
         if (!provisionalUserId) {
-          return error('Missing provisional_user_id', 400);
+          return error("Missing provisional_user_id", 400);
         }
 
         // Verify provisional user exists and is actually provisional
         if (!await isProvisionalUser(provisionalUserId)) {
-          return error('Not a provisional user', 400);
+          return error("Not a provisional user", 400);
         }
 
         // Prevent self-merge
         if (provisionalUserId === user.id) {
-          return error('Cannot merge into self', 400);
+          return error("Cannot merge into self", 400);
         }
 
-        await transferReferralAttributionBetweenUsers(provisionalUserId, user.id).catch((err) => {
-          console.warn('[auth] Failed to transfer provisional referral attribution:', err);
+        await transferReferralAttributionBetweenUsers(
+          provisionalUserId,
+          user.id,
+        ).catch((err) => {
+          console.warn(
+            "[auth] Failed to transfer provisional referral attribution:",
+            err,
+          );
         });
-        const result = await mergeProvisionalUser(provisionalUserId, user.id, mergeMethod);
+        const result = await mergeProvisionalUser(
+          provisionalUserId,
+          user.id,
+          mergeMethod,
+        );
         await claimReferralCookieForUser(request, user.id);
         return json({ success: true, merged: result });
       } catch (err: any) {
-        console.error('[AUTH] Merge failed:', err);
-        return error(err.message || 'Merge failed', 500);
+        console.error("[AUTH] Merge failed:", err);
+        return error(err.message || "Merge failed", 500);
       }
     });
   }
 
   // Redeem a browser-to-desktop referral claim token.
-  if (path === '/auth/referral-claim' && request.method === 'POST') {
+  if (path === "/auth/referral-claim" && request.method === "POST") {
     try {
       let user: AuthenticatedRequestUser;
       try {
         user = await authenticate(request);
       } catch {
-        return error('Unauthorized', 401);
+        return error("Unauthorized", 401);
       }
       const body = await request.json() as { claim_token?: unknown };
-      const claimToken = typeof body.claim_token === 'string' ? body.claim_token : '';
+      const claimToken = typeof body.claim_token === "string"
+        ? body.claim_token
+        : "";
       if (!claimToken) {
-        return error('Missing claim_token', 400);
+        return error("Missing claim_token", 400);
       }
 
       const result = await claimReferralTokenForUser(claimToken, user.id);
@@ -755,29 +984,29 @@ export async function handleAuth(request: Request): Promise<Response> {
         grant_ids: result.grantIds,
       });
     } catch (err) {
-      console.error('[AUTH] Referral claim failed:', err);
-      return error('Failed to claim referral', 500);
+      console.error("[AUTH] Referral claim failed:", err);
+      return error("Failed to claim referral", 500);
     }
   }
 
   // Desktop OAuth polling — desktop app polls this after opening browser for Google OAuth
-  if (path === '/auth/desktop-poll' && request.method === 'GET') {
-    return withAuthRouteRateLimit(request, 'auth:desktop-poll', async () => {
-      const sessionId = url.searchParams.get('session_id');
+  if (path === "/auth/desktop-poll" && request.method === "GET") {
+    return withAuthRouteRateLimit(request, "auth:desktop-poll", async () => {
+      const sessionId = url.searchParams.get("session_id");
       if (!sessionId) {
-        return error('Missing session_id', 400);
+        return error("Missing session_id", 400);
       }
 
-      const pollSecret = url.searchParams.get('session_secret');
+      const pollSecret = url.searchParams.get("session_secret");
       const token = await consumeDesktopOAuthSession(sessionId, pollSecret);
       if (token) {
-        return json({ status: 'complete', token });
+        return json({ status: "complete", token });
       }
-      return json({ status: 'pending' });
+      return json({ status: "pending" });
     });
   }
 
-  return error('Auth endpoint not found', 404);
+  return error("Auth endpoint not found", 404);
 }
 
 /**
@@ -894,8 +1123,13 @@ function getCallbackHTML(): string {
 
 function getCallbackSuccessHTML(returnTo?: string): string {
   // Validate return_to is a relative path (prevent open redirect)
-  const redirectTarget = (returnTo && returnTo.startsWith('/')) ? returnTo : '/';
-  const safeRedirect = redirectTarget.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/</g, '\\x3c');
+  const redirectTarget = (returnTo && returnTo.startsWith("/"))
+    ? returnTo
+    : "/";
+  const safeRedirect = redirectTarget.replace(/\\/g, "\\\\").replace(
+    /'/g,
+    "\\'",
+  ).replace(/</g, "\\x3c");
   return `<!DOCTYPE html>
 <html>
 <head><title>Signed in!</title></head>

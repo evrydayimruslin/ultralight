@@ -10,6 +10,7 @@ export type LaunchAuthDiagnosticStatus =
   | "callback_missing_bridge"
   | "exchange_started"
   | "exchange_succeeded"
+  | "provider_code_misrouted"
   | "token_stored"
   | "exchange_failed";
 
@@ -75,7 +76,10 @@ export function recordLaunchAuthDiagnostic(
 
 export function buildLaunchSignInUrl(nextPath = currentLaunchPath()): string {
   const apiBase = launchApiBaseUrl || window.location.origin;
-  const returnTo = new URL(normalizeLocalPath(nextPath), window.location.origin);
+  const returnTo = new URL(
+    normalizeLocalPath(nextPath),
+    window.location.origin,
+  );
   const loginUrl = new URL("/auth/login", apiBase);
   loginUrl.searchParams.set("return_to", returnTo.toString());
   return loginUrl.toString();
@@ -119,7 +123,10 @@ export async function signOutLaunch(): Promise<void> {
 }
 
 export function normalizeLocalPath(value: string | null | undefined): string {
-  if (!value || !value.startsWith("/") || value.startsWith("//") || value.includes("\\")) {
+  if (
+    !value || !value.startsWith("/") || value.startsWith("//") ||
+    value.includes("\\")
+  ) {
     return "/settings";
   }
   return value;
