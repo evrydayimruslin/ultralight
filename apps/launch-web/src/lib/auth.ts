@@ -159,50 +159,70 @@ export async function exchangeLaunchBridgeToken(
 
 let refreshInFlight: Promise<string | null> | null = null;
 
+async function performLaunchSessionRefresh(): Promise<string | null> {
+  const apiBase = launchApiBaseUrl || window.location.origin;
+  let response: Response;
+  try {
+    response = await fetch(`${apiBase}/auth/launch/refresh`, {
+      method: "POST",
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    });
+  } catch {
+    // Network failure is transient — keep the refresh marker so a later
+    // attempt can still succeed.
+    return null;
+  }
+
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      setLaunchRefreshAvailable(false);
+      recordLaunchAuthDiagnostic({
+        message: "The launch session refresh was rejected.",
+        status: "refresh_failed",
+      });
+    }
+    return null;
+  }
+
+  const payload = await response.json().catch(() => null) as
+    | LaunchAuthExchangeResponse
+    | null;
+  if (!payload?.access_token) return null;
+
+  setLaunchAuthToken(payload.access_token, payload.expires_in);
+  setLaunchRefreshAvailable(payload.refresh_supported !== false);
+  recordLaunchAuthDiagnostic({
+    expiresIn: String(payload.expires_in ?? ""),
+    status: "session_refreshed",
+  });
+  return payload.access_token;
+}
+
 // Silently rotate the launch session via the HttpOnly refresh cookie.
-// Single-flight: Supabase rotates refresh tokens, so concurrent refresh
-// calls would race each other into 401s.
+// Single-flight within this tab, and serialized ACROSS tabs via the Web Locks
+// API: tabs share the refresh cookie, and Supabase's refresh-token-reuse
+// detection revokes the whole token family when two tabs rotate the same
+// token outside the reuse window.
 export function refreshLaunchSession(): Promise<string | null> {
   if (refreshInFlight) return refreshInFlight;
 
   refreshInFlight = (async () => {
-    const apiBase = launchApiBaseUrl || window.location.origin;
-    let response: Response;
-    try {
-      response = await fetch(`${apiBase}/auth/launch/refresh`, {
-        method: "POST",
-        credentials: "include",
-        headers: { Accept: "application/json" },
-      });
-    } catch {
-      // Network failure is transient — keep the refresh marker so a later
-      // attempt can still succeed.
-      return null;
+    // Raw read (not getLaunchAuthToken — that self-clears on expiry): if the
+    // stored token CHANGES while we wait on the lock, another tab already
+    // rotated, and its result is in shared localStorage.
+    const tokenAtEntry = window.localStorage.getItem(LAUNCH_AUTH_TOKEN_KEY);
+
+    const run = async (): Promise<string | null> => {
+      const current = window.localStorage.getItem(LAUNCH_AUTH_TOKEN_KEY);
+      if (current && current !== tokenAtEntry) return current;
+      return await performLaunchSessionRefresh();
+    };
+
+    if (navigator.locks?.request) {
+      return await navigator.locks.request("ultralight:launch-refresh", run);
     }
-
-    if (!response.ok) {
-      if (response.status === 401 || response.status === 403) {
-        setLaunchRefreshAvailable(false);
-        recordLaunchAuthDiagnostic({
-          message: "The launch session refresh was rejected.",
-          status: "refresh_failed",
-        });
-      }
-      return null;
-    }
-
-    const payload = await response.json().catch(() => null) as
-      | LaunchAuthExchangeResponse
-      | null;
-    if (!payload?.access_token) return null;
-
-    setLaunchAuthToken(payload.access_token, payload.expires_in);
-    setLaunchRefreshAvailable(payload.refresh_supported !== false);
-    recordLaunchAuthDiagnostic({
-      expiresIn: String(payload.expires_in ?? ""),
-      status: "session_refreshed",
-    });
-    return payload.access_token;
+    return await run();
   })().finally(() => {
     refreshInFlight = null;
   });

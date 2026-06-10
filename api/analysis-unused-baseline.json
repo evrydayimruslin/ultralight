@@ -625,6 +625,8 @@
     {
       "file": "services/embed-bridge.ts",
       "types": [
+        "EmbedBridgeAudience",
+        "EmbedBridgeBurnResult",
         "EmbedBridgeTokenPayload"
       ]
     },

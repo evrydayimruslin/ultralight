@@ -5,8 +5,10 @@
 // shared auth-cookies.ts session cookies are SameSite=Lax and are never sent
 // on cross-origin fetches from the Pages SPA. The access token itself stays a
 // short-lived bearer in the SPA; only the refresh token lives in this
-// HttpOnly cookie, which the browser presents exclusively to
-// POST /auth/launch/refresh (fetch credentials: "include").
+// HttpOnly cookie. The __Host- prefix mandates Path=/, so the cookie rides
+// any credentialed request to the API origin — in practice the SPA only uses
+// fetch credentials: "include" on /auth/launch/exchange, /auth/launch/refresh,
+// and /auth/signout, and the refresh endpoint enforces an Origin allowlist.
 //
 // __Host- prefix: Secure, no Domain, Path=/ — workers.dev is on the Public
 // Suffix List, so sibling workers.dev subdomains cannot plant or shadow it.

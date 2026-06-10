@@ -105,7 +105,7 @@ still reflect the pre-pivot scope.
 | Skills → Functions convention (P3) | Pending (Phase 1) |
 | Widget removal (P2) | Pending (Phase 1) |
 | BYOK + Credits surfaces (P1) | Pending (Phase 2) |
-| Tools → Agents rename (P4) | Pending (Phase 3) |
+| Tools → Agents rename (P4, incl. caller-permissions rename) | Pending (Phase 3) |
 | Cross-Agent permissions (P5) | Pending (Phase 4) |
 
 ## External Agent Experience

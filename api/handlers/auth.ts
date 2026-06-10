@@ -34,6 +34,7 @@ import {
 } from "../services/request-auth.ts";
 import { logLegacyAuthTransport } from "../services/auth-transport.ts";
 import {
+  burnEmbedBridgeJti,
   consumeEmbedBridgeToken,
   getAccessTokenRemainingLifetimeSeconds,
   issueEmbedBridgeToken,
@@ -601,6 +602,21 @@ export async function handleAuth(request: Request): Promise<Response> {
           return error("Invalid or expired launch sign-in token", 401);
         }
 
+        // Single-use enforcement: the bridge travels in the URL fragment
+        // (browser history, screen shares) and carries a refresh token, so a
+        // replayed fragment must not mint a second 30-day session. Fail
+        // closed when the consumption store is unreachable.
+        const burnResult = await burnEmbedBridgeJti(bridgePayload);
+        if (burnResult === "replayed") {
+          return error("Launch sign-in token was already used", 401);
+        }
+        if (burnResult === "unavailable") {
+          return error(
+            "Sign-in is temporarily unavailable. Please try again.",
+            503,
+          );
+        }
+
         const verifiedUser = await verifySupabaseAccessToken(
           bridgePayload.access_token,
         );
@@ -674,14 +690,20 @@ export async function handleAuth(request: Request): Promise<Response> {
         tokens = await exchangeRefreshToken(refreshToken);
       } catch (err) {
         // Clear the cookie only when the auth provider explicitly rejected
-        // the refresh token; a transient outage must not destroy the session.
+        // the refresh token (invalid-grant family). Transient conditions —
+        // outage, upstream rate limit 429, timeout 408 — must not destroy
+        // the session.
         const rejected = err instanceof RefreshTokenExchangeError &&
-          err.status >= 400 && err.status < 500;
+          (err.status === 400 || err.status === 401 || err.status === 403);
         if (rejected) {
           const response = error("Launch session has expired", 401);
           clearLaunchRefreshCookie(response.headers);
           return response;
         }
+        console.warn(
+          "[auth] Launch refresh transient upstream failure:",
+          err instanceof RefreshTokenExchangeError ? err.status : err,
+        );
         return error("Session refresh is temporarily unavailable", 503);
       }
 
@@ -898,7 +920,35 @@ export async function handleAuth(request: Request): Promise<Response> {
         await validateSignoutRequest(request);
         const accessToken = extractBearerToken(request) ||
           getAuthAccessTokenFromRequest(request);
-        await revokeSupabaseSession(accessToken, "local");
+        const revocation = await revokeSupabaseSession(accessToken, "local");
+
+        // Launch sessions usually sign out AFTER the access token expired —
+        // the bearer path above is then ignored by Supabase, leaving the
+        // 30-day refresh token alive server-side. Mint a fresh access token
+        // from the launch refresh cookie and revoke through it, so the
+        // session (and its whole refresh-token family) actually dies.
+        if (!revocation.revoked) {
+          const launchRefreshToken = getLaunchRefreshTokenFromRequest(request);
+          if (launchRefreshToken) {
+            try {
+              const tokens = await exchangeRefreshToken(launchRefreshToken);
+              await revokeSupabaseSession(tokens.access_token, "local");
+            } catch (revokeErr) {
+              // A 4xx here means the refresh token is already dead — fine.
+              // Anything else is logged but must not block local sign-out.
+              if (
+                !(revokeErr instanceof RefreshTokenExchangeError &&
+                  revokeErr.status < 500)
+              ) {
+                console.warn(
+                  "[auth] Launch refresh-token revocation failed:",
+                  revokeErr,
+                );
+              }
+            }
+          }
+        }
+
         const response = json({ ok: true });
         clearAuthSessionCookies(response.headers);
         clearLaunchRefreshCookie(response.headers);

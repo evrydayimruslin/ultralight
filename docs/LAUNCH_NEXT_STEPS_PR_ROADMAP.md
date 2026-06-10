@@ -2,9 +2,9 @@
 
 > **⚠️ SUPERSEDED (2026-06-10)** by
 > [LAUNCH_PIVOT_DECISIONS.md](LAUNCH_PIVOT_DECISIONS.md). All NS-1..NS-11 PRs
-> landed and remain in place, but the locked decisions on first-class skills
-> (NS-7..NS-10 scope) and widget discovery surfaces are reversed by the pivot
-> (P2/P3). Do not start new work from this document.
+> landed (and remain in place as of this writing — the pivot's Phase 1
+> subsequently removes the first-class-skill and widget surfaces that
+> NS-7..NS-10 introduced). Do not start new work from this document.
 
 Last updated: 2026-06-08
 

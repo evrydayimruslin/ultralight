@@ -136,6 +136,59 @@ export async function issueEmbedBridgeToken(input: {
   };
 }
 
+export type EmbedBridgeBurnResult = 'burned' | 'replayed' | 'unavailable';
+
+// Atomically record a bridge jti as consumed. Postgres primary-key insert is
+// the atomicity guarantee — a duplicate-key conflict means the token was
+// already exchanged (replay). 'unavailable' means the store could not be
+// reached; callers must fail closed for audiences that carry refresh tokens.
+export async function burnEmbedBridgeJti(
+  payload: Pick<EmbedBridgeTokenPayload, 'jti' | 'aud' | 'expires_at'>,
+): Promise<EmbedBridgeBurnResult> {
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const serviceRoleKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+  if (!supabaseUrl || !serviceRoleKey) return 'unavailable';
+
+  try {
+    const response = await fetch(
+      `${supabaseUrl}/rest/v1/embed_bridge_consumptions`,
+      {
+        method: 'POST',
+        headers: {
+          'apikey': serviceRoleKey,
+          'Authorization': `Bearer ${serviceRoleKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          jti: payload.jti,
+          aud: payload.aud,
+          expires_at: new Date(payload.expires_at * 1000).toISOString(),
+        }),
+      },
+    );
+
+    if (response.ok) {
+      // Opportunistic cleanup — rows only matter for the <=120s bridge TTL.
+      fetch(
+        `${supabaseUrl}/rest/v1/embed_bridge_consumptions?expires_at=lt.${encodeURIComponent(new Date(Date.now() - 60_000).toISOString())}`,
+        {
+          method: 'DELETE',
+          headers: {
+            'apikey': serviceRoleKey,
+            'Authorization': `Bearer ${serviceRoleKey}`,
+          },
+        },
+      ).catch(() => {});
+      return 'burned';
+    }
+
+    if (response.status === 409) return 'replayed';
+    return 'unavailable';
+  } catch {
+    return 'unavailable';
+  }
+}
+
 export async function consumeEmbedBridgeToken(
   token: string | null | undefined,
   nowMs = Date.now(),

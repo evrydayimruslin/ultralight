@@ -79,9 +79,11 @@ export function App(): ReactElement {
   useEffect(() => {
     if (getLaunchAuthToken() || !isLaunchRefreshAvailable()) return;
     let cancelled = false;
-    refreshLaunchSession().then((token) => {
-      if (token && !cancelled) setLocation(currentLocation());
-    });
+    refreshLaunchSession()
+      .then((token) => {
+        if (token && !cancelled) setLocation(currentLocation());
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };

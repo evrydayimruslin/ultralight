@@ -59,8 +59,9 @@ shared backend. Deferred capabilities stay dormant in the capability basin.
 2. **Vocabulary: "Agents" vs "connected agent."** Marketplace entities
    (deployed apps) are **Agents**. The user's external client (Claude Code,
    OpenClaw, Cursor) is their **connected agent**. The existing
-   `agent-permissions` types/endpoints (which gate the connected agent) are
-   renamed to **caller-permissions** to free the word "Agent" for the entity.
+   `agent-permissions` types/endpoints (which gate the connected agent) will
+   be renamed to **caller-permissions** (lands with the Phase 3 rename sweep)
+   to free the word "Agent" for the entity.
 3. **P5 composition: the per-Agent grant is authoritative.** A user-granted
    `caller Agent → target Agent function` permission authorizes the call on
    its own — it does not additionally require the connected-agent policy on
@@ -89,7 +90,12 @@ shared backend. Deferred capabilities stay dormant in the capability basin.
   launch inference-options endpoint, pre-call balance gate on the runtime AI
   path, Credits rename across contract/facade/FE/OpenAPI/SDK/CLI copy.
 - **Phase 3:** P4 — Tools → Agents rename (`/tools/:slug` → `/agents/:slug`
-  with compatibility aliases, contract symbol renames, copy sweep).
+  with compatibility aliases, contract symbol renames, copy sweep). Includes
+  the locked-decision-2 rename: `/api/launch/tools/:id/agent-permissions` →
+  `/api/launch/agents/:id/caller-permissions` (deprecation-window alias),
+  `LaunchAgentFunctionPermission*` contract symbols →
+  `LaunchCallerFunctionPermission*`, and
+  `services/agent-function-permissions.ts` → caller-permissions naming.
 - **Phase 4:** P5 — manifest declaration + grant table/inbox/UI +
   caller-identity propagation + credit-denominated monthly caps + unified
   enforcement (closing the `ul.codemode` bypass).
@@ -98,9 +104,9 @@ shared backend. Deferred capabilities stay dormant in the capability basin.
 
 - "Monthly spend caps per function" do NOT exist today:
   `user_app_permissions.budget_limit` is a call COUNT, and
-  `getBudgetPeriodStart` (period reset) has zero callers. P5 builds real
-  credit-denominated caps; nothing should be wired to the dormant columns
-  as-is.
+  `getBudgetPeriodStart` (period reset) has no production callers — only its
+  own tests. P5 builds real credit-denominated caps; nothing should be wired
+  to the dormant columns as-is.
 - Production `ul.codemode` executes library-app functions in-process with no
   permission gate, budget accounting, or receipts
   (`api/runtime/dynamic-executor.ts`, `platform-mcp.ts` codemode path). P5

@@ -107,7 +107,7 @@ flowchart LR
 | Desktop channel | `staging` | `production` | set by `ULTRALIGHT_DESKTOP_BUILD_CHANNEL` in desktop workflows |
 | Desktop pinned API base | `https://ultralight-api-staging.rgn4jz429m.workers.dev` | `https://ultralight-api.rgn4jz429m.workers.dev` | enforced in [desktop/src/lib/environment.ts](../desktop/src/lib/environment.ts) |
 | Desktop updater endpoint | none in standard staging builds | [latest.json](https://github.com/evrydayimruslin/ultralight/releases/latest/download/latest.json) | updater is production-only in the tag workflow |
-| Web product origin | `https://staging.ultralight-launch-web.pages.dev` | `https://ultralight-launch-web.pages.dev` | direct browser calls are allowed by `CORS_ALLOWED_ORIGINS` in [api/wrangler.toml](../api/wrangler.toml); launch auth remains bearer-token based for this phase |
+| Web product origin | `https://staging.ultralight-launch-web.pages.dev` | `https://ultralight-launch-web.pages.dev` | direct browser calls are allowed by `CORS_ALLOWED_ORIGINS` in [api/wrangler.toml](../api/wrangler.toml); launch auth uses a bearer access token plus an HttpOnly `SameSite=None` refresh cookie rotated via `POST /auth/launch/refresh` (Phase 0 pivot) |
 
 ## Supporting And Non-Standard Surfaces
 
