@@ -128,6 +128,98 @@ function privateOwnerTestApp(): Record<string, unknown> {
   };
 }
 
+// Legacy-format API token (plaintext column) so the api_token auth path can be
+// exercised without reproducing salted-hash material in tests.
+const TEST_API_TOKEN = `ul_${'a'.repeat(32)}`;
+
+function apiTokenAuthMock(): typeof fetch {
+  return (async (
+    input: Request | URL | string,
+    init?: RequestInit,
+  ) => {
+    const url = input instanceof Request ? input.url : String(input);
+    const method = init?.method ||
+      (input instanceof Request ? input.method : 'GET');
+    if (url.startsWith('https://supabase.test/rest/v1/user_api_tokens?')) {
+      if (method === 'PATCH') {
+        return new Response(null, { status: 204 });
+      }
+      return jsonResponse({
+        id: 'token-1',
+        user_id: 'user-1',
+        token_hash: null,
+        token_salt: null,
+        plaintext_token: TEST_API_TOKEN,
+        scopes: ['*'],
+        app_ids: null,
+        function_names: null,
+        expires_at: null,
+      });
+    }
+    if (url.startsWith('https://supabase.test/rest/v1/users?')) {
+      return jsonResponse({
+        id: 'user-1',
+        email: 'agent@example.com',
+        tier: 'free',
+        provisional: false,
+        last_active_at: null,
+      });
+    }
+    return jsonResponse([]);
+  }) as typeof fetch;
+}
+
+function byokUserRow(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    id: 'user-1',
+    email: 'founder@example.com',
+    display_name: 'Founder',
+    avatar_url: null,
+    tier: 'free',
+    country: null,
+    featured_app_id: null,
+    profile_slug: 'founder',
+    byok_enabled: false,
+    byok_provider: null,
+    byok_keys: null,
+    ...overrides,
+  };
+}
+
+function byokSessionMock(
+  profile: Record<string, unknown>,
+  balanceLight = 5000,
+): typeof fetch {
+  return (async (input: Request | URL | string) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url === 'https://supabase.test/auth/v1/user') {
+      return jsonResponse({
+        id: 'user-1',
+        email: 'founder@example.com',
+        user_metadata: {},
+      });
+    }
+    if (url.includes('/rest/v1/users?') && url.includes('byok_keys')) {
+      return jsonResponse([profile]);
+    }
+    if (
+      url.includes('/rest/v1/users?') &&
+      url.includes('select=balance_light')
+    ) {
+      return jsonResponse([{ balance_light: balanceLight }]);
+    }
+    if (url.includes('/rest/v1/users?') && url.includes('select=id')) {
+      return jsonResponse([{ id: 'user-1' }]);
+    }
+    if (url.includes('/rest/v1/users?') && url.includes('select=tier')) {
+      return jsonResponse([{ tier: 'free' }]);
+    }
+    return jsonResponse([]);
+  }) as typeof fetch;
+}
+
 Deno.test('launch facade: install instructions expose MCP and CLI targets', async () => {
   await withLaunchEnv(async () => {
     const response = await handleLaunch(
@@ -277,7 +369,7 @@ Deno.test('launch facade: status exposes self-describing agent links', async () 
       apiRoutes: string[];
       endpoints: Record<string, string | undefined>;
       compatibilityPublicRoutes: string[];
-      capabilities: { deferred: string[] };
+      capabilities: { included: string[]; deferred: string[] };
     };
 
     assertEquals(response.status, 200);
@@ -349,6 +441,28 @@ Deno.test('launch facade: status exposes self-describing agent links', async () 
       true,
     );
     assertEquals(body.endpoints.apiKeys, '/api/launch/api-keys');
+    assertEquals(body.endpoints.byok, '/api/launch/byok');
+    assertEquals(
+      body.endpoints.inferenceOptions,
+      '/api/launch/inference-options',
+    );
+    assertEquals(body.apiRoutes.includes('GET /api/launch/byok'), true);
+    assertEquals(
+      body.apiRoutes.includes('PUT /api/launch/byok/:provider'),
+      true,
+    );
+    assertEquals(
+      body.apiRoutes.includes('DELETE /api/launch/byok/:provider'),
+      true,
+    );
+    assertEquals(
+      body.apiRoutes.includes('POST /api/launch/byok/primary'),
+      true,
+    );
+    assertEquals(
+      body.apiRoutes.includes('GET /api/launch/inference-options'),
+      true,
+    );
     assertEquals(body.endpoints.widgetRender, undefined);
     assertEquals(body.endpoints.widgetDetail, undefined);
     assertEquals(body.endpoints.toolSkills, undefined);
@@ -367,7 +481,7 @@ Deno.test('launch facade: status exposes self-describing agent links', async () 
     );
     assertEquals(
       body.endpoints.walletTopUpQuote,
-      '/api/launch/wallet/topup/quote?amount_light=2500&method=card',
+      '/api/launch/wallet/topup/quote?amount_credits=2500&method=card',
     );
     assertEquals(
       body.endpoints.walletTopUpIntent,
@@ -382,6 +496,10 @@ Deno.test('launch facade: status exposes self-describing agent links', async () 
       '/api/launch/wallet/earnings?tool={toolId}&limit=25&cursor={cursor}',
     );
     assertEquals(body.capabilities.deferred.includes('desktop'), true);
+    assertEquals(body.capabilities.included.includes('credits_wallet'), true);
+    assertEquals(body.capabilities.included.includes('byok'), true);
+    assertEquals(body.capabilities.included.includes('light_wallet'), false);
+    assertEquals(body.capabilities.deferred.includes('byok'), false);
   });
 });
 
@@ -417,6 +535,10 @@ Deno.test('launch facade: openapi documents curated launch and MCP paths', async
     assertEquals(Boolean(spec.paths['/api/launch/wallet/topup/intent']), true);
     assertEquals(Boolean(spec.paths['/api/launch/api-keys']), true);
     assertEquals(Boolean(spec.paths['/api/launch/api-keys/{id}']), true);
+    assertEquals(Boolean(spec.paths['/api/launch/byok']), true);
+    assertEquals(Boolean(spec.paths['/api/launch/byok/{provider}']), true);
+    assertEquals(Boolean(spec.paths['/api/launch/byok/primary']), true);
+    assertEquals(Boolean(spec.paths['/api/launch/inference-options']), true);
     assertEquals(
       Object.keys(spec.paths).some((path) => path.includes('/widgets')),
       false,
@@ -461,6 +583,11 @@ Deno.test('launch facade: openapi documents curated launch and MCP paths', async
     assertEquals(Boolean(spec.components?.schemas?.WalletTransaction), true);
     assertEquals(Boolean(spec.components?.schemas?.WalletEarning), true);
     assertEquals(Boolean(spec.components?.schemas?.WalletFundingQuote), true);
+    assertEquals(Boolean(spec.components?.schemas?.ByokSummary), true);
+    assertEquals(Boolean(spec.components?.schemas?.ByokProviderOption), true);
+    assertEquals(Boolean(spec.components?.schemas?.ByokUpsertRequest), true);
+    assertEquals(Boolean(spec.components?.schemas?.ByokMutation), true);
+    assertEquals(Boolean(spec.components?.schemas?.InferenceOptions), true);
     assertEquals(
       spec['x-launch-scope']?.deferredCapabilities?.includes('desktop'),
       true,
@@ -991,12 +1118,12 @@ Deno.test('launch facade: API key metadata requires authentication', async () =>
   });
 });
 
-Deno.test('launch facade: wallet top-up quote uses launch gross-up math', async () => {
+Deno.test('launch facade: wallet top-up quote accepts amount_credits and emits both aliases', async () => {
   await withLaunchEnv(
     async () => {
       const response = await handleLaunch(
         new Request(
-          'https://ultralight.test/api/launch/wallet/topup/quote?amount_light=10000&method=ach',
+          'https://ultralight.test/api/launch/wallet/topup/quote?amount_credits=10000&method=ach',
           { headers: { Authorization: 'Bearer browser-session-token' } },
         ),
       );
@@ -1004,7 +1131,9 @@ Deno.test('launch facade: wallet top-up quote uses launch gross-up math', async 
         quote: {
           method: string;
           methodLabel: string;
+          amountCredits: number;
           amountLight: number;
+          creditsPerDollar: number;
           lightPerDollar: number;
           baseAmountCents: number;
           processingFeeCents: number;
@@ -1016,7 +1145,9 @@ Deno.test('launch facade: wallet top-up quote uses launch gross-up math', async 
       assertEquals(response.status, 200);
       assertEquals(body.quote.method, 'ach');
       assertEquals(body.quote.methodLabel, 'Bank (ACH)');
+      assertEquals(body.quote.amountCredits, 10000);
       assertEquals(body.quote.amountLight, 10000);
+      assertEquals(body.quote.creditsPerDollar, 100);
       assertEquals(body.quote.lightPerDollar, 100);
       assertEquals(body.quote.baseAmountCents, 10000);
       assertEquals(body.quote.processingFeeCents, 81);
@@ -1060,13 +1191,23 @@ Deno.test('launch facade: wallet transactions support cursor pagination', async 
       );
       const body = await response.json() as {
         kind: string;
-        items: Array<{ id: string; createdAt?: string | null }>;
+        items: Array<{
+          id: string;
+          amount: { credits: number; light: number; display: string };
+          createdAt?: string | null;
+        }>;
         page: { limit: number; hasMore: boolean; nextCursor?: string | null };
       };
 
       assertEquals(response.status, 200);
       assertEquals(body.kind, 'transactions');
       assertEquals(body.items.map((item) => item.id), ['tx-1', 'tx-2']);
+      assertEquals(body.items[0].amount, {
+        credits: 1000,
+        light: 1000,
+        display: '1,000 credits',
+      });
+      assertEquals(body.items[1].amount.credits, body.items[1].amount.light);
       assertEquals(body.page.limit, 2);
       assertEquals(body.page.hasMore, true);
       assertEquals(body.page.nextCursor, '2026-06-06T09:58:00.000Z');
@@ -1237,7 +1378,7 @@ Deno.test('launch facade: builder leaderboard maps request into RPC payload', as
         entries: Array<{
           userId: string;
           displayName?: string | null;
-          value: { light: number; display: string };
+          value: { credits: number; light: number; display: string };
           eventCount?: number;
           featuredTool?: { slug: string; name: string } | null;
         }>;
@@ -1258,8 +1399,9 @@ Deno.test('launch facade: builder leaderboard maps request into RPC payload', as
       assertEquals(body.entries[0].userId, 'user-1');
       assertEquals(body.entries[0].displayName, 'Ada');
       assertEquals(body.entries[0].value, {
+        credits: 123,
         light: 123,
-        display: '123 Light',
+        display: '123 credits',
       });
       assertEquals(body.entries[0].eventCount, 7);
       assertEquals(body.entries[0].featuredTool?.slug, 'deploy-helper');
@@ -1500,6 +1642,208 @@ Deno.test('launch facade: mutation methods are rejected', async () => {
 
     assertEquals(response.status, 405);
   });
+});
+
+Deno.test('launch facade: wallet top-up quote still accepts deprecated amount_light', async () => {
+  await withLaunchEnv(
+    async () => {
+      const response = await handleLaunch(
+        new Request(
+          'https://ultralight.test/api/launch/wallet/topup/quote?amount_light=2500&method=card',
+          { headers: { Authorization: 'Bearer browser-session-token' } },
+        ),
+      );
+      const body = await response.json() as {
+        quote: { amountCredits: number; amountLight: number };
+      };
+
+      assertEquals(response.status, 200);
+      assertEquals(body.quote.amountCredits, 2500);
+      assertEquals(body.quote.amountLight, 2500);
+    },
+    byokSessionMock(byokUserRow()),
+  );
+});
+
+Deno.test({
+  name:
+    'launch facade: byok and inference endpoints require an account session',
+  // The api_token auth path constructs a supabase-js client whose auth
+  // auto-refresh interval cannot be stopped from test code.
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    await withLaunchEnv(
+      async () => {
+        const attempts: Array<{ path: string; init?: RequestInit }> = [
+          { path: '/api/launch/byok' },
+          {
+            path: '/api/launch/byok/openrouter',
+            init: {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ apiKey: 'sk-or-test', validate: false }),
+            },
+          },
+          { path: '/api/launch/byok/openrouter', init: { method: 'DELETE' } },
+          {
+            path: '/api/launch/byok/primary',
+            init: {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ provider: 'openrouter' }),
+            },
+          },
+          { path: '/api/launch/inference-options' },
+        ];
+
+        for (const attempt of attempts) {
+          const init = attempt.init || {};
+          const response = await handleLaunch(
+            new Request(`https://ultralight.test${attempt.path}`, {
+              ...init,
+              headers: {
+                ...(init.headers || {}),
+                Authorization: `Bearer ${TEST_API_TOKEN}`,
+              },
+            }),
+          );
+          const body = await response.json() as { error?: string };
+
+          assertEquals(response.status, 403, attempt.path);
+          assertStringIncludes(
+            body.error || '',
+            'account session',
+            attempt.path,
+          );
+        }
+      },
+      apiTokenAuthMock(),
+    );
+  },
+});
+
+Deno.test('launch facade: byok summary lists providers without key material', async () => {
+  await withLaunchEnv(
+    async () => {
+      const response = await handleLaunch(
+        new Request('https://ultralight.test/api/launch/byok', {
+          headers: { Authorization: 'Bearer browser-session-token' },
+        }),
+      );
+      const raw = await response.text();
+      const body = JSON.parse(raw) as {
+        enabled: boolean;
+        primaryProvider: string | null;
+        providers: Array<{
+          id: string;
+          name: string;
+          configured: boolean;
+          primary: boolean;
+          model?: string | null;
+          defaultModel?: string | null;
+        }>;
+      };
+
+      assertEquals(response.status, 200);
+      assertEquals(body.enabled, true);
+      assertEquals(body.primaryProvider, 'openrouter');
+      assertEquals(body.providers.length, 6);
+      const openrouter = body.providers.find((p) => p.id === 'openrouter');
+      assertEquals(openrouter?.configured, true);
+      assertEquals(openrouter?.primary, true);
+      assertEquals(openrouter?.model, 'openai/gpt-4o-mini');
+      const openai = body.providers.find((p) => p.id === 'openai');
+      assertEquals(openai?.configured, false);
+      assertEquals(openai?.primary, false);
+      // Key material must never leave the server.
+      assertEquals(raw.includes('sk-or-secret-key-value'), false);
+      assertEquals(raw.includes('encrypted'), false);
+    },
+    byokSessionMock(byokUserRow({
+      byok_enabled: true,
+      byok_provider: 'openrouter',
+      byok_keys: {
+        openrouter: {
+          encrypted_key: 'sk-or-secret-key-value',
+          model: 'openai/gpt-4o-mini',
+          added_at: '2026-06-01T00:00:00.000Z',
+        },
+      },
+    })),
+  );
+});
+
+Deno.test('launch facade: inference options report credits billing without byok', async () => {
+  await withLaunchEnv(
+    async () => {
+      const response = await handleLaunch(
+        new Request('https://ultralight.test/api/launch/inference-options', {
+          headers: { Authorization: 'Bearer browser-session-token' },
+        }),
+      );
+      const body = await response.json() as {
+        billingMode: string;
+        primaryProvider: string | null;
+        configuredProviders: string[];
+        credits: {
+          spendable: number | null;
+          minimumForPlatformInference: number;
+          usable: boolean;
+          display: string;
+        };
+      };
+
+      assertEquals(response.status, 200);
+      assertEquals(body.billingMode, 'credits');
+      assertEquals(body.primaryProvider, null);
+      assertEquals(body.configuredProviders, []);
+      assertEquals(body.credits.spendable, 5000);
+      assertEquals(body.credits.minimumForPlatformInference, 50);
+      assertEquals(body.credits.usable, true);
+      assertEquals(body.credits.display, '5,000 credits');
+    },
+    byokSessionMock(byokUserRow(), 5000),
+  );
+});
+
+Deno.test('launch facade: inference options report byok billing when primary configured', async () => {
+  await withLaunchEnv(
+    async () => {
+      const response = await handleLaunch(
+        new Request('https://ultralight.test/api/launch/inference-options', {
+          headers: { Authorization: 'Bearer browser-session-token' },
+        }),
+      );
+      const body = await response.json() as {
+        billingMode: string;
+        primaryProvider: string | null;
+        configuredProviders: string[];
+        credits: { spendable: number | null; usable: boolean };
+      };
+
+      assertEquals(response.status, 200);
+      assertEquals(body.billingMode, 'byok');
+      assertEquals(body.primaryProvider, 'openrouter');
+      assertEquals(body.configuredProviders, ['openrouter']);
+      assertEquals(body.credits.spendable, 0);
+      assertEquals(body.credits.usable, false);
+    },
+    byokSessionMock(
+      byokUserRow({
+        byok_enabled: true,
+        byok_provider: 'openrouter',
+        byok_keys: {
+          openrouter: {
+            encrypted_key: 'sk-or-secret-key-value',
+            model: null,
+            added_at: '2026-06-01T00:00:00.000Z',
+          },
+        },
+      }),
+      0,
+    ),
+  );
 });
 
 function parseJsonBody(

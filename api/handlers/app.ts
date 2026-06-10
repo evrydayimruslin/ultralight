@@ -1131,7 +1131,7 @@ export function createApp() {
                 check: "user_openrouter_key",
                 result: userOrKey
                   ? "Provisioned"
-                  : "Not yet created (will be provisioned on first OpenRouter Light chat)",
+                  : "Not yet created (will be provisioned on first credits-billed OpenRouter chat)",
                 ok: true,
               });
             }
@@ -4307,7 +4307,7 @@ async function renderTermsHTML(): Promise<string> {
 
   const sections = [
     {
-      title: "Light",
+      title: "Credits",
       body: [
         copy.purchasedLight,
         copy.fundingTerms,
@@ -4374,7 +4374,7 @@ async function renderTermsHTML(): Promise<string> {
 <body>
 <main>
   <div class="eyebrow">Ultralight Terms</div>
-  <h1>Light Economy Terms</h1>
+  <h1>Credits Economy Terms</h1>
   <p class="updated">Last updated May 18, 2026</p>
   <p>These terms summarize the payment, creator earnings, payout, and platform fee rules used by Ultralight. Additional product or marketplace terms may apply to specific workflows.</p>
   ${
@@ -5140,7 +5140,7 @@ async function handlePublishedPage(
     // Check hosting suspension before access control
     if (contentRow.hosting_suspended) {
       return new Response(
-        `<!DOCTYPE html><html><head><title>Page Suspended</title><style>body{font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f8f9fa}div{text-align:center;max-width:480px;padding:2rem}.icon{font-size:3rem;margin-bottom:1rem}h1{margin:0 0 .5rem;font-size:1.5rem}p{color:#666;line-height:1.6}</style></head><body><div><div class="icon">&#9888;</div><h1>Page Suspended</h1><p>This page has been taken offline because the owner's Light balance has been depleted. The owner can restore it by adding Light.</p></div></body></html>`,
+        `<!DOCTYPE html><html><head><title>Page Suspended</title><style>body{font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f8f9fa}div{text-align:center;max-width:480px;padding:2rem}.icon{font-size:3rem;margin-bottom:1rem}h1{margin:0 0 .5rem;font-size:1.5rem}p{color:#666;line-height:1.6}</style></head><body><div><div class="icon">&#9888;</div><h1>Page Suspended</h1><p>This page has been taken offline because the owner's credits balance has been depleted. The owner can restore it by adding credits.</p></div></body></html>`,
         { status: 402, headers: { "Content-Type": "text/html" } },
       );
     }
@@ -5154,7 +5154,7 @@ async function handlePublishedPage(
       } catch {
         // Not authenticated — show a paywall message
         return new Response(
-          `<!DOCTYPE html><html><head><title>Paid Content</title><style>body{font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f8f9fa}div{text-align:center;max-width:480px;padding:2rem}.icon{font-size:3rem;margin-bottom:1rem}h1{margin:0 0 .5rem;font-size:1.5rem}p{color:#666;line-height:1.6}.price{font-size:1.25rem;font-weight:600;color:#333;margin:1rem 0}</style></head><body><div><div class="icon">&#128176;</div><h1>Paid Page</h1><p class="price">✦${contentRow.price_light} per view</p><p>Sign in and have enough Light to view this page. The fee is transferred directly to the page owner.</p></div></body></html>`,
+          `<!DOCTYPE html><html><head><title>Paid Content</title><style>body{font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f8f9fa}div{text-align:center;max-width:480px;padding:2rem}.icon{font-size:3rem;margin-bottom:1rem}h1{margin:0 0 .5rem;font-size:1.5rem}p{color:#666;line-height:1.6}.price{font-size:1.25rem;font-weight:600;color:#333;margin:1rem 0}</style></head><body><div><div class="icon">&#128176;</div><h1>Paid Page</h1><p class="price">✦${contentRow.price_light} per view</p><p>Sign in and have enough credits to view this page. The fee is transferred directly to the page owner.</p></div></body></html>`,
           { status: 402, headers: { "Content-Type": "text/html" } },
         );
       }
@@ -5191,7 +5191,7 @@ async function handlePublishedPage(
             if (!rows || rows.length === 0) {
               // Insufficient balance
               return new Response(
-                `<!DOCTYPE html><html><head><title>Insufficient Balance</title><style>body{font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f8f9fa}div{text-align:center;max-width:480px;padding:2rem}.icon{font-size:3rem;margin-bottom:1rem}h1{margin:0 0 .5rem;font-size:1.5rem}p{color:#666;line-height:1.6}.price{font-size:1.25rem;font-weight:600;color:#333;margin:1rem 0}</style></head><body><div><div class="icon">&#9888;</div><h1>Insufficient Balance</h1><p class="price">This page costs ✦${contentRow.price_light}</p><p>Add Light from Wallet to view this page.</p></div></body></html>`,
+                `<!DOCTYPE html><html><head><title>Insufficient Balance</title><style>body{font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f8f9fa}div{text-align:center;max-width:480px;padding:2rem}.icon{font-size:3rem;margin-bottom:1rem}h1{margin:0 0 .5rem;font-size:1.5rem}p{color:#666;line-height:1.6}.price{font-size:1.25rem;font-weight:600;color:#333;margin:1rem 0}</style></head><body><div><div class="icon">&#9888;</div><h1>Insufficient Balance</h1><p class="price">This page costs ✦${contentRow.price_light}</p><p>Add credits from Wallet to view this page.</p></div></body></html>`,
                 { status: 402, headers: { "Content-Type": "text/html" } },
               );
             }
@@ -5797,7 +5797,7 @@ function getDownloadPageHTML(): string {
         <li>Create and manage AI agents with connected MCP tools</li>
         <li>Activity inbox with widget-based approval workflows</li>
         <li>Project-based agent organization with kanban boards</li>
-        <li>Runs locally with BYOK or Light-debit platform inference</li>
+        <li>Runs with BYOK or credits-billed platform inference</li>
         <li>Full access to the Ultralight app ecosystem</li>
       </ul>
     </div>

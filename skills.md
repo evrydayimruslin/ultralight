@@ -516,7 +516,7 @@ ul.set({
   supabase_server?: string | null,     // assign/unassign BYO Supabase
   calls_per_minute?: number | null,    // rate limit (null = platform default)
   calls_per_day?: number | null,
-  default_price_cents?: number,        // pricing
+  default_price_credits?: number,      // price in credits (✦) per call
   function_prices?: { [fn: string]: number }
 })
 ```

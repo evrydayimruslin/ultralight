@@ -6,7 +6,8 @@ export const LAUNCH_INCLUDED_CAPABILITIES = [
   "tool_discovery",
   "public_tool_pages",
   "owner_admin",
-  "light_wallet",
+  "credits_wallet",
+  "byok",
   "builder_leaderboard",
   "fee_credit_leaderboard",
   "launch_embeddings",
@@ -18,7 +19,6 @@ export type LaunchIncludedCapability =
 
 export const LAUNCH_DEFERRED_CAPABILITIES = [
   "desktop",
-  "byok",
   "web_search",
   "cerebras",
   "standalone_agent",
@@ -59,6 +59,11 @@ export const LAUNCH_API_ROUTES = [
   "GET /api/launch/api-keys",
   "POST /api/launch/api-keys",
   "DELETE /api/launch/api-keys/:id",
+  "GET /api/launch/byok",
+  "PUT /api/launch/byok/:provider",
+  "DELETE /api/launch/byok/:provider",
+  "POST /api/launch/byok/primary",
+  "GET /api/launch/inference-options",
   "GET /api/launch/library",
   "GET /api/launch/store",
   "GET /api/launch/discover",
@@ -233,6 +238,8 @@ export type LaunchWalletFundingMethod =
   typeof LAUNCH_WALLET_FUNDING_METHODS[number];
 
 export interface LaunchMoneyAmount {
+  credits: number;
+  /** @deprecated alias of credits */
   light: number;
   display: string;
 }
@@ -362,14 +369,21 @@ export interface LaunchWalletFundingPreset {
 }
 
 export interface LaunchWalletFundingQuoteRequest {
-  amountLight: number;
+  /** Wire param: amount_credits (preferred). */
+  amountCredits: number;
+  /** @deprecated alias of amountCredits (wire param: amount_light) */
+  amountLight?: number;
   method: LaunchWalletFundingMethod;
 }
 
 export interface LaunchWalletFundingFeeSummary {
   method: LaunchWalletFundingMethod;
   methodLabel: "Card" | "Bank (ACH)";
+  amountCredits: number;
+  /** @deprecated alias of amountCredits */
   amountLight: number;
+  creditsPerDollar: 100;
+  /** @deprecated alias of creditsPerDollar */
   lightPerDollar: 100;
   baseAmountCents: number;
   processingFeeCents: number;
@@ -399,6 +413,55 @@ export interface LaunchWalletFundingIntentResponse {
   quote: LaunchWalletFundingFeeSummary;
   billingAddress?: unknown;
   generatedAt: string;
+}
+
+export interface LaunchByokProviderOption {
+  id: string;
+  name: string;
+  description?: string;
+  configured: boolean;
+  primary: boolean;
+  defaultModel?: string | null;
+  model?: string | null;
+  apiKeyPrefix?: string | null;
+  apiKeyUrl?: string | null;
+  docsUrl?: string | null;
+}
+
+export interface LaunchByokSummaryResponse {
+  enabled: boolean;
+  primaryProvider: string | null;
+  providers: LaunchByokProviderOption[];
+  generatedAt?: string;
+}
+
+export interface LaunchByokUpsertRequest {
+  apiKey: string;
+  model?: string;
+  validate?: boolean;
+}
+
+export interface LaunchByokMutationResponse {
+  ok: true;
+  provider: string;
+  message: string;
+}
+
+export interface LaunchByokPrimaryRequest {
+  provider: string;
+}
+
+export interface LaunchInferenceOptionsResponse {
+  billingMode: "byok" | "credits";
+  primaryProvider: string | null;
+  configuredProviders: string[];
+  credits: {
+    spendable: number | null;
+    minimumForPlatformInference: number;
+    usable: boolean;
+    display: string;
+  };
+  generatedAt?: string;
 }
 
 export type LaunchDiscoveryRetrievalMode =

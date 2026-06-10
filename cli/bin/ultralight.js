@@ -222,7 +222,7 @@ Batch-configure app settings. Only provided fields are updated.
    - download_access=owner|public — who can download source
    - calls_per_minute=N — rate limit per minute
    - calls_per_day=N — rate limit per day
-   - default_price_cents=N — price per call in cents
+   - default_price_credits=N — price per call in credits (✦)
 3. Build the settings object from parsed values
 4. Call \`ul.set({ app_id, ...settings })\`
 5. Confirm what was changed and the current state

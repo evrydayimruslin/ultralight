@@ -5,10 +5,15 @@ import type {
   LaunchApiKeyCreateResponse,
   LaunchApiKeyDeleteResponse,
   LaunchApiKeyListResponse,
+  LaunchByokMutationResponse,
+  LaunchByokPrimaryRequest,
+  LaunchByokSummaryResponse,
+  LaunchByokUpsertRequest,
   LaunchDiscoveryRequest,
   LaunchDiscoveryResponse,
   LaunchFunctionRunRequest,
   LaunchFunctionRunResponse,
+  LaunchInferenceOptionsResponse,
   LaunchInstallInstruction,
   LaunchInstallResponse,
   LaunchLeaderboardKind,
@@ -186,11 +191,13 @@ export class LaunchApiClient {
   }
 
   walletTopUpQuote(request: {
-    amountLight: number;
+    amountCredits: number;
     method: LaunchWalletFundingMethod;
   }): Promise<LaunchWalletFundingQuoteResponse> {
     const params = new URLSearchParams({
-      amount_light: String(request.amountLight),
+      amount_credits: String(request.amountCredits),
+      // Deprecated alias kept for one rename window.
+      amount_light: String(request.amountCredits),
       method: request.method,
     });
     return this.fetchJson(
@@ -204,7 +211,9 @@ export class LaunchApiClient {
     return this.fetchJson("/api/launch/wallet/topup/intent", {
       method: "POST",
       body: JSON.stringify({
-        amount_light: request.amountLight,
+        amount_credits: request.amountCredits,
+        // Deprecated alias kept for one rename window.
+        amount_light: request.amountCredits,
         method: request.method,
         terms_accepted: request.termsAccepted ?? true,
         ...(request.billingAddress !== undefined
@@ -212,6 +221,44 @@ export class LaunchApiClient {
           : {}),
       }),
     });
+  }
+
+  byok(): Promise<LaunchByokSummaryResponse> {
+    return this.fetchJson("/api/launch/byok");
+  }
+
+  upsertByokProvider(
+    provider: string,
+    request: LaunchByokUpsertRequest,
+  ): Promise<LaunchByokMutationResponse> {
+    return this.fetchJson(
+      `/api/launch/byok/${encodeURIComponent(provider)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(request),
+      },
+    );
+  }
+
+  deleteByokProvider(provider: string): Promise<LaunchByokMutationResponse> {
+    return this.fetchJson(
+      `/api/launch/byok/${encodeURIComponent(provider)}`,
+      {
+        method: "DELETE",
+      },
+    );
+  }
+
+  setByokPrimary(provider: string): Promise<LaunchByokMutationResponse> {
+    const request: LaunchByokPrimaryRequest = { provider };
+    return this.fetchJson("/api/launch/byok/primary", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
+
+  inferenceOptions(): Promise<LaunchInferenceOptionsResponse> {
+    return this.fetchJson("/api/launch/inference-options");
   }
 
   leaderboard(

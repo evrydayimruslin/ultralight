@@ -1,7 +1,8 @@
 import type { AIRequest, AIResponse, ChatUsage } from "../../shared/contracts/ai.ts";
+import { CHAT_MIN_BALANCE_LIGHT } from "../../shared/contracts/ai.ts";
 import type { RuntimeAIRoute } from "../runtime/sandbox.ts";
 import { createAIService } from "./ai.ts";
-import { deductChatCost } from "./chat-billing.ts";
+import { checkChatBalance, deductChatCost } from "./chat-billing.ts";
 import { selectInferenceModel } from "./inference-client.ts";
 import {
   InferenceRouteError,
@@ -125,9 +126,18 @@ function routeErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "AI service unavailable";
 }
 
+export interface CreateRuntimeAIContextOptions {
+  resolveRoute?: typeof resolveInferenceRoute;
+  checkBalance?: typeof checkChatBalance;
+}
+
 export async function createRuntimeAIContext(
   user: RuntimeAIUser | null | undefined,
+  options: CreateRuntimeAIContextOptions = {},
 ): Promise<RuntimeAIContext> {
+  const resolveRoute = options.resolveRoute ?? resolveInferenceRoute;
+  const checkBalance = options.checkBalance ?? checkChatBalance;
+
   if (!user) {
     const message = "AI requires an authenticated user.";
     return {
@@ -139,10 +149,41 @@ export async function createRuntimeAIContext(
   }
 
   try {
-    const route = await resolveInferenceRoute({
+    const route = await resolveRoute({
       userId: user.id,
       userEmail: user.email,
     });
+
+    // Pre-call balance gate for credits-billed routes (BYOK routes set
+    // shouldRequireBalance to false). Blocks runtime inference when the
+    // user is known to be below the platform minimum, instead of relying
+    // solely on post-hoc allow-partial debiting.
+    if (route.shouldRequireBalance) {
+      try {
+        const balance = await checkBalance(user.id);
+        if (balance < CHAT_MIN_BALANCE_LIGHT) {
+          const message =
+            `Platform inference requires at least ${CHAT_MIN_BALANCE_LIGHT} credits ` +
+            `(current balance: ${balance}). Add credits in the wallet or configure ` +
+            `a BYOK provider key in Settings.`;
+          return {
+            route: null,
+            resolvedRoute: null,
+            aiService: createUnavailableAIService(message),
+            userApiKey: null,
+          };
+        }
+      } catch (balanceError) {
+        // FAIL OPEN: the gate protects against known-insufficient balances;
+        // availability wins on infra errors. If the billing read is
+        // unavailable we proceed un-gated — post-hoc debiting in
+        // createRoutedRuntimeAIService still applies.
+        console.warn(
+          "[RUNTIME-AI] Balance check unavailable; proceeding un-gated:",
+          balanceError,
+        );
+      }
+    }
 
     return {
       route: toRuntimeAIRoute(route),

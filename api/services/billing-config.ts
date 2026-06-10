@@ -76,29 +76,29 @@ interface BillingConfigRow {
 }
 
 export const DEFAULT_PAYOUT_POLICY_COPY =
-  "Payouts are processed on the first business day of each month. Requests must be submitted at least 21 days before that payout date to be included. Purchased Light cannot be cashed out; only creator earnings are eligible for payout.";
+  "Payouts are processed on the first business day of each month. Requests must be submitted at least 21 days before that payout date to be included. Purchased credits cannot be cashed out; only creator earnings are eligible for payout.";
 
 export const LIGHT_ECONOMY_POLICY_COPY = {
   purchasedLight:
-    "Purchased Light is spend-only platform credit. It cannot be cashed out, redeemed for money, or transferred directly between arbitrary accounts.",
+    "Purchased credits are spend-only platform credit. They cannot be cashed out, redeemed for money, or transferred directly between arbitrary accounts.",
   creatorEarnings:
-    "Creator earnings come from platform-mediated app activity and marketplace sales. Earned Light can be added to spendable balance instantly or requested for payout through Stripe Connect while unconverted.",
+    "Creator earnings come from platform-mediated app activity and marketplace sales. Earned credits can be added to spendable balance instantly or requested for payout through Stripe Connect while unconverted.",
   fundingTerms:
-    "By adding Light, you agree that purchased Light is spend-only platform credit and that authenticated funding transactions are governed by the Terms.",
+    "By adding credits, you agree that purchased credits are spend-only platform credit and that authenticated funding transactions are governed by the Terms.",
   payoutTerms:
     "By requesting a payout, you confirm that the amount is creator earnings and that payout timing, fees, and eligibility are governed by the Terms.",
   feeWaivers:
     "Ultralight may waive its internal platform fee on eligible creator revenue through publisher referral grants or publisher fee-waiver credit.",
   feeWaiverEndUserImpact:
-    "Platform fee waivers affect only Ultralight's internal platform fee and publisher revenue. They do not change the gross Light amount paid by the end user.",
+    "Platform fee waivers affect only Ultralight's internal platform fee and publisher revenue. They do not change the gross credits amount paid by the end user.",
   feeWaiverCredit:
     "Publisher fee-waiver credit is platform scrip that can be used only to cover Ultralight internal platform fees on eligible creator revenue and has no cash value.",
   cloudUsage:
-    "Cloud usage is metered in cloud units and charged as exact fractional Light at Ultralight's configured internal cloud-unit rates. The billing config version on receipts is the authoritative rate snapshot.",
+    "Cloud usage is metered in cloud units and charged as exact fractional credits at Ultralight's configured internal cloud-unit rates. The billing config version on receipts is the authoritative rate snapshot.",
   storagePolicy:
     "The first 100MB of combined storage is included. Storage above that is charged at Ultralight's configured internal GB-month rate.",
   freeCallSponsorship:
-    "Free calls use app-owner sponsorship for infrastructure when available. If the owner has no Light balance, the caller needs Light balance to cover infrastructure and continue.",
+    "Free calls use app-owner sponsorship for infrastructure when available. If the owner has no credits balance, the caller needs credits balance to cover infrastructure and continue.",
   termsUrl: "/terms",
 } as const;
 
@@ -261,7 +261,7 @@ export function lightToUsdCents(
 }
 
 export function formatLightPerUsd(rate: number): string {
-  return `${rate.toLocaleString("en-US")} Light / $1`;
+  return `${rate.toLocaleString("en-US")} credits / $1`;
 }
 
 function formatLightRate(rate: number): string {
@@ -321,7 +321,7 @@ export function toPublicBillingConfig(config: BillingConfig) {
       ach_rate: formatLightPerUsd(config.wireLightPerUsd),
       payout_rate: `${
         config.payoutLightPerUsd.toLocaleString("en-US")
-      } Light = $1`,
+      } credits = $1`,
       card_minimum: formatUsdCents(config.cardMinimumCents),
       wire_minimum: formatUsdCents(config.wireMinimumCents),
       ach_minimum: formatUsdCents(config.wireMinimumCents),

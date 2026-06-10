@@ -10,9 +10,11 @@ import {
   LAUNCH_SCOPE_CONTRACT,
   type LaunchAgentFunctionPermissionsResponse,
   type LaunchApiKeySummary,
+  type LaunchByokProviderOption,
   type LaunchDeferredCapability,
   type LaunchFunctionSummary,
   type LaunchIncludedCapability,
+  type LaunchInferenceOptionsResponse,
   type LaunchInstallInstruction,
   type LaunchLeaderboardEntry,
   type LaunchMoneyAmount,
@@ -229,8 +231,8 @@ const primitives = [
   ],
   [
     "wallet",
-    "Light wallet",
-    "Spendable Light for installs, calls, hosting.",
+    "Credits wallet",
+    "Spendable credits for installs, calls, hosting.",
     "/wallet",
   ],
 ] as const;
@@ -654,6 +656,28 @@ const apiKeys: ApiKeyFixture[] = [
   },
 ];
 
+const byokProviderFixtures: LaunchByokProviderOption[] = [
+  {
+    apiKeyPrefix: "sk-or-",
+    apiKeyUrl: "https://openrouter.ai/keys",
+    configured: false,
+    defaultModel: "deepseek/deepseek-v4-flash",
+    description: "Access 100+ models from one API key",
+    id: "openrouter",
+    name: "OpenRouter",
+    primary: false,
+  },
+  {
+    apiKeyPrefix: "sk-",
+    apiKeyUrl: "https://platform.openai.com/api-keys",
+    configured: false,
+    description: "Use GPT models with your own OpenAI key",
+    id: "openai",
+    name: "OpenAI",
+    primary: false,
+  },
+];
+
 const livePalette = [
   "#7c3aed",
   "#0891b2",
@@ -673,10 +697,10 @@ function liveToolFixture(
 ): ToolDetailFixture {
   const base = toolDetails[tool.slug] || createToolDetail({
     author: liveOwnerLabel(tool.owner),
-    callPrice: lightValue(tool.pricing?.defaultCallPrice),
+    callPrice: creditsValue(tool.pricing?.defaultCallPrice),
     category: tool.tags?.[0] || tool.kind.toUpperCase(),
     color: stableColor(tool.id),
-    free: lightValue(tool.pricing?.defaultCallPrice) === 0,
+    free: creditsValue(tool.pricing?.defaultCallPrice) === 0,
     growth: Math.max(0.03, Number(tool.relevance?.score || 0.08)),
     id: tool.id,
     installs: 0,
@@ -699,14 +723,14 @@ function liveToolFixture(
       p50: base.functions[index]?.p50 || 120,
       permission: permissions.get(fn.name) || fn.agentPermission?.policy ||
         base.functions[index]?.permission || "ask",
-      price: lightValue(fn.pricing?.defaultCallPrice),
+      price: creditsValue(fn.pricing?.defaultCallPrice),
     }))
     : base.functions;
   const trust = options.trustCard;
   const paidFunctionPrices = functions.map((fn) => fn.price).filter((price) =>
     price > 0
   );
-  const callPrice = lightValue(tool.pricing?.defaultCallPrice) ||
+  const callPrice = creditsValue(tool.pricing?.defaultCallPrice) ||
     (paidFunctionPrices.length > 0
       ? Math.min(...paidFunctionPrices)
       : base.callPrice);
@@ -764,8 +788,10 @@ function liveOwnerLabel(owner: LaunchToolSummary["owner"]): string {
   return `@${owner.userId.slice(0, 6)}`;
 }
 
-function lightValue(amount?: LaunchMoneyAmount | null): number {
-  return Number(amount?.light || 0);
+function creditsValue(amount?: LaunchMoneyAmount | null): number {
+  // Credits-first with a fallback to the deprecated `light` alias while older
+  // API deployments are still in the rename window.
+  return Number(amount?.credits ?? amount?.light ?? 0);
 }
 
 function inputArgs(schema?: Record<string, unknown> | null): string[] {
@@ -838,24 +864,24 @@ function liveLeaderboardRows(
       ? `@${entry.profileSlug}`
       : entry.displayName || `@${entry.userId.slice(0, 6)}`,
     rank: entry.rank,
-    value: lightValue(entry.value),
+    value: creditsValue(entry.value),
   }));
 }
 
 function liveWalletTotals(wallet?: LaunchWalletSummary): typeof walletSummary {
   if (!wallet) return walletSummary;
   return {
-    deposited: lightValue(wallet.depositBalance),
-    earned: lightValue(wallet.earnedBalance),
-    escrow: lightValue(wallet.escrowBalance),
-    spendable: lightValue(wallet.spendableBalance || wallet.balance),
+    deposited: creditsValue(wallet.depositBalance),
+    earned: creditsValue(wallet.earnedBalance),
+    escrow: creditsValue(wallet.escrowBalance),
+    spendable: creditsValue(wallet.spendableBalance || wallet.balance),
   };
 }
 
 function liveLedgerRows(transactions?: LaunchWalletTransaction[]): LedgerRow[] {
   if (!transactions || transactions.length === 0) return walletLedger;
   return transactions.map((entry) => ({
-    amount: lightValue(entry.amount),
+    amount: creditsValue(entry.amount),
     detail: entry.appName
       ? `${entry.appName} · ${entry.description}`
       : entry.description,
@@ -867,7 +893,7 @@ function liveLedgerRows(transactions?: LaunchWalletTransaction[]): LedgerRow[] {
 function liveEarningRows(earnings?: LaunchWalletEarningSummary[]): LedgerRow[] {
   if (!earnings || earnings.length === 0) return walletEarnings;
   return earnings.map((entry) => ({
-    amount: lightValue(entry.amount),
+    amount: creditsValue(entry.amount),
     detail: `${entry.appId || "tool"} · ${entry.functionName || entry.reason}`,
     kind: "earning",
     when: relativeTime(entry.createdAt) || "now",
@@ -881,7 +907,7 @@ function liveReceiptRows(
   return receipts.map((receipt) => ({
     fn: receipt.functionName || "run",
     latency: 0,
-    light: lightValue(receipt.total),
+    light: creditsValue(receipt.total),
     status: receipt.success ? "ok" : "error",
     tool: receipt.appName || receipt.appId || "tool",
     when: relativeTime(receipt.createdAt) || "now",
@@ -1018,7 +1044,7 @@ export function HomeFoundationPage(
           <h2>One endpoint. Every capability.</h2>
           <p>
             Point your agent at a single MCP server. It discovers the whole
-            catalog, calls any tool, and settles in Light.
+            catalog, calls any tool, and settles in credits.
           </p>
           <RouteButton icon="copy" navigate={navigate} size="lg" to="/install">
             Add to agent
@@ -1032,7 +1058,7 @@ export function HomeFoundationPage(
           <h2>Give your agent the tool layer.</h2>
           <p>
             One endpoint for every capability: discover, call, and settle in
-            Light.
+            credits.
           </p>
         </div>
         <div className="hero-actions left">
@@ -1202,7 +1228,7 @@ export function StoreFoundationPage(
           <PrimitivesRail navigate={navigate} />
           <Leaderboard
             title="Top builders"
-            subtitle="By earned Light"
+            subtitle="By earned credits"
             rows={builderRows.length > 0 ? builderRows : builderLeaders}
           />
           <Leaderboard
@@ -1627,7 +1653,7 @@ function ToolTrustRail({ tool }: { tool: ToolDetailFixture }): ReactElement {
           <MetaPair label="metering" value="per call" />
           <MetaPair
             label="from"
-            value={minPrice > 0 ? `✦${formatLight(minPrice)}` : "Free"}
+            value={minPrice > 0 ? `✦${formatCredits(minPrice)}` : "Free"}
           />
           <MetaPair label="calls/day" value={formatNumber(tool.callsPerDay)} />
         </div>
@@ -2268,7 +2294,7 @@ export function WalletFoundationPage(
       <ApiNotice live={live} noun="wallet" />
       <div className="wallet-hero">
         <WalletAmount
-          label={showEarnings ? "Earned Light" : "Spendable Light"}
+          label={showEarnings ? "Earned credits" : "Spendable credits"}
           value={showEarnings ? totals.earned : totals.spendable}
         />
         <div className="wallet-hero-actions">
@@ -2283,7 +2309,7 @@ export function WalletFoundationPage(
             ? null
             : (
               <Button icon="wallet" onClick={() => selectTab("topup")}>
-                Add Light
+                Add credits
               </Button>
             )}
         </div>
@@ -2317,7 +2343,7 @@ export function WalletFoundationPage(
         )
         : null}
       {tab === "topup"
-        ? <WalletTopUpPanel earnedLight={totals.earned} />
+        ? <WalletTopUpPanel earnedCredits={totals.earned} />
         : null}
       {tab === "receipts"
         ? <WalletReceiptsPanel receipts={liveReceiptRows(receipts)} />
@@ -2445,8 +2471,10 @@ export function SettingsFoundationPage(
         </div>
       </SettingsCard>
 
+      <ByokSettingsCard live={live} navigate={navigate} />
+
       <SettingsCard
-        subtitle="Launch-safe defaults only. No BYOK or web-search controls in this MVP."
+        subtitle="Launch-safe defaults for how agents may call tool functions."
         title="Preferences"
       >
         <PreferenceRow
@@ -2548,7 +2576,7 @@ function WalletBalancePanel({
                 ? "Publish ready"
                 : "Publish minimum"}
               value={`✦${
-                formatNumber(lightValue(publishRequirement.requiredBalance))
+                formatNumber(creditsValue(publishRequirement.requiredBalance))
               }`}
             />
           )
@@ -2575,10 +2603,10 @@ function WalletBalancePanel({
 }
 
 function WalletTopUpPanel(
-  { earnedLight }: { earnedLight: number },
+  { earnedCredits }: { earnedCredits: number },
 ): ReactElement {
   const [method, setMethod] = useState<PaymentMethod>("card");
-  const [lightAmount, setLightAmount] = useState(10000);
+  const [creditsAmount, setCreditsAmount] = useState(10000);
   const [checkoutState, setCheckoutState] = useState<
     "idle" | "creating" | "ready" | "error"
   >("idle");
@@ -2591,9 +2619,9 @@ function WalletTopUpPanel(
       totalDollars: number;
     } | null
   >(null);
-  const quote = liveQuote || quoteTopUp(lightAmount, method);
+  const quote = liveQuote || quoteTopUp(creditsAmount, method);
   const presets = method === "earnings"
-    ? [1000, 2500, 10000, 25000, Math.floor(earnedLight)]
+    ? [1000, 2500, 10000, 25000, Math.floor(earnedCredits)]
     : [1000, 2500, 10000, 25000, 50000];
 
   useEffect(() => {
@@ -2602,7 +2630,7 @@ function WalletTopUpPanel(
       return;
     }
     let cancelled = false;
-    launchApi.walletTopUpQuote({ amountLight: lightAmount, method })
+    launchApi.walletTopUpQuote({ amountCredits: creditsAmount, method })
       .then((response) => {
         if (cancelled) return;
         setLiveQuote({
@@ -2618,7 +2646,7 @@ function WalletTopUpPanel(
     return () => {
       cancelled = true;
     };
-  }, [lightAmount, method]);
+  }, [creditsAmount, method]);
 
   const createTopUpIntent = async () => {
     if (method === "earnings") {
@@ -2631,7 +2659,7 @@ function WalletTopUpPanel(
     setCheckoutState("creating");
     try {
       const response = await launchApi.createWalletTopUpIntent({
-        amountLight: lightAmount,
+        amountCredits: creditsAmount,
         method,
         termsAccepted: true,
       });
@@ -2646,21 +2674,21 @@ function WalletTopUpPanel(
   return (
     <div className="wallet-topup-grid">
       <Card className="wallet-topup-card">
-        <p className="section-label">Light amount</p>
+        <p className="section-label">Credits amount</p>
         <div className="light-input-shell">
           <span>✦</span>
-          <strong>{lightAmount.toLocaleString()}</strong>
-          <small>Light</small>
+          <strong>{creditsAmount.toLocaleString()}</strong>
+          <small>credits</small>
         </div>
         <div className="amount-presets">
           {presets.map((amount) => (
             <button
-              className={lightAmount === amount ? "active" : ""}
+              className={creditsAmount === amount ? "active" : ""}
               key={amount}
-              onClick={() => setLightAmount(amount)}
+              onClick={() => setCreditsAmount(amount)}
               type="button"
             >
-              {amount === Math.floor(earnedLight) && method === "earnings"
+              {amount === Math.floor(earnedCredits) && method === "earnings"
                 ? "Max"
                 : amount.toLocaleString()}
             </button>
@@ -2717,13 +2745,13 @@ function WalletTopUpPanel(
         </div>
         <div className="quote-receive">
           <span>You receive</span>
-          <strong>✦{lightAmount.toLocaleString()}</strong>
+          <strong>✦{creditsAmount.toLocaleString()}</strong>
         </div>
         <Button onClick={createTopUpIntent} size="lg">
           {checkoutState === "creating"
             ? "Creating checkout"
             : method === "earnings"
-            ? `Transfer ✦${lightAmount.toLocaleString()}`
+            ? `Transfer ✦${creditsAmount.toLocaleString()}`
             : `Pay ${formatCurrency(quote.totalDollars)}`}
         </Button>
         {checkoutMessage
@@ -2762,7 +2790,7 @@ function WalletReceiptsPanel(
       <div className="wallet-receipt-table">
         <div className="wallet-table-head">
           <span>Tool</span>
-          <span>Light</span>
+          <span>Credits</span>
           <span>Latency</span>
           <span>Status</span>
           <span>When</span>
@@ -2790,7 +2818,7 @@ function WalletEarningsPanel(
         <div>
           <h3>Payouts ready</h3>
           <p>
-            Stripe Connect payouts are enabled. Withdraw earned Light to your
+            Stripe Connect payouts are enabled. Withdraw earned credits to your
             bank or transfer to spendable balance.
           </p>
         </div>
@@ -2978,6 +3006,304 @@ function PermissionSelect({
           {labels[option]}
         </button>
       ))}
+    </div>
+  );
+}
+
+function ByokSettingsCard({
+  live,
+  navigate,
+}: {
+  live: LaunchPageProps["live"];
+  navigate: (to: string) => void;
+}): ReactElement {
+  const canManageKeys = live.status !== "error";
+  const providers = live.data.byok?.providers?.length
+    ? live.data.byok.providers
+    : byokProviderFixtures;
+  const [selectedProvider, setSelectedProvider] = useState("");
+  const [apiKeyDraft, setApiKeyDraft] = useState("");
+  const [modelDraft, setModelDraft] = useState("");
+  const [validateOnSave, setValidateOnSave] = useState(true);
+  const [formState, setFormState] = useState<"idle" | "saving" | "error">(
+    "idle",
+  );
+  const [formMessage, setFormMessage] = useState("");
+  const [busyProvider, setBusyProvider] = useState<string | null>(null);
+
+  const providerId = providers.some((option) => option.id === selectedProvider)
+    ? selectedProvider
+    : providers[0]?.id || "";
+  const activeOption = providers.find((option) => option.id === providerId);
+
+  const saveProviderKey = async () => {
+    if (formState === "saving") return;
+    if (!providerId || !apiKeyDraft.trim()) {
+      setFormState("error");
+      setFormMessage("Pick a provider and paste an API key first.");
+      return;
+    }
+    setFormState("saving");
+    setFormMessage("");
+    try {
+      const response = await launchApi.upsertByokProvider(providerId, {
+        apiKey: apiKeyDraft.trim(),
+        ...(modelDraft.trim() ? { model: modelDraft.trim() } : {}),
+        validate: validateOnSave,
+      });
+      // Stored keys are never displayed again; drop the draft immediately.
+      setApiKeyDraft("");
+      setModelDraft("");
+      setFormState("idle");
+      setFormMessage(response.message);
+      live.reload();
+    } catch (err) {
+      setFormState("error");
+      setFormMessage(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const runProviderAction = async (
+    provider: string,
+    action: () => Promise<{ message: string }>,
+  ) => {
+    if (busyProvider) return;
+    setBusyProvider(provider);
+    setFormState("idle");
+    setFormMessage("");
+    try {
+      const response = await action();
+      setFormMessage(response.message);
+      live.reload();
+    } catch (err) {
+      setFormState("error");
+      setFormMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyProvider(null);
+    }
+  };
+
+  return (
+    <SettingsCard
+      subtitle="Bring your own inference key, or let platform runs bill credits. Stored keys are encrypted and never shown again."
+      title="Model keys (BYOK)"
+    >
+      <ByokBillingBanner
+        inference={live.data.inferenceOptions}
+        navigate={navigate}
+        providers={providers}
+      />
+      {canManageKeys
+        ? (
+          <>
+            <div className="byok-provider-list">
+              {providers.map((option) => (
+                <ByokProviderRow
+                  busy={busyProvider === option.id}
+                  key={option.id}
+                  onRemove={() =>
+                    runProviderAction(
+                      option.id,
+                      () => launchApi.deleteByokProvider(option.id),
+                    )}
+                  onSetPrimary={() =>
+                    runProviderAction(
+                      option.id,
+                      () => launchApi.setByokPrimary(option.id),
+                    )}
+                  option={option}
+                />
+              ))}
+            </div>
+            <form
+              className="arg-grid byok-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void saveProviderKey();
+              }}
+            >
+              <label>
+                <span>provider</span>
+                <select
+                  onChange={(event) =>
+                    setSelectedProvider(event.currentTarget.value)}
+                  value={providerId}
+                >
+                  {providers.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>API key</span>
+                <input
+                  autoComplete="off"
+                  onChange={(event) =>
+                    setApiKeyDraft(event.currentTarget.value)}
+                  placeholder={activeOption?.apiKeyPrefix
+                    ? `${activeOption.apiKeyPrefix}...`
+                    : "paste key"}
+                  type="password"
+                  value={apiKeyDraft}
+                />
+              </label>
+              <label>
+                <span>model (optional)</span>
+                <input
+                  onChange={(event) => setModelDraft(event.currentTarget.value)}
+                  placeholder={activeOption?.defaultModel || "provider default"}
+                  value={modelDraft}
+                />
+              </label>
+            </form>
+            <div className="byok-form-footer">
+              <label className="byok-validate">
+                <input
+                  checked={validateOnSave}
+                  onChange={(event) =>
+                    setValidateOnSave(event.currentTarget.checked)}
+                  type="checkbox"
+                />
+                Validate key on save
+              </label>
+              <Button onClick={() => void saveProviderKey()} size="sm">
+                {formState === "saving"
+                  ? "Saving"
+                  : activeOption?.configured
+                  ? "Update key"
+                  : "Add key"}
+              </Button>
+            </div>
+            <p className="settings-help">
+              Keys are sent once, stored encrypted, and used server-side only.
+              {activeOption?.apiKeyUrl
+                ? (
+                  <>
+                    {" "}
+                    <a
+                      href={activeOption.apiKeyUrl}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      Get a {activeOption.name} key
+                    </a>
+                  </>
+                )
+                : null}
+            </p>
+          </>
+        )
+        : (
+          <EmptyState icon="key" title="Sign in to manage model keys">
+            The live BYOK endpoint needs an account session before it can show
+            configured providers.
+          </EmptyState>
+        )}
+      {formMessage
+        ? (
+          <p
+            className={formState === "error"
+              ? "settings-help error"
+              : "settings-help"}
+          >
+            {formMessage}
+          </p>
+        )
+        : null}
+    </SettingsCard>
+  );
+}
+
+function ByokProviderRow({
+  busy,
+  onRemove,
+  onSetPrimary,
+  option,
+}: {
+  busy: boolean;
+  onRemove: () => void;
+  onSetPrimary: () => void;
+  option: LaunchByokProviderOption;
+}): ReactElement {
+  const configuredModel = option.model || option.defaultModel;
+  return (
+    <div className="preference-row byok-provider-row">
+      <div>
+        <strong>{option.name}</strong>
+        <span>
+          {option.configured
+            ? `Key saved${configuredModel ? ` · ${configuredModel}` : ""}`
+            : option.description || "No key saved"}
+        </span>
+      </div>
+      {option.primary ? <Pill tone="green">primary</Pill> : null}
+      <Pill tone={option.configured ? "green" : "default"}>
+        {option.configured ? "configured" : "not configured"}
+      </Pill>
+      {option.configured && !option.primary
+        ? (
+          <Button onClick={onSetPrimary} size="sm" variant="secondary">
+            {busy ? "Working" : "Set primary"}
+          </Button>
+        )
+        : null}
+      {option.configured
+        ? (
+          <Button onClick={onRemove} size="sm" variant="ghost">
+            {busy ? "Working" : "Remove"}
+          </Button>
+        )
+        : null}
+    </div>
+  );
+}
+
+function ByokBillingBanner({
+  inference,
+  navigate,
+  providers,
+}: {
+  inference?: LaunchInferenceOptionsResponse;
+  navigate: (to: string) => void;
+  providers: LaunchByokProviderOption[];
+}): ReactElement {
+  if (!inference) {
+    return (
+      <div className="byok-banner">
+        <Icon name="spark" />
+        <span>
+          Sign in to see whether runs bill platform credits or use your own
+          provider keys.
+        </span>
+      </div>
+    );
+  }
+  if (inference.billingMode === "byok") {
+    const primaryName =
+      providers.find((option) => option.id === inference.primaryProvider)
+        ?.name || inference.primaryProvider || "provider";
+    return (
+      <div className="byok-banner">
+        <Icon name="key" />
+        <span>Runs use your {primaryName} key — no credits are charged.</span>
+      </div>
+    );
+  }
+  return (
+    <div className="byok-banner">
+      <Icon name="wallet" />
+      <span>
+        Platform inference is billed in credits. {inference.credits.display}
+        {" "}
+        spendable
+        {inference.credits.usable
+          ? "."
+          : ` — below the ✦${inference.credits.minimumForPlatformInference} minimum for platform inference.`}
+        {" "}
+        <RouteLink navigate={navigate} to="/wallet">Manage wallet</RouteLink>
+      </span>
     </div>
   );
 }
@@ -3191,7 +3517,7 @@ function CompactToolCard({ tool }: { tool: ToolFixture }): ReactElement {
         <Mono>{formatNumber(tool.installs)} installs</Mono>
         {free
           ? <span>Free</span>
-          : <span>{formatLight(tool.callPrice)}/call</span>}
+          : <span>{formatCredits(tool.callPrice)}/call</span>}
       </div>
     </Card>
   );
@@ -3327,7 +3653,7 @@ function StoreToolCard({ tool }: { tool: ToolFixture }): ReactElement {
         <Mono>{formatNumber(tool.installs)} installs</Mono>
         {tool.free || tool.callPrice === 0
           ? <span>Free</span>
-          : <span>{formatLight(tool.callPrice)}/call</span>}
+          : <span>{formatCredits(tool.callPrice)}/call</span>}
       </div>
       <Sparkline points={tool.spark} growth={tool.growth} />
     </Card>
@@ -3418,7 +3744,7 @@ function Leaderboard({
               <strong>{row.name}</strong>
               {row.featured ? <small>{row.featured}</small> : null}
             </span>
-            <Mono>{formatLight(row.value)}</Mono>
+            <Mono>{formatCredits(row.value)}</Mono>
           </div>
         ))}
       </div>
@@ -3755,13 +4081,13 @@ function walletTabFromSearch(): WalletTabId {
     : "balance";
 }
 
-function quoteTopUp(lightAmount: number, method: PaymentMethod): {
+function quoteTopUp(creditsAmount: number, method: PaymentMethod): {
   baseDollars: number;
   feeDollars: number;
   feeNote: string;
   totalDollars: number;
 } {
-  const baseDollars = lightAmount / 100;
+  const baseDollars = creditsAmount / 100;
   if (method === "earnings") {
     return {
       baseDollars,
@@ -3838,7 +4164,7 @@ function builderRankFor(author: string): string {
 }
 
 function formatToolPrice(value: number): string {
-  return value > 0 ? `✦${formatLight(value)}` : "Free";
+  return value > 0 ? `✦${formatCredits(value)}` : "Free";
 }
 
 function functionResponse(slug: string, name: string): Record<string, unknown> {
@@ -3924,7 +4250,7 @@ function formatNumber(value: number): string {
   return String(value);
 }
 
-function formatLight(value: number): string {
+function formatCredits(value: number): string {
   if (value >= 1000) return `${(value / 1000).toFixed(1)}k`;
   if (value >= 1) return value.toFixed(1);
   return value.toFixed(3);

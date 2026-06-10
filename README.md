@@ -146,7 +146,7 @@ await ultralight.store("key", { any: "value" });
 const data = await ultralight.load("key");
 const keys = await ultralight.list("prefix/");
 
-// AI (BYOK providers when configured; otherwise Light-debit OpenRouter)
+// AI (BYOK providers when configured; otherwise credits-billed OpenRouter)
 const response = await ultralight.ai({
   model: "openai/gpt-4o",
   messages: [{ role: "user", content: "Summarize this" }],

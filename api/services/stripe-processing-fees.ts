@@ -64,6 +64,9 @@ export function quoteLaunchWalletFunding(input: {
   return {
     method,
     methodLabel: method === "card" ? "Card" : "Bank (ACH)",
+    amountCredits: amountLight,
+    creditsPerDollar: LAUNCH_WALLET_LIGHT_PER_DOLLAR,
+    // Deprecated aliases kept for one rename window.
     amountLight,
     lightPerDollar: LAUNCH_WALLET_LIGHT_PER_DOLLAR,
     baseAmountCents,

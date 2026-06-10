@@ -39,11 +39,15 @@ import {
   type LaunchApiKeyCreateRequest,
   type LaunchApiKeySummary,
   type LaunchApiRoute,
+  type LaunchByokMutationResponse,
+  type LaunchByokProviderOption,
+  type LaunchByokSummaryResponse,
   type LaunchDiscoveryRetrievalSummary,
   type LaunchDiscoverySource,
   type LaunchFunctionRunRequest,
   type LaunchFunctionRunResponse,
   type LaunchFunctionSummary,
+  type LaunchInferenceOptionsResponse,
   type LaunchInstallInstruction,
   type LaunchInstallResponse,
   type LaunchLeaderboardEntry,
@@ -69,6 +73,7 @@ import {
   type LaunchWalletDetailKind,
   type LaunchWalletDetailResponse,
   type LaunchWalletEarningSummary,
+  type LaunchWalletFundingFeeSummary,
   type LaunchWalletFundingIntentRequest,
   type LaunchWalletFundingMethod,
   type LaunchWalletPageInfo,
@@ -79,7 +84,20 @@ import {
   type LaunchWalletTransaction,
 } from "../../shared/contracts/launch.ts";
 import type { AppManifest } from "../../shared/contracts/manifest.ts";
-import type { RunResponse } from "../../shared/types/index.ts";
+import {
+  BYOK_PROVIDERS,
+  isActiveBYOKProvider,
+} from "../../shared/types/index.ts";
+import type {
+  ActiveBYOKProvider,
+  BYOKProviderInfo,
+  RunResponse,
+} from "../../shared/types/index.ts";
+import { createUserService } from "../services/user.ts";
+import { validateAPIKey } from "../services/ai.ts";
+import { checkChatBalance } from "../services/chat-billing.ts";
+import { CHAT_MIN_BALANCE_LIGHT } from "../../shared/contracts/ai.ts";
+import { isValidModelId } from "../services/model-validation.ts";
 import {
   type BillingAddressInput,
   publicBillingAddress,
@@ -314,6 +332,8 @@ interface PrimitiveMetadata {
 
 interface ParsedLaunchWalletFundingIntentRequest
   extends LaunchWalletFundingIntentRequest {
+  amountCredits: number;
+  /** @deprecated alias of amountCredits */
   amountLight: number;
   method: LaunchWalletFundingMethod;
   termsAccepted: true;
@@ -364,8 +384,8 @@ const PRIMITIVE_METADATA: Record<LaunchPlatformPrimitive, PrimitiveMetadata> = {
     apiRoute: "GET /api/launch/store",
   },
   wallet: {
-    label: "Light wallet",
-    description: "Manage spendable Light for installs, calls, and hosting.",
+    label: "Credits wallet",
+    description: "Manage spendable credits for installs, calls, and hosting.",
     route: "/wallet",
     apiRoute: "GET /api/launch/wallet",
   },
@@ -399,6 +419,8 @@ const PUBLIC_SEARCH_USER_ID = "00000000-0000-0000-0000-000000000000";
 const SEMANTIC_DISCOVERY_THRESHOLD = 0.35;
 let primitiveEmbeddingCache: PrimitiveEmbeddingCache | null = null;
 
+const userService = createUserService();
+
 export async function handleLaunch(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
@@ -410,6 +432,13 @@ export async function handleLaunch(request: Request): Promise<Response> {
       path.startsWith("/api/launch/api-keys/")
     ) {
       return await handleLaunchApiKeys(request, path, method);
+    }
+
+    if (
+      path === "/api/launch/byok" ||
+      path.startsWith("/api/launch/byok/")
+    ) {
+      return await handleLaunchByok(request, path, method);
     }
 
     if (path === "/api/launch/wallet/topup/intent") {
@@ -471,6 +500,10 @@ export async function handleLaunch(request: Request): Promise<Response> {
 
     if (path === "/api/launch/library") {
       return await handleLaunchLibrary(request);
+    }
+
+    if (path === "/api/launch/inference-options") {
+      return await handleLaunchInferenceOptions(request);
     }
 
     if (path === "/api/launch/wallet") {
@@ -554,6 +587,8 @@ function buildLaunchStatus(request: Request): Record<string, unknown> {
       openapi: "/api/launch/openapi.json",
       install: "/api/launch/install",
       apiKeys: "/api/launch/api-keys",
+      byok: "/api/launch/byok",
+      inferenceOptions: "/api/launch/inference-options",
       store: "/api/launch/store?query={query}",
       discover: "/api/launch/discover?query={query}",
       discoverAlias: "/api/launch/discover?query={query}",
@@ -570,7 +605,7 @@ function buildLaunchStatus(request: Request): Record<string, unknown> {
         "/api/launch/wallet/earnings?tool={toolId}&limit=25&cursor={cursor}",
       walletPayouts: "/api/launch/wallet/payouts?limit=25&cursor={cursor}",
       walletTopUpQuote:
-        "/api/launch/wallet/topup/quote?amount_light=2500&method=card",
+        "/api/launch/wallet/topup/quote?amount_credits=2500&method=card",
       walletTopUpIntent: "/api/launch/wallet/topup/intent",
       mcpPlatform: "/mcp/platform",
       mcpDiscovery: "/.well-known/mcp.json",
@@ -581,7 +616,7 @@ function buildLaunchStatus(request: Request): Record<string, unknown> {
       "Browse the store for relevant tools and platform primitives.",
       "Inspect tool capabilities, pricing, and trust.",
       "Call tools through MCP/API and return public tool links when UI matters.",
-      "Preserve Light receipts and errors in the final response.",
+      "Preserve credit receipts and errors in the final response.",
     ],
   };
 }
@@ -890,6 +925,128 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
           },
         },
       },
+      "/api/launch/byok": {
+        get: {
+          operationId: "getLaunchByokProviders",
+          summary: "List BYOK inference providers and configured state",
+          description:
+            "Account-session endpoint. Returns the BYOK provider registry with per-provider configured/primary state. API key material is never returned.",
+          security: [{ bearerAuth: [] }],
+          responses: {
+            "200": {
+              description: "BYOK provider summary",
+              content: jsonContent({
+                $ref: "#/components/schemas/ByokSummary",
+              }),
+            },
+            "401": { description: "Authentication required" },
+            "403": { description: "Account session required" },
+          },
+        },
+      },
+      "/api/launch/byok/{provider}": {
+        put: {
+          operationId: "upsertLaunchByokProvider",
+          summary: "Add or update a BYOK provider API key",
+          description:
+            "Account-session endpoint. Stores the provider API key encrypted server-side. The key is validated against the provider unless validate is false.",
+          security: [{ bearerAuth: [] }],
+          parameters: [{
+            name: "provider",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+            description: "BYOK provider id",
+          }],
+          requestBody: {
+            required: true,
+            content: jsonContent({
+              $ref: "#/components/schemas/ByokUpsertRequest",
+            }),
+          },
+          responses: {
+            "200": {
+              description: "BYOK provider configured",
+              content: jsonContent({
+                $ref: "#/components/schemas/ByokMutation",
+              }),
+            },
+            "400": { description: "Invalid provider, key, or model" },
+            "401": { description: "Authentication required" },
+            "403": { description: "Account session required" },
+          },
+        },
+        delete: {
+          operationId: "removeLaunchByokProvider",
+          summary: "Remove a BYOK provider API key",
+          security: [{ bearerAuth: [] }],
+          parameters: [{
+            name: "provider",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+            description: "BYOK provider id",
+          }],
+          responses: {
+            "200": {
+              description: "BYOK provider removed",
+              content: jsonContent({
+                $ref: "#/components/schemas/ByokMutation",
+              }),
+            },
+            "400": { description: "Invalid provider" },
+            "401": { description: "Authentication required" },
+            "403": { description: "Account session required" },
+          },
+        },
+      },
+      "/api/launch/byok/primary": {
+        post: {
+          operationId: "setLaunchByokPrimaryProvider",
+          summary: "Set the primary BYOK provider",
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: jsonContent({
+              type: "object",
+              required: ["provider"],
+              properties: {
+                provider: { type: "string" },
+              },
+            }),
+          },
+          responses: {
+            "200": {
+              description: "Primary BYOK provider updated",
+              content: jsonContent({
+                $ref: "#/components/schemas/ByokMutation",
+              }),
+            },
+            "400": { description: "Invalid or unconfigured provider" },
+            "401": { description: "Authentication required" },
+            "403": { description: "Account session required" },
+          },
+        },
+      },
+      "/api/launch/inference-options": {
+        get: {
+          operationId: "getLaunchInferenceOptions",
+          summary: "Inspect the effective inference billing mode",
+          description:
+            "Account-session endpoint. Reports whether inference bills against BYOK keys or platform credits, plus spendable credits state.",
+          security: [{ bearerAuth: [] }],
+          responses: {
+            "200": {
+              description: "Inference billing options",
+              content: jsonContent({
+                $ref: "#/components/schemas/InferenceOptions",
+              }),
+            },
+            "401": { description: "Authentication required" },
+            "403": { description: "Account session required" },
+          },
+        },
+      },
       "/api/launch/store": storePathSpec,
       "/api/launch/discover": legacyDiscoverPathSpec,
       "/api/launch/tools/{id}": {
@@ -982,7 +1139,9 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
               }),
             },
             "401": { description: "Authentication required" },
-            "402": { description: "Light balance required by runtime billing" },
+            "402": {
+              description: "Credits balance required by runtime billing",
+            },
             "404": { description: "Tool or function not found" },
           },
         },
@@ -1123,11 +1282,11 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
       "/api/launch/wallet": {
         get: {
           operationId: "getLaunchWallet",
-          summary: "Get authenticated Light balance and payout status",
+          summary: "Get authenticated credits balance and payout status",
           security: [{ bearerAuth: [] }],
           responses: {
             "200": {
-              description: "Light wallet summary and recent wallet rows",
+              description: "Credits wallet summary and recent wallet rows",
               content: jsonContent({
                 type: "object",
                 properties: {
@@ -1142,7 +1301,7 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
       },
       "/api/launch/wallet/transactions": walletPagePathSpec(
         "listLaunchWalletTransactions",
-        "List paginated Light wallet transactions",
+        "List paginated credits wallet transactions",
         "transactions",
         { $ref: "#/components/schemas/WalletTransaction" },
       ),
@@ -1169,14 +1328,22 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
       "/api/launch/wallet/topup/quote": {
         get: {
           operationId: "quoteLaunchWalletTopUp",
-          summary: "Quote a Light top-up with pass-through payment fees",
+          summary: "Quote a credits top-up with pass-through payment fees",
           security: [{ bearerAuth: [] }],
           parameters: [
             queryParam(
-              "amount_light",
+              "amount_credits",
               { type: "integer", minimum: 1000, maximum: 500000 },
-              "Light amount the user wants to receive",
+              "Credits amount the user wants to receive",
             ),
+            {
+              ...queryParam(
+                "amount_light",
+                { type: "integer", minimum: 1000, maximum: 500000 },
+                "Deprecated alias of amount_credits",
+              ),
+              deprecated: true,
+            },
             queryParam(
               "method",
               { type: "string", enum: ["card", "ach"], default: "card" },
@@ -1205,20 +1372,27 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
       "/api/launch/wallet/topup/intent": {
         post: {
           operationId: "createLaunchWalletTopUpIntent",
-          summary: "Create a Stripe PaymentIntent for a Light top-up",
+          summary: "Create a Stripe PaymentIntent for a credits top-up",
           description:
-            "Creates a PaymentIntent for the selected Light amount. The amount charged includes true gross-up for Stripe processing fees, and the wallet ledger credits exactly the requested Light amount after success.",
+            "Creates a PaymentIntent for the selected credits amount. The amount charged includes true gross-up for Stripe processing fees, and the wallet ledger credits exactly the requested amount after success. amount_credits is required; amount_light is accepted as a deprecated alias.",
           security: [{ bearerAuth: [] }],
           requestBody: {
             required: true,
             content: jsonContent({
               type: "object",
-              required: ["amount_light", "method", "terms_accepted"],
+              required: ["method", "terms_accepted"],
               properties: {
+                amount_credits: {
+                  type: "integer",
+                  minimum: 1000,
+                  maximum: 500000,
+                },
                 amount_light: {
                   type: "integer",
                   minimum: 1000,
                   maximum: 500000,
+                  deprecated: true,
+                  description: "Deprecated alias of amount_credits",
                 },
                 method: { type: "string", enum: ["card", "ach"] },
                 terms_accepted: { type: "boolean", const: true },
@@ -1396,6 +1570,86 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
             functionNames: { type: "array", items: { type: "string" } },
           },
         },
+        ByokProviderOption: {
+          type: "object",
+          required: ["id", "name", "configured", "primary"],
+          properties: {
+            id: { type: "string" },
+            name: { type: "string" },
+            description: { type: "string" },
+            configured: { type: "boolean" },
+            primary: { type: "boolean" },
+            defaultModel: { type: ["string", "null"] },
+            model: { type: ["string", "null"] },
+            apiKeyPrefix: { type: ["string", "null"] },
+            apiKeyUrl: { type: ["string", "null"] },
+            docsUrl: { type: ["string", "null"] },
+          },
+        },
+        ByokSummary: {
+          type: "object",
+          required: ["enabled", "primaryProvider", "providers"],
+          properties: {
+            enabled: { type: "boolean" },
+            primaryProvider: { type: ["string", "null"] },
+            providers: {
+              type: "array",
+              items: { $ref: "#/components/schemas/ByokProviderOption" },
+            },
+            generatedAt: { type: "string", format: "date-time" },
+          },
+        },
+        ByokUpsertRequest: {
+          type: "object",
+          required: ["apiKey"],
+          properties: {
+            apiKey: { type: "string", minLength: 1 },
+            model: { type: "string" },
+            validate: { type: "boolean", default: true },
+          },
+        },
+        ByokMutation: {
+          type: "object",
+          required: ["ok", "provider", "message"],
+          properties: {
+            ok: { type: "boolean", const: true },
+            provider: { type: "string" },
+            message: { type: "string" },
+          },
+        },
+        InferenceOptions: {
+          type: "object",
+          required: [
+            "billingMode",
+            "primaryProvider",
+            "configuredProviders",
+            "credits",
+          ],
+          properties: {
+            billingMode: { type: "string", enum: ["byok", "credits"] },
+            primaryProvider: { type: ["string", "null"] },
+            configuredProviders: {
+              type: "array",
+              items: { type: "string" },
+            },
+            credits: {
+              type: "object",
+              required: [
+                "spendable",
+                "minimumForPlatformInference",
+                "usable",
+                "display",
+              ],
+              properties: {
+                spendable: { type: ["number", "null"] },
+                minimumForPlatformInference: { type: "number" },
+                usable: { type: "boolean" },
+                display: { type: "string" },
+              },
+            },
+            generatedAt: { type: "string", format: "date-time" },
+          },
+        },
         AgentFunctionPermission: {
           type: "object",
           required: ["appId", "functionName", "policy", "source"],
@@ -1415,13 +1669,7 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
           properties: {
             defaultCallPrice: {
               oneOf: [
-                {
-                  type: "object",
-                  properties: {
-                    light: { type: "number" },
-                    display: { type: "string" },
-                  },
-                },
+                { $ref: "#/components/schemas/MoneyAmount" },
                 { type: "null" },
               ],
             },
@@ -1720,7 +1968,9 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
           required: [
             "method",
             "methodLabel",
+            "amountCredits",
             "amountLight",
+            "creditsPerDollar",
             "lightPerDollar",
             "baseAmountCents",
             "processingFeeCents",
@@ -1730,8 +1980,19 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
           properties: {
             method: { type: "string", enum: ["card", "ach"] },
             methodLabel: { type: "string", enum: ["Card", "Bank (ACH)"] },
-            amountLight: { type: "integer" },
-            lightPerDollar: { type: "integer", const: 100 },
+            amountCredits: { type: "integer" },
+            amountLight: {
+              type: "integer",
+              deprecated: true,
+              description: "Deprecated alias of amountCredits",
+            },
+            creditsPerDollar: { type: "integer", const: 100 },
+            lightPerDollar: {
+              type: "integer",
+              const: 100,
+              deprecated: true,
+              description: "Deprecated alias of creditsPerDollar",
+            },
             baseAmountCents: { type: "integer" },
             processingFeeCents: { type: "integer" },
             totalAmountCents: { type: "integer" },
@@ -1740,9 +2001,14 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
         },
         MoneyAmount: {
           type: "object",
-          required: ["light", "display"],
+          required: ["credits", "light", "display"],
           properties: {
-            light: { type: "number" },
+            credits: { type: "number" },
+            light: {
+              type: "number",
+              deprecated: true,
+              description: "Deprecated alias of credits",
+            },
             display: { type: "string" },
           },
         },
@@ -1903,6 +2169,265 @@ async function handleLaunchApiKeys(
   }
 
   return error("Launch API key endpoint not found", 404);
+}
+
+async function handleLaunchByok(
+  request: Request,
+  path: string,
+  method: string,
+): Promise<Response> {
+  const user = await requireLaunchUser(request);
+  requireAccountSessionForByok(user);
+
+  if (path === "/api/launch/byok") {
+    if (method === "GET") {
+      return json(await buildLaunchByokSummary(user.id));
+    }
+    return error("Method not allowed for launch BYOK providers", 405);
+  }
+
+  if (path === "/api/launch/byok/primary") {
+    if (method === "POST") {
+      return await handleLaunchByokPrimary(request, user);
+    }
+    return error("Method not allowed for launch BYOK primary provider", 405);
+  }
+
+  const providerMatch = path.match(/^\/api\/launch\/byok\/([^/]+)$/);
+  if (providerMatch) {
+    const providerEntry = resolveLaunchByokProvider(
+      decodeURIComponent(providerMatch[1]),
+    );
+    if (!providerEntry) {
+      return error(
+        "Invalid provider. Must be one of: " +
+          Object.keys(BYOK_PROVIDERS).join(", "),
+        400,
+      );
+    }
+    if (method === "PUT") {
+      return await handleLaunchByokUpsert(request, user, providerEntry);
+    }
+    if (method === "DELETE") {
+      return await withSensitiveRouteRateLimit(
+        user.id,
+        "user:byok_delete",
+        async () => {
+          try {
+            await userService.removeBYOKProvider(
+              user.id,
+              providerEntry.provider,
+            );
+            return json(
+              {
+                ok: true,
+                provider: providerEntry.provider,
+                message: `${providerEntry.info.name} removed`,
+              } satisfies LaunchByokMutationResponse,
+            );
+          } catch (err) {
+            console.error("[LAUNCH] BYOK provider removal failed:", err);
+            return error("Failed to remove BYOK provider", 500);
+          }
+        },
+      );
+    }
+    return error("Method not allowed for launch BYOK provider", 405);
+  }
+
+  return error("Launch BYOK endpoint not found", 404);
+}
+
+async function handleLaunchByokUpsert(
+  request: Request,
+  user: AuthUser,
+  providerEntry: LaunchByokProviderEntry,
+): Promise<Response> {
+  const body = asRecord(await readJsonBody<unknown>(request)) || {};
+  const apiKeyValue = body.apiKey ?? body.api_key;
+  if (
+    !apiKeyValue || typeof apiKeyValue !== "string" ||
+    apiKeyValue.trim().length === 0
+  ) {
+    return error("API key is required", 400);
+  }
+  const apiKey = apiKeyValue.trim();
+  const model = normalizeLaunchByokModel(body.model);
+  const validate = body.validate !== false;
+
+  const profile = await userService.getUser(user.id);
+  if (!profile) {
+    return error("User not found", 404);
+  }
+  const configured = profile.byok_configs.some((config) =>
+    config.provider === providerEntry.provider && config.has_key
+  );
+
+  return await withSensitiveRouteRateLimit(
+    user.id,
+    configured ? "user:byok_update" : "user:byok_create",
+    async () => {
+      try {
+        if (validate) {
+          try {
+            await validateAPIKey(providerEntry.provider, apiKey);
+          } catch (validationErr) {
+            return error(
+              `API key validation failed: ${
+                validationErr instanceof Error
+                  ? validationErr.message
+                  : "Invalid key"
+              }`,
+              400,
+            );
+          }
+        }
+
+        if (configured) {
+          await userService.updateBYOKProvider(
+            user.id,
+            providerEntry.provider,
+            { apiKey, model },
+          );
+        } else {
+          await userService.addBYOKProvider(
+            user.id,
+            providerEntry.provider,
+            apiKey,
+            model,
+          );
+        }
+
+        return json(
+          {
+            ok: true,
+            provider: providerEntry.provider,
+            message: `${providerEntry.info.name} configured successfully`,
+          } satisfies LaunchByokMutationResponse,
+        );
+      } catch (err) {
+        console.error("[LAUNCH] BYOK provider upsert failed:", err);
+        if (err instanceof Error && err.message.includes("not configured")) {
+          return error(err.message, 400);
+        }
+        return error("Failed to save BYOK provider", 500);
+      }
+    },
+  );
+}
+
+async function handleLaunchByokPrimary(
+  request: Request,
+  user: AuthUser,
+): Promise<Response> {
+  const body = asRecord(await readJsonBody<unknown>(request)) || {};
+  const providerEntry = resolveLaunchByokProvider(body.provider);
+  if (!providerEntry) {
+    return error("Invalid provider", 400);
+  }
+
+  return await withSensitiveRouteRateLimit(
+    user.id,
+    "user:byok_primary",
+    async () => {
+      try {
+        await userService.setPrimaryProvider(user.id, providerEntry.provider);
+        return json(
+          {
+            ok: true,
+            provider: providerEntry.provider,
+            message: `${providerEntry.info.name} set as primary provider`,
+          } satisfies LaunchByokMutationResponse,
+        );
+      } catch (err) {
+        console.error("[LAUNCH] BYOK primary provider update failed:", err);
+        if (err instanceof Error && err.message.includes("not configured")) {
+          return error(err.message, 400);
+        }
+        return error("Failed to set primary provider", 500);
+      }
+    },
+  );
+}
+
+async function buildLaunchByokSummary(
+  userId: string,
+): Promise<LaunchByokSummaryResponse> {
+  const profile = await userService.getUser(userId);
+  if (!profile) {
+    throw new RequestValidationError("User not found", 404);
+  }
+  const configsByProvider = new Map(
+    profile.byok_configs.map((config) => [config.provider, config]),
+  );
+  const providers: LaunchByokProviderOption[] = Object.values(BYOK_PROVIDERS)
+    .map((info) => {
+      const config = configsByProvider.get(info.id);
+      const configured = config?.has_key === true;
+      return {
+        id: info.id,
+        name: info.name,
+        description: info.description,
+        configured,
+        primary: configured && profile.byok_provider === info.id,
+        defaultModel: info.defaultModel ?? null,
+        model: config?.model ?? null,
+        apiKeyPrefix: info.apiKeyPrefix ?? null,
+        apiKeyUrl: info.apiKeyUrl ?? null,
+        docsUrl: info.docsUrl ?? null,
+      };
+    });
+
+  return {
+    enabled: profile.byok_enabled,
+    primaryProvider: profile.byok_provider,
+    providers,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+async function handleLaunchInferenceOptions(
+  request: Request,
+): Promise<Response> {
+  const user = await requireLaunchUser(request);
+  requireAccountSessionForByok(user);
+
+  const profile = await userService.getUser(user.id);
+  if (!profile) {
+    return error("User not found", 404);
+  }
+  const configuredProviders = profile.byok_configs
+    .filter((config) => config.has_key)
+    .map((config) => config.provider);
+  const primaryConfigured = profile.byok_provider !== null &&
+    configuredProviders.includes(profile.byok_provider);
+  const billingMode = profile.byok_enabled && primaryConfigured
+    ? "byok"
+    : "credits";
+
+  let spendable: number | null = null;
+  try {
+    spendable = await checkChatBalance(user.id);
+  } catch (err) {
+    console.error("[LAUNCH] Inference options balance check failed:", err);
+    spendable = null;
+  }
+  const usable = spendable !== null && spendable >= CHAT_MIN_BALANCE_LIGHT;
+
+  return json(
+    {
+      billingMode,
+      primaryProvider: profile.byok_provider,
+      configuredProviders,
+      credits: {
+        spendable,
+        minimumForPlatformInference: CHAT_MIN_BALANCE_LIGHT,
+        usable,
+        display: money(spendable ?? 0).display,
+      },
+      generatedAt: new Date().toISOString(),
+    } satisfies LaunchInferenceOptionsResponse,
+  );
 }
 
 async function handleLaunchDiscover(
@@ -2275,7 +2800,7 @@ async function handleLaunchWallet(request: Request): Promise<Response> {
         balance >= billingConfig.publisherMinPublishBalanceLight,
       nextAction: billingConfig.publishDepositEnabled &&
           balance < billingConfig.publisherMinPublishBalanceLight
-        ? "Add Light from Wallet to go live."
+        ? "Add credits from Wallet to go live."
         : null,
     },
     topUpUrl: "/wallet?tab=topup",
@@ -2287,7 +2812,7 @@ async function handleLaunchWallet(request: Request): Promise<Response> {
     actions: [
       {
         id: "topup",
-        label: "Add Light",
+        label: "Add credits",
         description: "Fund tool calls, installs, and hosting.",
         href: "/wallet?tab=topup",
         enabled: true,
@@ -2295,7 +2820,7 @@ async function handleLaunchWallet(request: Request): Promise<Response> {
       {
         id: "transactions",
         label: "Transactions",
-        description: "Review Light movements from wallet funding and charges.",
+        description: "Review credit movements from wallet funding and charges.",
         href: "/wallet?tab=transactions",
         enabled: true,
       },
@@ -2310,7 +2835,7 @@ async function handleLaunchWallet(request: Request): Promise<Response> {
       {
         id: "earnings",
         label: "Earnings",
-        description: "Track creator Light earned from monetized tool usage.",
+        description: "Track creator credits earned from monetized tool usage.",
         href: "/wallet?tab=earnings",
         enabled: true,
       },
@@ -2399,9 +2924,11 @@ async function handleLaunchWalletTopUpQuote(
 ): Promise<Response> {
   const user = await requireLaunchUser(request);
   requireAccountSessionForWalletFunding(user);
-  const amountLight = normalizeLaunchFundingAmountLight(
+  const amountCredits = normalizeLaunchFundingAmountLight(
     Number(
-      url.searchParams.get("amount_light") ||
+      url.searchParams.get("amount_credits") ||
+        url.searchParams.get("amountCredits") ||
+        url.searchParams.get("amount_light") ||
         url.searchParams.get("amountLight") || 2500,
     ),
   );
@@ -2409,7 +2936,9 @@ async function handleLaunchWalletTopUpQuote(
     url.searchParams.get("method") || "card",
   );
   return json({
-    quote: quoteLaunchWalletFunding({ amountLight, method }),
+    quote: withLaunchFundingCreditsAliases(
+      quoteLaunchWalletFunding({ amountLight: amountCredits, method }),
+    ),
     presets: LAUNCH_WALLET_FUNDING_PRESETS,
     generatedAt: new Date().toISOString(),
   });
@@ -2444,7 +2973,7 @@ async function handleLaunchWalletTopUpIntent(
       userId: user.id,
       stripeCustomerId,
       email,
-      amountLight: createRequest.amountLight,
+      amountLight: createRequest.amountCredits,
       method: createRequest.method,
       termsAccepted: true,
       billingAddressId: billingProfile.id,
@@ -2457,7 +2986,7 @@ async function handleLaunchWalletTopUpIntent(
       paymentIntentId: intent.paymentIntentId,
       clientSecret: intent.clientSecret,
       stripeCustomerId: intent.stripeCustomerId,
-      quote: intent.quote,
+      quote: withLaunchFundingCreditsAliases(intent.quote),
       billingAddress: publicBillingAddress(billingProfile),
       generatedAt: new Date().toISOString(),
     });
@@ -2497,7 +3026,7 @@ function payoutStatusFor(row: WalletRow): LaunchPayoutStatus {
     kind: "not_connected",
     label: "Payouts not connected",
     description:
-      "Creator earnings can accrue as Light before a payout account is connected.",
+      "Creator earnings can accrue as credits before a payout account is connected.",
     actionUrl: "/wallet?tab=payouts",
   };
 }
@@ -2703,7 +3232,7 @@ function toLaunchWalletTransaction(
     id: row.id,
     type: row.type || "transaction",
     category: row.category || "wallet",
-    description: row.description || "Light transaction",
+    description: row.description || "Credits transaction",
     amount: money(numeric(row.amount_light)),
     balanceAfter: row.balance_after_light === undefined
       ? null
@@ -2962,7 +3491,7 @@ async function buildToolInstallContext(
       `Inspect ${publicToolUrl} for pricing and trust.`,
       `Use ${platformMcpUrl} as the Ultralight MCP endpoint with a bearer API key scoped to app ${tool.id}.`,
       `Call this tool through MCP/API, then return ${publicToolUrl} when UI is useful.`,
-      "Preserve receipt_id values and Light balance errors in the final agent response.",
+      "Preserve receipt_id values and credits balance errors in the final agent response.",
     ],
   };
 }
@@ -4000,6 +4529,44 @@ function requireAccountSessionForFunctionRun(user: AuthUser): void {
   }
 }
 
+function requireAccountSessionForByok(user: AuthUser): void {
+  if (user.authSource === "api_token" || user.authSource === "routine_actor") {
+    throw new RequestValidationError(
+      "BYOK and inference settings require an account session",
+      403,
+    );
+  }
+}
+
+interface LaunchByokProviderEntry {
+  provider: ActiveBYOKProvider;
+  info: BYOKProviderInfo;
+}
+
+function resolveLaunchByokProvider(
+  value: unknown,
+): LaunchByokProviderEntry | null {
+  if (!isActiveBYOKProvider(value)) {
+    return null;
+  }
+  return { provider: value, info: BYOK_PROVIDERS[value] };
+}
+
+function normalizeLaunchByokModel(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new RequestValidationError("model must be a string");
+  }
+  if (!isValidModelId(value)) {
+    throw new RequestValidationError(
+      `Invalid model ID format: ${value}. Expected a provider-native model ID`,
+    );
+  }
+  return value;
+}
+
 function parseLaunchApiKeyCreateRequest(
   body: Record<string, unknown>,
 ): LaunchApiKeyCreateRequest {
@@ -4048,14 +4615,15 @@ function parseLaunchApiKeyCreateRequest(
 function parseLaunchWalletFundingIntentRequest(
   body: Record<string, unknown>,
 ): ParsedLaunchWalletFundingIntentRequest {
-  const amountLight = normalizeLaunchFundingAmountLight(
-    body.amountLight ?? body.amount_light,
+  const amountCredits = normalizeLaunchFundingAmountLight(
+    body.amountCredits ?? body.amount_credits ??
+      body.amountLight ?? body.amount_light,
   );
   const method = normalizeLaunchFundingMethod(body.method);
   const termsAccepted = body.termsAccepted ?? body.terms_accepted;
   if (termsAccepted !== true) {
     throw new RequestValidationError(
-      "terms_accepted must be true to add Light",
+      "terms_accepted must be true to add credits",
     );
   }
 
@@ -4065,7 +4633,8 @@ function parseLaunchWalletFundingIntentRequest(
     : validateBillingAddressValue(billingAddressValue);
 
   return {
-    amountLight,
+    amountCredits,
+    amountLight: amountCredits,
     method,
     termsAccepted: true,
     ...(billingAddress ? { billingAddress } : {}),
@@ -4225,11 +4794,24 @@ function publicBaseUrl(request: Request): string {
   return origin.replace(/\/+$/, "");
 }
 
-function money(light: number): LaunchMoneyAmount {
-  const normalized = Number.isFinite(light) ? light : 0;
+function money(credits: number): LaunchMoneyAmount {
+  const normalized = Number.isFinite(credits) ? credits : 0;
   return {
+    credits: normalized,
     light: normalized,
-    display: `${normalized.toLocaleString("en-US")} Light`,
+    display: `${normalized.toLocaleString("en-US")} credits`,
+  };
+}
+
+function withLaunchFundingCreditsAliases(
+  quote: LaunchWalletFundingFeeSummary,
+): LaunchWalletFundingFeeSummary {
+  return {
+    ...quote,
+    amountCredits: quote.amountCredits ?? quote.amountLight,
+    amountLight: quote.amountLight ?? quote.amountCredits,
+    creditsPerDollar: 100,
+    lightPerDollar: 100,
   };
 }
 

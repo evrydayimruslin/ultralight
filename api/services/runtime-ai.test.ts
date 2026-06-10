@@ -1,6 +1,7 @@
 import { assertEquals } from "https://deno.land/std@0.210.0/assert/assert_equals.ts";
+import { assertStringIncludes } from "https://deno.land/std@0.210.0/assert/assert_string_includes.ts";
 import type { ResolvedInferenceRoute } from "./inference-route.ts";
-import { createRoutedRuntimeAIService } from "./runtime-ai.ts";
+import { createRoutedRuntimeAIService, createRuntimeAIContext } from "./runtime-ai.ts";
 
 function makeRoute(overrides: Partial<ResolvedInferenceRoute> = {}): ResolvedInferenceRoute {
   return {
@@ -202,5 +203,118 @@ Deno.test("runtime AI: Ultralight direct DeepSeek disables thinking and debits c
   } finally {
     globalThis.fetch = previousFetch;
     globalWithEnv.__env = previousEnv;
+  }
+});
+
+function makeCreditsRoute(
+  overrides: Partial<ResolvedInferenceRoute> = {},
+): ResolvedInferenceRoute {
+  return makeRoute({
+    billingMode: "light",
+    provider: "ultralight",
+    upstreamProvider: "openrouter",
+    baseUrl: "https://openrouter.test/api/v1",
+    model: "deepseek/deepseek-v4-flash",
+    keySource: "platform_openrouter",
+    billingSource: "openrouter",
+    shouldRequireBalance: true,
+    shouldDebitLight: true,
+    ...overrides,
+  });
+}
+
+const testUser = { id: "user-1", email: "user-1@example.test" };
+
+Deno.test("runtime AI context: BYOK route skips the balance gate and is not blocked", async () => {
+  let balanceCalls = 0;
+
+  const context = await createRuntimeAIContext(testUser, {
+    resolveRoute: async () => makeRoute(),
+    checkBalance: async () => {
+      balanceCalls++;
+      return 0;
+    },
+  });
+
+  assertEquals(balanceCalls, 0);
+  assertEquals(context.route?.provider, "deepseek");
+  assertEquals(context.resolvedRoute?.shouldRequireBalance, false);
+  assertEquals(context.userApiKey, "route-key");
+});
+
+Deno.test("runtime AI context: credits route below minimum balance is blocked pre-call", async () => {
+  const previousFetch = globalThis.fetch;
+  let fetchCalls = 0;
+
+  try {
+    globalThis.fetch = (async () => {
+      fetchCalls++;
+      return new Response("unexpected fetch", { status: 500 });
+    }) as typeof fetch;
+
+    const context = await createRuntimeAIContext(testUser, {
+      resolveRoute: async () => makeCreditsRoute(),
+      checkBalance: async () => 12.5,
+    });
+
+    assertEquals(context.route, null);
+    assertEquals(context.resolvedRoute, null);
+    assertEquals(context.userApiKey, null);
+
+    const response = await context.aiService.call({
+      model: "deepseek/deepseek-v4-flash",
+      messages: [{ role: "user", content: "hi" }],
+    });
+
+    assertStringIncludes(response.error ?? "", "credits");
+    assertStringIncludes(response.error ?? "", "current balance: 12.5");
+    assertStringIncludes(response.error ?? "", "BYOK");
+    assertEquals(response.content, "");
+    assertEquals(fetchCalls, 0);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+Deno.test("runtime AI context: credits route at the minimum balance proceeds", async () => {
+  let balanceCalls = 0;
+
+  const context = await createRuntimeAIContext(testUser, {
+    resolveRoute: async () => makeCreditsRoute(),
+    checkBalance: async () => {
+      balanceCalls++;
+      return 50;
+    },
+  });
+
+  assertEquals(balanceCalls, 1);
+  assertEquals(context.route?.provider, "ultralight");
+  assertEquals(context.route?.shouldDebitLight, true);
+  assertEquals(context.resolvedRoute?.shouldRequireBalance, true);
+  assertEquals(context.userApiKey, "route-key");
+});
+
+Deno.test("runtime AI context: balance check failure fails open and proceeds un-gated", async () => {
+  const previousWarn = console.warn;
+  let warned = false;
+
+  try {
+    console.warn = () => {
+      warned = true;
+    };
+
+    const context = await createRuntimeAIContext(testUser, {
+      resolveRoute: async () => makeCreditsRoute(),
+      checkBalance: async () => {
+        throw new Error("Failed to query user balance");
+      },
+    });
+
+    assertEquals(warned, true);
+    assertEquals(context.route?.provider, "ultralight");
+    assertEquals(context.resolvedRoute?.shouldRequireBalance, true);
+    assertEquals(context.userApiKey, "route-key");
+  } finally {
+    console.warn = previousWarn;
   }
 });

@@ -10,6 +10,30 @@ This file tracks issues intentionally deferred while we land the launch PR
 sequence. It is not a backlog for everything in the repo; it is a scoped list
 of launch-relevant follow-ups discovered during implementation.
 
+## Phase 2 (2026-06-10)
+
+- **Deploy-before-republish ordering:** the CLI now sends
+  `default_price_credits` to `ul.set`. Deploy the API Worker (which accepts
+  both `default_price_credits` and the deprecated `default_price_light`)
+  BEFORE publishing the next `ultralightpro` CLI release, or the new CLI
+  against the old API will fail pricing updates.
+- **Balance-gate behavior change:** credits-billed runtime inference now
+  requires a minimum spendable balance (the chat-gate constant, 50 credits)
+  BEFORE the provider call. Users below the minimum get a clear
+  "add credits or configure BYOK" error instead of an under-collected call.
+  The gate fails open on billing-read outages (post-hoc debiting still
+  applies there).
+- **Light-alias deprecation window:** launch contracts/wire now emit/accept
+  both `credits` and deprecated `light` spellings (`LaunchMoneyAmount.light`,
+  `amountLight`, `lightPerDollar`, `amount_light`, `default_price_light`).
+  Schedule removal of the deprecated aliases one release window after
+  clients migrate. Machine error codes (`LIGHT_REQUIRED`, …) and MCP output
+  field names (`cost_light`, `charged_light`, …) intentionally unchanged.
+- **Persona docs still say Light:** `skills/*.md` system-agent prompts are
+  R2-served (`system-agents/{type}/skills.md`) with no sync script; they
+  still teach "Light (✦)" and desktop-era surfaces. Edit + re-upload in a
+  later cleanup (they are outside the launch surface).
+
 ## Phase 0 (2026-06-10)
 
 - **Deploy ordering requirement:** apply Supabase migration

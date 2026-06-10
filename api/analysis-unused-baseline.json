@@ -1328,6 +1328,7 @@
     {
       "file": "services/runtime-ai.ts",
       "types": [
+        "CreateRuntimeAIContextOptions",
         "RuntimeAIContext",
         "RuntimeAIService",
         "RuntimeAIUser"

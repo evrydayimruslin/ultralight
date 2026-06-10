@@ -586,7 +586,7 @@ const SDK_TOOLS: MCPTool[] = [
     name: "ultralight.ai",
     title: "Call AI Model",
     description:
-      "Call an AI model using BYOK when configured, otherwise Light-debit platform inference.",
+      "Call an AI model using BYOK when configured, otherwise credits-billed platform inference.",
     inputSchema: {
       type: "object",
       properties: {
@@ -608,7 +608,7 @@ const SDK_TOOLS: MCPTool[] = [
         model: {
           type: "string",
           description:
-            "Model ID. Light-debit calls may request any OpenRouter-compatible model; BYOK calls use the configured provider model.",
+            "Model ID. Credits-billed calls may request any OpenRouter-compatible model; BYOK calls use the configured provider model.",
         },
         temperature: {
           type: "number",
@@ -2361,14 +2361,14 @@ async function executeAppFunction(
       const widgetBalanceMessage = widgetPull
         ? cloudPreflight.insufficientBalanceCode ===
             "owner_sponsor_light_required"
-          ? "The app owner needs Light balance before this widget can refresh."
-          : "Light balance is required to refresh this widget."
+          ? "The app owner needs credits balance before this widget can refresh."
+          : "Credits balance is required to refresh this widget."
         : null;
       return jsonRpcErrorResponse(
         id,
         -32009,
         widgetBalanceMessage || cloudPreflight.insufficientBalanceMessage ||
-          "Light balance required to call this app.",
+          "Credits balance required to call this app.",
         {
           type: cloudPreflight.insufficientBalanceCode || "LIGHT_REQUIRED",
           receipt_id: receiptId,
@@ -2409,8 +2409,8 @@ async function executeAppFunction(
             id,
             -32009,
             ownerSponsored
-              ? "The app owner needs Light balance before this widget can refresh."
-              : "Light balance is required to refresh this widget.",
+              ? "The app owner needs credits balance before this widget can refresh."
+              : "Credits balance is required to refresh this widget.",
             {
               type: ownerSponsored
                 ? "owner_sponsor_light_required"
@@ -2615,7 +2615,7 @@ async function executeAppFunction(
             id,
             -32009,
             settlement.insufficientBalanceMessage ||
-              "Light balance required to call this app.",
+              "Credits balance required to call this app.",
             {
               type: settlement.insufficientBalanceCode || "LIGHT_REQUIRED",
               receipt_id: receiptId,
@@ -2655,7 +2655,7 @@ async function executeAppFunction(
             await failJob(jobId, {
               type: settlement.insufficientBalanceCode || "LIGHT_REQUIRED",
               message: settlement.insufficientBalanceMessage ||
-                "Light balance required to call this app.",
+                "Credits balance required to call this app.",
             }, result.durationMs);
             return;
           }
@@ -2710,7 +2710,7 @@ async function executeAppFunction(
           id,
           -32009,
           settlement.insufficientBalanceMessage ||
-            "Light balance required to call this app.",
+            "Credits balance required to call this app.",
           {
             type: settlement.insufficientBalanceCode || "LIGHT_REQUIRED",
             receipt_id: receiptId,

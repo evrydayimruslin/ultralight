@@ -20,6 +20,7 @@ const CORE_GUIDANCE = [
   "Generated skills.md function docs are always free",
   "`ul.download({ name, description, policy: true })`",
   "custom code path for functions",
+  "default_price_credits",
 ];
 
 // First-class skills and widgets are off the launch surface: the docs must not

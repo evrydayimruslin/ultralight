@@ -105,7 +105,7 @@ still reflect the pre-pivot scope.
 | Skills → Functions convention (P3) | Landed (Phase 1) |
 | Widget removal (P2) | Landed (Phase 1) |
 | P5 manifest `external_functions` declaration | Landed (Phase 1 foundation) |
-| BYOK + Credits surfaces (P1) | Pending (Phase 2) |
+| BYOK + Credits surfaces (P1) | Landed (Phase 2) |
 | Tools → Agents rename (P4, incl. caller-permissions rename) | Pending (Phase 3) |
 | Cross-Agent permissions (P5) | Pending (Phase 4) |
 

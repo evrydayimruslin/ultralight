@@ -99,7 +99,7 @@ Deno.test("app router: terms page includes fee-waiver policy copy", async () => 
     assertEquals(response.status, 200);
     const html = await response.text();
     assertStringIncludes(html, "Platform Fees And Waivers");
-    assertStringIncludes(html, "do not change the gross Light amount paid by the end user");
+    assertStringIncludes(html, "do not change the gross credits amount paid by the end user");
     assertStringIncludes(html, "fee-waiver credit");
   } finally {
     globalThis.fetch = originalFetch;

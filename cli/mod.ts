@@ -1461,10 +1461,10 @@ async function setCmd(args: string[], client: ApiClient, _config: Config) {
       });
       const appId = parsed._[0] as string;
       if (!appId) {
-        throw new Error('Usage: ultralight set pricing <app-id> --default <cents>');
+        throw new Error('Usage: ultralight set pricing <app-id> --default <credits>');
       }
       const toolArgs: ToolArgs = {};
-      if (parsed.default !== undefined) toolArgs.default_price_light = parsed.default;
+      if (parsed.default !== undefined) toolArgs.default_price_credits = parsed.default;
       await callPlatformSet(client, appId, toolArgs);
       console.log(colors.green('✓ Pricing updated'));
       break;
@@ -1504,7 +1504,7 @@ ${colors.dim('SETTINGS')}
   version <app> <ver>                  Set the live version (ul.set)
   visibility <app> <private|unlisted|published>  Change visibility (ul.set)
   ratelimit <app> [--per-minute N] [--per-day N]  Set rate limits (ul.set)
-  pricing <app> --default <cents>      Set per-function pricing (ul.set)
+  pricing <app> --default <credits>    Set price in credits (✦) per call (ul.set)
   supabase <app> <server-name|null>    Assign Supabase server (ul.set)
   download-access <app> <owner|public> Set download access (ul.set)
 

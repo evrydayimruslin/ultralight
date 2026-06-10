@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   LaunchAgentFunctionPermissionsResponse,
   LaunchApiKeyListResponse,
+  LaunchByokSummaryResponse,
+  LaunchInferenceOptionsResponse,
   LaunchInstallResponse,
   LaunchLeaderboardResponse,
   LaunchLibraryResponse,
@@ -26,6 +28,8 @@ export interface LaunchRouteLiveData {
   status?: Record<string, unknown>;
   install?: LaunchInstallResponse;
   apiKeys?: LaunchApiKeyListResponse;
+  byok?: LaunchByokSummaryResponse;
+  inferenceOptions?: LaunchInferenceOptionsResponse;
   store?: LaunchStoreResponse;
   builderLeaderboard?: LaunchLeaderboardResponse;
   feeLeaderboard?: LaunchLeaderboardResponse;
@@ -157,7 +161,12 @@ async function loadRouteData(
       return { wallet, walletDetail };
     }
     case "settings": {
-      return { apiKeys: await launchApi.apiKeys() };
+      const [apiKeys, byok, inferenceOptions] = await Promise.all([
+        launchApi.apiKeys(),
+        optional(() => launchApi.byok()),
+        optional(() => launchApi.inferenceOptions()),
+      ]);
+      return { apiKeys, byok, inferenceOptions };
     }
     case "adminTool": {
       const id = route.params.id || "";

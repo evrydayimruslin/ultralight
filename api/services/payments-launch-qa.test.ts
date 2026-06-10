@@ -22,7 +22,7 @@ function jsonRequest(path: string, body: Record<string, unknown>): Request {
   });
 }
 
-Deno.test("payments launch QA: public config states closed-loop Light economics", () => {
+Deno.test("payments launch QA: public config states closed-loop credits economics", () => {
   const config = toPublicBillingConfig(DEFAULT_BILLING_CONFIG);
 
   assertEquals(config.canonical_light_per_usd, 100);
@@ -39,7 +39,7 @@ Deno.test("payments launch QA: public config states closed-loop Light economics"
   assertEquals(config.publish_deposit_enabled, true);
   assertEquals(config.publisher_min_publish_balance_light, 1000);
   assertEquals(config.published_hosting_meter_enabled, false);
-  assertEquals(config.labels.payout_rate, "100 Light = $1");
+  assertEquals(config.labels.payout_rate, "100 credits = $1");
   assertEquals(config.labels.cloud_unit_rate, "✦1 / 1,000 cloud units");
   assertEquals(
     config.labels.storage_at_rest,
@@ -49,7 +49,9 @@ Deno.test("payments launch QA: public config states closed-loop Light economics"
   assertEquals(Object.hasOwn(config, "min_publish_deposit_light"), false);
   assertEquals(Object.hasOwn(config.labels, "hosting_rate"), false);
   assert(
-    config.payout_policy_copy.includes("Purchased Light cannot be cashed out"),
+    config.payout_policy_copy.includes(
+      "Purchased credits cannot be cashed out",
+    ),
   );
   assert(config.policy_copy.purchasedLight.includes("cannot be cashed out"));
   assert(config.policy_copy.purchasedLight.includes("transferred directly"));
@@ -58,7 +60,9 @@ Deno.test("payments launch QA: public config states closed-loop Light economics"
   );
   assert(config.policy_copy.creatorEarnings.includes("requested for payout"));
   assert(config.policy_copy.cloudUsage.includes("cloud units"));
-  assert(config.policy_copy.freeCallSponsorship.includes("caller needs Light"));
+  assert(
+    config.policy_copy.freeCallSponsorship.includes("caller needs credits"),
+  );
 });
 
 Deno.test("payments launch QA: money-in and payout requests require terms hooks", async () => {

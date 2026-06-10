@@ -1817,7 +1817,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
         budget_policy: {
           type: "object",
           description:
-            "Light budget policy, e.g. { max_light_per_run, max_light_per_day, max_calls_per_run }.",
+            "Credits budget policy, e.g. { max_light_per_run, max_light_per_day, max_calls_per_run }.",
           additionalProperties: true,
         },
         approval_policy: {
@@ -2165,9 +2165,13 @@ const PLATFORM_TOOLS: MCPTool[] = [
           description: "Rate limit per minute. null = default.",
         },
         calls_per_day: { description: "Rate limit per day. null = unlimited." },
+        default_price_credits: {
+          description:
+            "Price in credits (✦) per call. Supports fractions. null = free. Replaces default_price_light.",
+        },
         default_price_light: {
           description:
-            "Price in Light (✦) per call. Supports fractions. null = free.",
+            "Deprecated alias of default_price_credits. Price in credits (✦) per call. Supports fractions. null = free.",
         },
         default_free_calls: {
           type: "integer",
@@ -2182,7 +2186,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
         },
         function_prices: {
           description:
-            'Per-function prices: { "fn": light } or { "fn": { price_light: light, free_calls?: N } }. null = remove.',
+            'Per-function prices: { "fn": credits } or { "fn": { price_light: credits, free_calls?: N } }. null = remove.',
         },
         gpu_pricing_config: {
           description:
@@ -2581,7 +2585,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
     name: "ul.marketplace",
     description:
       "Acquire and sell Ultralight apps. Place bids, set ask prices, accept offers, view history. " +
-      "All bids are escrowed from your Light balance. The configured platform fee is deducted on sale. " +
+      "All bids are escrowed from your credits balance. The configured platform fee is deducted on sale. " +
       'action="bid": place a bid. action="ask": set/update ask price. action="accept": accept a bid. ' +
       'action="reject": reject a bid. action="cancel": cancel your own bid. action="acquire": instant acquisition. ' +
       'Legacy action="buy_now" remains supported. ' +
@@ -2622,16 +2626,16 @@ const PLATFORM_TOOLS: MCPTool[] = [
         },
         amount_light: {
           type: "number",
-          description: "Bid amount in Light (✦). Required for: bid.",
+          description: "Bid amount in credits (✦). Required for: bid.",
         },
         price_light: {
           type: "number",
           description:
-            "Ask price in Light (✦). For: ask. Use null to remove ask price.",
+            "Ask price in credits (✦). For: ask. Use null to remove ask price.",
         },
         floor_light: {
           type: "number",
-          description: "Minimum acceptable bid in Light (✦). For: ask.",
+          description: "Minimum acceptable bid in credits (✦). For: ask.",
         },
         instant_buy: {
           type: "boolean",
@@ -2720,7 +2724,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
         amount_light: {
           type: "number",
           description:
-            `Amount in Light (✦). Required for: withdraw, estimate_fee, and convert_earnings unless all=true. Withdrawal minimum: ${MIN_WITHDRAWAL_LIGHT} (${
+            `Amount in credits (✦). Required for: withdraw, estimate_fee, and convert_earnings unless all=true. Withdrawal minimum: ${MIN_WITHDRAWAL_LIGHT} (${
               formatLight(MIN_WITHDRAWAL_LIGHT)
             }).`,
         },
@@ -2814,8 +2818,8 @@ function stripGpuPlatformDocs(docs: string): string {
       "",
     )
     .replace(
-      "### ul.set({ app_id, version?, visibility?, download_access?, supabase_server?, calls_per_minute?, calls_per_day?, default_price_light?, default_free_calls?, free_calls_scope?, function_prices?, gpu_pricing_config?, search_hints?, show_metrics? })",
-      "### ul.set({ app_id, version?, visibility?, download_access?, supabase_server?, calls_per_minute?, calls_per_day?, default_price_light?, default_free_calls?, free_calls_scope?, function_prices?, search_hints?, show_metrics? })",
+      "### ul.set({ app_id, version?, visibility?, download_access?, supabase_server?, calls_per_minute?, calls_per_day?, default_price_credits?, default_free_calls?, free_calls_scope?, function_prices?, gpu_pricing_config?, search_hints?, show_metrics? })",
+      "### ul.set({ app_id, version?, visibility?, download_access?, supabase_server?, calls_per_minute?, calls_per_day?, default_price_credits?, default_free_calls?, free_calls_scope?, function_prices?, search_hints?, show_metrics? })",
     )
     .replace(
       "- GPU pricing: `gpu_pricing_config` adds the developer fee only. GPU compute pass-through is always charged separately.\n",
@@ -3118,7 +3122,7 @@ Natural-language Command dashboard primitive.
 ### ul.routine({ action, ... })
 Persistent cloud routines for ongoing delegated work.
 - \`action: "templates"\` — Discover MCP-published routine templates. Optional \`query\`, \`app_id\`, \`limit\`.
-- \`action: "plan"\` — Preview schedule, config, capability approvals, Light budgets, and Command surfaces before saving.
+- \`action: "plan"\` — Preview schedule, config, capability approvals, credits budgets, and Command surfaces before saving.
 - \`action: "create"\` — Save a user-owned routine from a template. Pass \`approve_capabilities: true\` after user approval to approve durable downstream MCP calls.
 - \`action: "list"\` / \`"get"\` / \`"update"\` — Inspect and edit routine instances.
 - \`action: "pause"\` / \`"resume"\` / \`"delete"\` — Control ongoing work.
@@ -3149,13 +3153,13 @@ Test code in sandbox without deploying.
 - Returns: \`{ success, result?, error?, duration_ms, exports, logs?, lint? }\`.
 - Always test before \`ul.upload\`.
 
-### ul.set({ app_id, version?, visibility?, download_access?, supabase_server?, calls_per_minute?, calls_per_day?, default_price_light?, default_free_calls?, free_calls_scope?, function_prices?, gpu_pricing_config?, search_hints?, show_metrics? })
+### ul.set({ app_id, version?, visibility?, download_access?, supabase_server?, calls_per_minute?, calls_per_day?, default_price_credits?, default_free_calls?, free_calls_scope?, function_prices?, gpu_pricing_config?, search_hints?, show_metrics? })
 Batch configure app settings. Each field is optional — only provided fields are updated.
 - \`version\`: set which version is live
 - \`visibility\`: "private" | "unlisted" | "published" (published = app store)
 - \`supabase_server\`: assign Bring Your Own Supabase server (or null to unassign)
 - Rate limits: \`calls_per_minute\`, \`calls_per_day\` (null = platform defaults)
-- Pricing: \`default_price_light\`, \`function_prices: { "fn_name": light }\` or \`{ "fn_name": { price_light, free_calls? } }\`
+- Pricing: \`default_price_credits\` (deprecated alias: \`default_price_light\`), \`function_prices: { "fn_name": credits }\` or \`{ "fn_name": { price_light, free_calls? } }\`
 - GPU pricing: \`gpu_pricing_config\` adds the developer fee only. GPU compute pass-through is always charged separately.
 - Free preview: \`default_free_calls\` (number of free calls per user before charging), \`free_calls_scope\`: "function" (each function counted separately) or "app" (shared counter across all functions)
 - \`search_hints\`: array of keywords for better semantic search discovery. Regenerates embedding.
@@ -3553,7 +3557,7 @@ MCP-first app hosting. TypeScript functions → MCP servers. Platform tools + un
 
 **Storage at rest: ${
     formatLight(STORAGE_LIGHT_PER_GB_MONTH)
-  }/GB-month after 100MB free.** Worker, D1, R2, KV, and widget activity is metered separately as exact fractional Light cloud usage.
+  }/GB-month after 100MB free.** Worker, D1, R2, KV, and widget activity is metered separately as exact fractional credits cloud usage.
 
 ${deskSection}
 
@@ -4200,6 +4204,7 @@ async function handleToolsCall(
           setCount++;
         }
         if (
+          toolArgs.default_price_credits !== undefined ||
           toolArgs.default_price_light !== undefined ||
           toolArgs.function_prices !== undefined ||
           toolArgs.default_free_calls !== undefined ||
@@ -4207,7 +4212,11 @@ async function handleToolsCall(
         ) {
           setResults.pricing = await executeSetPricing(userId, {
             app_id: toolArgs.app_id,
-            default_price_light: toolArgs.default_price_light,
+            // default_price_credits is the preferred param; default_price_light
+            // remains a deprecated alias.
+            default_price_light: toolArgs.default_price_credits !== undefined
+              ? toolArgs.default_price_credits
+              : toolArgs.default_price_light,
             functions: toolArgs.function_prices,
             default_free_calls: toolArgs.default_free_calls,
             free_calls_scope: toolArgs.free_calls_scope,
@@ -5021,11 +5030,11 @@ async function handleToolsCall(
               },
               policy: {
                 purchased_light:
-                  "Purchased Light is spend-only platform credit and is not payout eligible.",
+                  "Purchased credits are spend-only platform credit and are not payout eligible.",
                 creator_earnings:
                   "Creator earnings must be added to balance before they can be spent, or requested for payout while unconverted.",
                 no_p2p_transfer:
-                  "Light cannot be transferred directly between arbitrary accounts.",
+                  "Credits cannot be transferred directly between arbitrary accounts.",
                 terms_url: "/terms",
               },
               can_withdraw:
@@ -6898,9 +6907,9 @@ async function executeUpload(
             VALIDATION_ERROR,
             `Storage soft cap reached. Accounts above ${quotaCheck.limit_bytes} bytes require at least ${
               quotaCheck.minimum_balance_light ?? 1000
-            } Light to cover storage charges. Current balance: ${
+            } credits to cover storage charges. Current balance: ${
               quotaCheck.current_balance_light ?? 0
-            } Light.`,
+            } credits.`,
           );
         }
         throw new ToolError(
@@ -10159,7 +10168,7 @@ async function executeSetPricing(
     if (defaultPrice < 0 || defaultPrice > 10000) {
       throw new ToolError(
         INVALID_PARAMS,
-        "default_price_light must be 0-10000 (max ✦10,000 per call)",
+        "default_price_credits (default_price_light) must be 0-10000 (max ✦10,000 per call)",
       );
     }
     config.default_price_light = defaultPrice;
@@ -10192,7 +10201,7 @@ async function executeSetPricing(
     if (!isRecord(functions)) {
       throw new ToolError(
         INVALID_PARAMS,
-        "functions must be an object { fnName: light } or { fnName: { price_light, free_calls? } }",
+        "functions must be an object { fnName: credits } or { fnName: { price_light, free_calls? } }",
       );
     }
     const validatedFunctions: NonNullable<AppPricingConfig["functions"]> = {};
@@ -10201,7 +10210,7 @@ async function executeSetPricing(
         if (val < 0 || val > 10000) {
           throw new ToolError(
             INVALID_PARAMS,
-            `Price for "${fn}" must be 0-10000 Light`,
+            `Price for "${fn}" must be 0-10000 credits`,
           );
         }
         validatedFunctions[fn] = val;
@@ -10264,7 +10273,7 @@ async function executeSetPricing(
     app_id: app.id,
     pricing_config: config,
     message: parts.length > 0
-      ? `Pricing set: ${parts.join(", ")}. Callers will be charged in Light.`
+      ? `Pricing set: ${parts.join(", ")}. Callers will be charged in credits.`
       : "Pricing set but all prices are 0 (free).",
   };
 }

@@ -8,7 +8,7 @@ import {
   usdCentsToLight,
 } from "./billing-config.ts";
 
-Deno.test("billing config: defaults encode current Light economics", () => {
+Deno.test("billing config: defaults encode current credits economics", () => {
   assertEquals(DEFAULT_BILLING_CONFIG.canonicalLightPerUsd, 100);
   assertEquals(DEFAULT_BILLING_CONFIG.walletLightPerUsd, 100);
   assertEquals(DEFAULT_BILLING_CONFIG.wireLightPerUsd, 100);
@@ -85,10 +85,10 @@ Deno.test("billing config: conversion helpers use supplied rate snapshots", () =
 
 Deno.test("billing config: public shape includes human-readable labels", () => {
   const publicConfig = toPublicBillingConfig(DEFAULT_BILLING_CONFIG);
-  assertEquals(publicConfig.labels.wallet_rate, "100 Light / $1");
-  assertEquals(publicConfig.labels.wire_rate, "100 Light / $1");
-  assertEquals(publicConfig.labels.ach_rate, "100 Light / $1");
-  assertEquals(publicConfig.labels.payout_rate, "100 Light = $1");
+  assertEquals(publicConfig.labels.wallet_rate, "100 credits / $1");
+  assertEquals(publicConfig.labels.wire_rate, "100 credits / $1");
+  assertEquals(publicConfig.labels.ach_rate, "100 credits / $1");
+  assertEquals(publicConfig.labels.payout_rate, "100 credits = $1");
   assertEquals(publicConfig.card_minimum_cents, 2500);
   assertEquals(publicConfig.wire_minimum_cents, 2500);
   assertEquals(publicConfig.ach_light_per_usd, 100);
@@ -128,7 +128,7 @@ Deno.test("billing config: public shape includes human-readable labels", () => {
     true,
   );
   assertEquals(
-    publicConfig.policy_copy.cloudUsage.includes("exact fractional Light"),
+    publicConfig.policy_copy.cloudUsage.includes("exact fractional credits"),
     true,
   );
   assertEquals(
@@ -137,7 +137,7 @@ Deno.test("billing config: public shape includes human-readable labels", () => {
   );
   assertEquals(
     publicConfig.policy_copy.freeCallSponsorship.includes(
-      "caller needs Light balance",
+      "caller needs credits balance",
     ),
     true,
   );
