@@ -100,8 +100,10 @@ export function buildCallerPermissionConfigureUrl(
   functionName: string,
 ): string {
   // Points at the Agent page, where the per-function permission control
-  // lives (the facade resolves UUID or slug locators).
-  const url = new URL(`/agents/${encodeURIComponent(appId)}`, baseUrl);
+  // lives (the facade resolves UUID or slug locators). The page is served by
+  // the launch website, not the API worker — prefer LAUNCH_WEB_BASE_URL.
+  const webBaseUrl = getEnv("LAUNCH_WEB_BASE_URL") || baseUrl;
+  const url = new URL(`/agents/${encodeURIComponent(appId)}`, webBaseUrl);
   url.searchParams.set("tab", "functions");
   url.searchParams.set("function", functionName);
   return url.toString();

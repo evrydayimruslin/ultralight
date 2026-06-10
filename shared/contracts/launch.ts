@@ -793,6 +793,8 @@ export interface LaunchLeaderboardEntry {
   avatarUrl?: string | null;
   value: LaunchMoneyAmount;
   eventCount?: number;
+  featuredAgent?: Pick<LaunchAgentSummary, "id" | "slug" | "name"> | null;
+  /** @deprecated Use featuredAgent. */
   featuredTool?: Pick<LaunchAgentSummary, "id" | "slug" | "name"> | null;
 }
 

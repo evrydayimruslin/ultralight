@@ -776,7 +776,7 @@ Deno.test('launch facade: unauthenticated private previews stay hidden', async (
       const body = await response.json() as { error?: string };
 
       assertEquals(response.status, 404);
-      assertEquals(body.error, 'Tool not found');
+      assertEquals(body.error, 'Agent not found');
     },
     async (input) => {
       const url = input instanceof Request ? input.url : String(input);
@@ -1854,6 +1854,25 @@ function parseJsonBody(
 }
 
 Deno.test("launch facade: legacy /tools and /agent-permissions paths still serve (rename aliases)", async () => {
+  await withLaunchEnv(async () => {
+    // Admin route must be reachable on BOTH canonical and legacy paths
+    // (regression: the rename once left the admin matcher on the old path,
+    // 404ing both forms). Unauthenticated -> 401 proves the handler matched.
+    const adminCanonical = await handleLaunch(
+      new Request("https://ultralight.test/api/launch/admin/agents/app-1"),
+    );
+    await adminCanonical.body?.cancel();
+    assertEquals(adminCanonical.status, 401);
+
+    const adminLegacy = await handleLaunch(
+      new Request("https://ultralight.test/api/launch/admin/tools/app-1"),
+    );
+    await adminLegacy.body?.cancel();
+    assertEquals(adminLegacy.status, 401);
+  });
+});
+
+Deno.test("launch facade: legacy alias block 2", async () => {
   await withLaunchEnv(async () => {
     // Legacy paths must normalize onto canonical handlers: these auth-gated
     // routes return 401 (handler reached), not the route-level 404.

@@ -366,20 +366,20 @@ const PRIMITIVE_METADATA: Record<LaunchPlatformPrimitive, PrimitiveMetadata> = {
     apiRoute: "GET /api/launch/install",
   },
   deploy: {
-    label: "Deploy a tool",
-    description: "Ship deployable tool code onto hosted Ultralight runtime.",
+    label: "Deploy an Agent",
+    description: "Ship deployable Agent code onto hosted Ultralight runtime.",
     route: "/install",
     apiRoute: "GET /api/launch/install",
   },
   publish: {
     label: "Publish for discovery",
-    description: "Make a deployed tool public or unlisted for agent installs.",
+    description: "Make a deployed Agent public or unlisted for installs.",
     route: "/admin/agents/:id",
     apiRoute: "GET /api/launch/admin/agents/:id",
   },
   store: {
     label: "Store",
-    description: "Find public agent-native tools.",
+    description: "Find public Agents.",
     route: "/store",
     apiRoute: "GET /api/launch/store",
   },
@@ -390,14 +390,14 @@ const PRIMITIVE_METADATA: Record<LaunchPlatformPrimitive, PrimitiveMetadata> = {
     apiRoute: "GET /api/launch/wallet",
   },
   pricing: {
-    label: "Tool pricing",
+    label: "Agent pricing",
     description: "Inspect per-call pricing and free-call configuration.",
     route: "/admin/agents/:id",
     apiRoute: "GET /api/launch/admin/agents/:id",
   },
   receipts: {
     label: "Receipts",
-    description: "Track monetized tool usage and marketplace receipts.",
+    description: "Track monetized Agent usage and marketplace receipts.",
     route: "/admin/agents/:id",
     apiRoute: "GET /api/launch/admin/agents/:id",
   },
@@ -436,11 +436,12 @@ function normalizeLaunchApiPath(pathname: string): string {
     normalized = "/api/launch/agents/" +
       normalized.slice(legacyToolsPrefix.length);
   }
-  const legacyPermissionsSuffix = "/agent-" + "permissions";
-  if (normalized.endsWith(legacyPermissionsSuffix)) {
-    normalized = normalized.slice(0, -legacyPermissionsSuffix.length) +
-      "/caller-permissions";
-  }
+  // Anchored so an Agent slugged "agent-permissions" cannot be hijacked:
+  // only .../agents/{locator}/agent-permissions rewrites.
+  normalized = normalized.replace(
+    /^(\/api\/launch\/agents\/[^/]+)\/agent-permissions$/,
+    "$1/caller-permissions",
+  );
   return normalized;
 }
 
@@ -552,9 +553,11 @@ export async function handleLaunch(request: Request): Promise<Response> {
       return await handleLaunchLeaderboard(url);
     }
 
-    const adminToolMatch = path.match(/^\/api\/launch\/admin\/tools\/([^/]+)$/);
-    if (adminToolMatch) {
-      return await handleLaunchToolAdmin(request, adminToolMatch[1]);
+    const adminAgentMatch = path.match(
+      /^\/api\/launch\/admin\/agents\/([^/]+)$/,
+    );
+    if (adminAgentMatch) {
+      return await handleLaunchToolAdmin(request, adminAgentMatch[1]);
     }
 
     if (agentPermissionsMatch) {
@@ -616,8 +619,11 @@ function buildLaunchStatus(request: Request): Record<string, unknown> {
       discover: "/api/launch/discover?query={query}",
       discoverAlias: "/api/launch/discover?query={query}",
       agentFunctions: "/api/launch/agents/{id}/functions",
+      // Deprecated alias keys kept for one rename window.
+      toolFunctions: "/api/launch/agents/{id}/functions",
       functionRun: "/api/launch/agents/{id}/functions/{functionName}/run",
       callerPermissions: "/api/launch/agents/{id}/caller-permissions",
+      agentPermissions: "/api/launch/agents/{id}/caller-permissions",
       platformPrimitives: "/api/launch/platform-primitives?q={query}",
       leaderboard: "/api/launch/leaderboard?kind=builder&period=30d",
       wallet: "/api/launch/wallet",
@@ -636,9 +642,9 @@ function buildLaunchStatus(request: Request): Record<string, unknown> {
     },
     externalAgentLoop: [
       "Install Ultralight MCP, CLI, or direct API access.",
-      "Browse the store for relevant tools and platform primitives.",
-      "Inspect tool capabilities, pricing, and trust.",
-      "Call tools through MCP/API and return public tool links when UI matters.",
+      "Browse the store for relevant Agents and platform primitives.",
+      "Inspect Agent functions, pricing, and trust.",
+      "Call Agents through MCP/API and return public Agent links when UI matters.",
       "Preserve credit receipts and errors in the final response.",
     ],
   };
@@ -659,7 +665,7 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
     queryParam(
       "query",
       { type: "string", maxLength: 200 },
-      "Natural language query for public tools and primitives",
+      "Natural language query for public Agents and primitives",
     ),
     queryParam(
       "kind",
@@ -668,12 +674,12 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
         enum: ["all", "mcp", "http", "markdown", "gpu"],
         default: "all",
       },
-      "Optional tool kind filter",
+      "Optional Agent kind filter",
     ),
     queryParam(
       "limit",
       { type: "integer", minimum: 1, maximum: 100, default: 24 },
-      "Maximum tool results to return",
+      "Maximum Agent results to return",
     ),
   ];
   const storeResponse = {
@@ -704,9 +710,9 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
   const storePathSpec = {
     get: {
       operationId: "storeLaunchTools",
-      summary: "Browse public launch tools and platform primitives",
+      summary: "Browse public launch Agents and platform primitives",
       description:
-        "Canonical launch store endpoint. Semantic-first tool retrieval with lexical fallback. Results expose public tool pages, pricing, owner, and retrieval metadata.",
+        "Canonical launch store endpoint. Semantic-first Agent retrieval with lexical fallback. Results expose public Agent pages, pricing, owner, and retrieval metadata.",
       parameters: storeParameters,
       responses: storeResponse,
     },
@@ -738,10 +744,15 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
       "Maximum wallet rows to return",
     ),
   ];
+  const walletAgentFilterParameter = queryParam(
+    "agent",
+    { type: "string", maxLength: 200 },
+    "Optional Agent id filter for receipts and earnings",
+  );
   const walletToolFilterParameter = queryParam(
     "tool",
     { type: "string", maxLength: 200 },
-    "Optional tool id filter for receipts and earnings",
+    "Deprecated alias of the agent filter parameter",
   );
   const walletPagePathSpec = (
     operationId: string,
@@ -784,7 +795,7 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
     info: {
       title: "Ultralight Launch API",
       description:
-        "Launch-scoped API facade for existing agents to install, discover, inspect, compose, and pay for Ultralight tools.",
+        "Launch-scoped API facade for existing agents to install, discover, inspect, compose, and pay for Ultralight Agents.",
       version: LAUNCH_MVP_VERSION,
       contact: { name: "Ultralight", url: baseUrl },
     },
@@ -823,15 +834,20 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
           summary: "Get MCP, CLI, and direct API install instructions",
           parameters: [
             queryParam(
+              "agent",
+              { type: "string", maxLength: 200 },
+              "Optional public Agent id or slug for an Agent-specific install handoff",
+            ),
+            queryParam(
               "tool",
               { type: "string", maxLength: 200 },
-              "Optional public tool id or slug for a tool-specific install handoff",
+              "Deprecated alias of the agent parameter",
             ),
           ],
           responses: {
             "200": {
               description:
-                "Copyable launch install instructions and optional tool-specific install context",
+                "Copyable launch install instructions and optional Agent-specific install context",
               content: jsonContent({
                 type: "object",
                 required: ["instructions", "generatedAt"],
@@ -840,9 +856,16 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
                     type: "array",
                     items: { $ref: "#/components/schemas/InstallInstruction" },
                   },
-                  toolInstall: {
+                  agentInstall: {
                     oneOf: [
-                      { $ref: "#/components/schemas/ToolInstallContext" },
+                      { $ref: "#/components/schemas/AgentInstallContext" },
+                      { type: "null" },
+                    ],
+                  },
+                  toolInstall: {
+                    description: "Deprecated alias of agentInstall.",
+                    oneOf: [
+                      { $ref: "#/components/schemas/AgentInstallContext" },
                       { type: "null" },
                     ],
                   },
@@ -850,7 +873,7 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
                 },
               }),
             },
-            "404": { description: "Requested install tool not found" },
+            "404": { description: "Requested install Agent not found" },
           },
         },
       },
@@ -1075,17 +1098,17 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
       "/api/launch/agents/{id}": {
         get: {
           operationId: "getLaunchTool",
-          summary: "Inspect a public tool by id or slug",
+          summary: "Inspect a public Agent by id or slug",
           parameters: [{
             name: "id",
             in: "path",
             required: true,
             schema: { type: "string" },
-            description: "Tool id or slug",
+            description: "Agent id or slug",
           }],
           responses: {
             "200": {
-              description: "Public tool profile and trust metadata",
+              description: "Public Agent profile and trust metadata",
               content: jsonContent({
                 type: "object",
                 properties: {
@@ -1094,7 +1117,7 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
                 },
               }),
             },
-            "404": { description: "Tool not found" },
+            "404": { description: "Agent not found" },
           },
         },
       },
@@ -1109,7 +1132,7 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
             in: "path",
             required: true,
             schema: { type: "string" },
-            description: "Tool id or slug",
+            description: "Agent id or slug",
           }],
           responses: {
             "200": {
@@ -1118,7 +1141,7 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
                 $ref: "#/components/schemas/ToolFunctionsResponse",
               }),
             },
-            "404": { description: "Tool not found" },
+            "404": { description: "Agent not found" },
           },
         },
       },
@@ -1127,7 +1150,7 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
           operationId: "runLaunchToolFunction",
           summary: "Run one tool function from the launch website",
           description:
-            "Authenticated account-session endpoint. Runs through the existing runtime, billing, secret, and receipt path. External-agent permission policies do not block manual website runs.",
+            "Authenticated account-session endpoint. Runs through the existing runtime, billing, secret, and receipt path. Connected-agent permission policies do not block manual website runs.",
           security: [{ bearerAuth: [] }],
           parameters: [
             {
@@ -1135,7 +1158,7 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
               in: "path",
               required: true,
               schema: { type: "string" },
-              description: "Tool id or slug",
+              description: "Agent id or slug",
             },
             {
               name: "functionName",
@@ -1172,7 +1195,7 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
       "/api/launch/agents/{id}/caller-permissions": {
         get: {
           operationId: "getLaunchToolAgentPermissions",
-          summary: "Get external-agent permission policy for a tool",
+          summary: "Get connected-agent permission policy for an Agent",
           description:
             "Account-session endpoint. Returns the user's default external-agent policy plus per-function effective policies for the selected tool.",
           security: [{ bearerAuth: [] }],
@@ -1181,23 +1204,23 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
             in: "path",
             required: true,
             schema: { type: "string" },
-            description: "Tool id or slug",
+            description: "Agent id or slug",
           }],
           responses: {
             "200": {
-              description: "Per-function external-agent permission policy",
+              description: "Per-function connected-agent permission policy",
               content: jsonContent({
                 $ref: "#/components/schemas/CallerFunctionPermissions",
               }),
             },
             "401": { description: "Authentication required" },
             "403": { description: "Account session required" },
-            "404": { description: "Tool not found" },
+            "404": { description: "Agent not found" },
           },
         },
         patch: {
           operationId: "updateLaunchToolAgentPermissions",
-          summary: "Update external-agent permission policy for a tool",
+          summary: "Update connected-agent permission policy for an Agent",
           description:
             "Sets the user's launch default policy and/or explicit per-function overrides. Default launch policy is ask.",
           security: [{ bearerAuth: [] }],
@@ -1206,7 +1229,7 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
             in: "path",
             required: true,
             schema: { type: "string" },
-            description: "Tool id or slug",
+            description: "Agent id or slug",
           }],
           requestBody: {
             required: true,
@@ -1244,14 +1267,14 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
             "400": { description: "Invalid policy request" },
             "401": { description: "Authentication required" },
             "403": { description: "Account session required" },
-            "404": { description: "Tool not found" },
+            "404": { description: "Agent not found" },
           },
         },
       },
       "/api/launch/library": {
         get: {
           operationId: "getLaunchLibrary",
-          summary: "List authenticated owned and installed tools",
+          summary: "List authenticated owned and installed Agents",
           security: [{ bearerAuth: [] }],
           responses: {
             "200": {
@@ -1298,7 +1321,7 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
               }),
             },
             "401": { description: "Authentication required" },
-            "404": { description: "Tool not found or not owned" },
+            "404": { description: "Agent not found or not owned" },
           },
         },
       },
@@ -1330,7 +1353,7 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
       ),
       "/api/launch/wallet/receipts": walletPagePathSpec(
         "listLaunchWalletReceipts",
-        "List paginated tool-call receipts",
+        "List paginated Agent-call receipts",
         "receipts",
         { $ref: "#/components/schemas/WalletReceipt" },
         true,
@@ -1534,21 +1557,33 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
             requiresApiKey: { type: "boolean" },
           },
         },
-        ToolInstallContext: {
+        AgentInstallContext: {
           type: "object",
           required: [
-            "tool",
-            "selectedToolSlug",
-            "publicToolUrl",
+            "agent",
+            "selectedAgentSlug",
+            "publicAgentUrl",
             "installUrl",
             "platformMcpUrl",
             "recommendedApiKey",
             "agentHandoff",
           ],
           properties: {
-            tool: { $ref: "#/components/schemas/ToolSummary" },
-            selectedToolSlug: { type: "string" },
-            publicToolUrl: { type: "string" },
+            agent: { $ref: "#/components/schemas/ToolSummary" },
+            tool: {
+              description: "Deprecated alias of agent.",
+              $ref: "#/components/schemas/ToolSummary",
+            },
+            selectedAgentSlug: { type: "string" },
+            selectedToolSlug: {
+              type: "string",
+              description: "Deprecated alias of selectedAgentSlug.",
+            },
+            publicAgentUrl: { type: "string" },
+            publicToolUrl: {
+              type: "string",
+              description: "Deprecated alias of publicAgentUrl.",
+            },
             installUrl: { type: "string" },
             platformMcpUrl: { type: "string" },
             recommendedApiKey: {
@@ -1752,9 +1787,13 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
         },
         ToolFunctionsResponse: {
           type: "object",
-          required: ["tool", "functions", "generatedAt"],
+          required: ["agent", "functions", "generatedAt"],
           properties: {
-            tool: { type: "object" },
+            agent: { type: "object" },
+            tool: {
+              type: "object",
+              description: "Deprecated alias of agent.",
+            },
             functions: {
               type: "array",
               items: { $ref: "#/components/schemas/FunctionSummary" },
@@ -1766,13 +1805,17 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
           type: "object",
           required: [
             "success",
-            "tool",
+            "agent",
             "functionName",
             "generatedAt",
           ],
           properties: {
             success: { type: "boolean" },
-            tool: { type: "object" },
+            agent: { type: "object" },
+            tool: {
+              type: "object",
+              description: "Deprecated alias of agent.",
+            },
             functionName: { type: "string" },
             result: {},
             receiptId: { type: ["string", "null"] },
@@ -1790,9 +1833,13 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
         },
         CallerFunctionPermissions: {
           type: "object",
-          required: ["tool", "defaultPolicy", "permissions", "generatedAt"],
+          required: ["agent", "defaultPolicy", "permissions", "generatedAt"],
           properties: {
-            tool: { type: "object" },
+            agent: { type: "object" },
+            tool: {
+              type: "object",
+              description: "Deprecated alias of agent.",
+            },
             defaultPolicy: {
               type: "string",
               enum: LAUNCH_CALLER_FUNCTION_POLICIES,
@@ -2489,12 +2536,12 @@ async function handleLaunchDiscover(
       });
       if (rows.length === 0) {
         toolFallbackReason =
-          "semantic tool search returned no launch-safe rows";
+          "semantic Agent search returned no launch-safe rows";
       }
     } catch (err) {
       toolFallbackReason = err instanceof Error
-        ? `semantic tool search failed: ${err.message}`
-        : "semantic tool search failed";
+        ? `semantic Agent search failed: ${err.message}`
+        : "semantic Agent search failed";
     }
   } else if (query) {
     toolFallbackReason = "embedding service unavailable";
@@ -2585,7 +2632,7 @@ async function handleLaunchTool(
   encodedLocator: string,
 ): Promise<Response> {
   const resolved = await resolveLaunchVisibleTool(request, encodedLocator);
-  if (!resolved) return error("Tool not found", 404);
+  if (!resolved) return error("Agent not found", 404);
   const { installedIds, row, viewer } = resolved;
 
   const owners = await fetchOwnerMap([row.owner_id]);
@@ -2612,7 +2659,7 @@ async function handleLaunchToolFunctions(
   const resolved = viewer
     ? await resolveLaunchRunnableTool(viewer, encodedLocator)
     : await resolvePublicLaunchTool(encodedLocator);
-  if (!resolved) return error("Tool not found", 404);
+  if (!resolved) return error("Agent not found", 404);
   const { row, installedIds } = resolved;
 
   const owners = await fetchOwnerMap([row.owner_id]);
@@ -2643,7 +2690,7 @@ async function handleLaunchFunctionRun(
   const user = await requireLaunchUser(request);
   requireAccountSessionForFunctionRun(user);
   const resolved = await resolveLaunchRunnableTool(user, encodedLocator);
-  if (!resolved) return error("Tool not found", 404);
+  if (!resolved) return error("Agent not found", 404);
   const { row } = resolved;
   const functionName = parseFunctionName(encodedFunctionName);
   const functionNames = new Set(extractFunctionNames(row));
@@ -2715,7 +2762,7 @@ async function handleLaunchToolAdmin(
   const user = await requireLaunchUser(request);
   const locator = parseLocator(encodedLocator);
   const row = await fetchToolByLocator(locator, { ownerId: user.id });
-  if (!row) return error("Tool not found", 404);
+  if (!row) return error("Agent not found", 404);
 
   const owners = await fetchOwnerMap([row.owner_id]);
   const tool = toLaunchAgentSummary(row, {
@@ -2753,7 +2800,7 @@ async function handleLaunchToolAgentPermissions(
   const user = await requireLaunchUser(request);
   requireAccountSessionForAgentPermissions(user);
   const resolved = await resolveAgentPermissionTool(user, encodedLocator);
-  if (!resolved) return error("Tool not found", 404);
+  if (!resolved) return error("Agent not found", 404);
 
   return json(
     await buildLaunchCallerPermissionsResponse(
@@ -2771,7 +2818,7 @@ async function handleLaunchToolAgentPermissionsUpdate(
   const user = await requireLaunchUser(request);
   requireAccountSessionForAgentPermissions(user);
   const resolved = await resolveAgentPermissionTool(user, encodedLocator);
-  if (!resolved) return error("Tool not found", 404);
+  if (!resolved) return error("Agent not found", 404);
 
   const body = asRecord(await readJsonBody<unknown>(request));
   if (!body) {
@@ -2852,7 +2899,7 @@ async function handleLaunchWallet(request: Request): Promise<Response> {
       {
         id: "topup",
         label: "Add credits",
-        description: "Fund tool calls, installs, and hosting.",
+        description: "Fund Agent calls, installs, and hosting.",
         href: "/wallet?tab=topup",
         enabled: true,
       },
@@ -2867,14 +2914,14 @@ async function handleLaunchWallet(request: Request): Promise<Response> {
         id: "receipts",
         label: "Receipts",
         description:
-          "Inspect tool-call receipts with app, infra, and fee economics.",
+          "Inspect Agent-call receipts with app, infra, and fee economics.",
         href: "/wallet?tab=receipts",
         enabled: true,
       },
       {
         id: "earnings",
         label: "Earnings",
-        description: "Track creator credits earned from monetized tool usage.",
+        description: "Track creator credits earned from monetized Agent usage.",
         href: "/wallet?tab=earnings",
         enabled: true,
       },
@@ -3390,7 +3437,7 @@ function buildInstallInstructions(
       steps: [
         "Open Cursor MCP settings.",
         "Add the ultralight server entry below.",
-        "Reload Cursor so agents can discover Ultralight tools.",
+        "Reload Cursor so it can discover Ultralight Agents.",
       ],
       configText: JSON.stringify(genericConfig, null, 2),
       requiresApiKey: true,
@@ -3417,7 +3464,7 @@ function buildInstallInstructions(
       steps: [
         "Use the platform MCP endpoint as the server URL.",
         "Pass your Ultralight API token as a bearer Authorization header.",
-        "Allow the agent to list tools before calling specific tools.",
+        "Allow your connected agent to list available Agents before calling specific ones.",
       ],
       configText: JSON.stringify(
         { server_url: mcpUrl, authorization: bearer },
@@ -3434,7 +3481,7 @@ function buildInstallInstructions(
       steps: [
         "Copy the server configuration into your agent's MCP config.",
         "Replace the API token placeholder with an Ultralight API token.",
-        "Restart the agent or refresh its tool registry.",
+        "Restart your connected agent or refresh its MCP tool list.",
       ],
       configText: JSON.stringify(genericConfig, null, 2),
       requiresApiKey: true,
@@ -3443,11 +3490,11 @@ function buildInstallInstructions(
       target: "cli",
       label: "CLI",
       description:
-        "Use the existing Ultralight CLI to login, upload, test, and run deployed tools.",
+        "Use the existing Ultralight CLI to login, upload, test, and run deployed Agents.",
       steps: [
         "Install the ultralightpro package or use the local CLI during development.",
         "Run ultralight login --token <your-token>.",
-        "Run ultralight upload . from a deployable tool directory.",
+        "Run ultralight upload . from a deployable Agent directory.",
       ],
       configText:
         "npm install -g ultralightpro\nultralight login --token <your-token>\nultralight upload .",
@@ -3462,7 +3509,7 @@ function buildInstallInstructions(
         "Create an API token from Settings.",
         "Send Authorization: Bearer <token> on authenticated API requests.",
         "Read /api/launch/status and /api/launch/openapi.json before calling authenticated launch endpoints.",
-        "Use /api/launch/store for public tool discovery and /mcp/platform for MCP tools.",
+        "Use /api/launch/store for public Agent discovery and /mcp/platform for MCP tools.",
       ],
       configText: `curl "${baseUrl}/api/launch/status"\n` +
         `curl "${baseUrl}/api/launch/openapi.json"\n` +
@@ -3497,10 +3544,10 @@ async function buildToolInstallContext(
 ): Promise<LaunchAgentInstallContext> {
   const row = await fetchToolByLocator(locator, { publicOnly: true });
   if (!row) {
-    throw new RequestValidationError("Tool not found", 404);
+    throw new RequestValidationError("Agent not found", 404);
   }
   if (shouldHideGpu(row)) {
-    throw new RequestValidationError("Tool not found", 404);
+    throw new RequestValidationError("Agent not found", 404);
   }
 
   const viewer = await tryAuthenticate(request);
@@ -3518,7 +3565,7 @@ async function buildToolInstallContext(
   const publicToolUrl = `${baseUrl}${
     tool.publicUrl || `/agents/${encodeURIComponent(tool.slug)}`
   }`;
-  const installUrl = `${baseUrl}/install?tool=${encodeURIComponent(tool.slug)}`;
+  const installUrl = `${baseUrl}/install?agent=${encodeURIComponent(tool.slug)}`;
 
   return {
     agent: tool,
@@ -3531,7 +3578,7 @@ async function buildToolInstallContext(
     installUrl,
     platformMcpUrl,
     recommendedApiKey: {
-      name: `${tool.slug} external agent`,
+      name: `${tool.slug} connected agent`,
       expiresInDays: 90,
       scopes: ["apps:call"],
       appIds: [tool.id],
@@ -3539,7 +3586,7 @@ async function buildToolInstallContext(
     agentHandoff: [
       `Inspect ${publicToolUrl} for pricing and trust.`,
       `Use ${platformMcpUrl} as the Ultralight MCP endpoint with a bearer API key scoped to app ${tool.id}.`,
-      `Call this tool through MCP/API, then return ${publicToolUrl} when UI is useful.`,
+      `Call this Agent through MCP/API, then return ${publicToolUrl} when UI is useful.`,
       "Preserve receipt_id values and credits balance errors in the final agent response.",
     ],
   };
@@ -4123,6 +4170,14 @@ function toBuilderLeaderboardEntry(
     avatarUrl: row.avatar_url ?? null,
     value: money(value),
     eventCount: numeric(row.event_count ?? row.total_runs),
+    featuredAgent: featuredSlug
+      ? {
+        id: row.app_id || featuredSlug,
+        slug: featuredSlug,
+        name: featuredName || featuredSlug,
+      }
+      : null,
+    // Deprecated alias kept for one rename window.
     featuredTool: featuredSlug
       ? {
         id: row.app_id || featuredSlug,

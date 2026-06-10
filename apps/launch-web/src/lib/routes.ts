@@ -120,7 +120,7 @@ export const launchRoutes: LaunchRouteDefinition[] = [
   {
     key: "adminAgent",
     path: "/admin/agents/:id",
-    label: "Agent Admin",
+    label: "Agent admin",
     nav: "hidden",
     apiRoutes: [
       "GET /api/launch/admin/agents/:id",

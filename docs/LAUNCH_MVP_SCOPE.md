@@ -62,7 +62,7 @@ user holding the permission keys.
 - Standalone Jarvis/general agent.
 - Command cards, command dashboards, generated/agentic UI composer.
 - Routines and perpetual agent responsibilities.
-- Full tool-builder agent experience.
+- Full Agent-builder experience.
 
 Deferred capabilities remain implemented internally but must not appear in
 launch navigation, public copy, or default onboarding.

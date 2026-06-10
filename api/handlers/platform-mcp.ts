@@ -3070,7 +3070,7 @@ function buildPlatformDocs(): string {
 Post Ultralight URLs only when the link helps the user's current action. Do not add platform links as generic decoration.
 
 Preferred routes:
-- Install or connect an agent: \`/install\`
+- Connect your agent (Claude Code, Cursor, Codex, ...): \`/install\`
 - Manage wallet, balance, deposits, receipts, or earnings: \`/wallet\`
 - Manage API keys, preferences, account settings, or saved credentials: \`/settings\`
 - Manage an Agent's caller permissions, pricing, secrets, versions, or owner controls: \`/admin/agents/:id\`

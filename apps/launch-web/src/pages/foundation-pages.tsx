@@ -365,7 +365,7 @@ const installTargets: InstallTarget[] = [
     steps: [
       "Use the platform MCP endpoint as the server URL.",
       "Pass your Ultralight API token as a bearer Authorization header.",
-      "Allow the agent to list available Agents before calling specific ones.",
+      "Allow your connected agent to list available Agents before calling specific ones.",
     ],
     target: "openai_remote_mcp",
   },
@@ -3412,7 +3412,7 @@ function ValueProps(): ReactElement {
     [
       "01",
       "One core",
-      "Plug in and inherit context, tools, balance, and preferences.",
+      "Plug in and inherit context, Agents, balance, and preferences.",
     ],
     ["02", "No subscriptions", "Agents pay per call, only for what they use."],
     [

@@ -112,8 +112,8 @@ shared backend. Deferred capabilities stay dormant in the capability basin.
   (`api/runtime/dynamic-executor.ts`, `platform-mcp.ts` codemode path). P5
   must gate it; until then it is a known launch-scope caveat.
 - The connected-agent permission layer (migration `20260606150000`,
-  `services/agent-function-permissions.ts`) is live end-to-end and becomes
-  the "caller-permissions" base for P5.
+  now `services/caller-function-permissions.ts` after the Phase 3 rename)
+  is live end-to-end and becomes the "caller-permissions" base for P5.
 - BYOK silently activates for users who configured it pre-launch:
   `resolveInferenceRoute` prefers the primary BYOK key with no UI signal.
   P1 must surface billing mode explicitly.

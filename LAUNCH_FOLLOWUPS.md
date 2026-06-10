@@ -20,9 +20,12 @@ of launch-relevant follow-ups discovered during implementation.
   `agentPermission`), and deprecated contract type aliases
   (`LaunchTool*`, `LaunchAgentFunctionPermission*`). Schedule removal one
   release window after clients migrate.
-- **Republish @ultralightpro/types** after the next API deploy so external
-  consumers get the `LaunchAgent*`/`LaunchCaller*` names (old names remain
-  as deprecated aliases — non-breaking).
+- **@ultralightpro/types does not currently package the launch contracts**
+  (`scripts/contracts/generate-types-package.mjs` excludes
+  `shared/contracts/launch.ts`), so no republish is needed for the rename.
+  If launch contracts are added to the package later, the deprecated
+  `LaunchTool*`/`LaunchAgentFunctionPermission*` aliases make it
+  non-breaking.
 - **Unrenamed by design:** DB tables (`user_agent_function_permissions`,
   `user_agent_permission_defaults`), machine error codes
   (`AGENT_PERMISSION_REQUIRED`/`DENIED`, RPC -32003), and MCP protocol
