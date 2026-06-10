@@ -1,0 +1,70 @@
+{
+  "name": "Recipe Box",
+  "version": "1.0.0",
+  "type": "mcp",
+  "description": "Save recipes, plan meals, generate grocery lists, and get AI-powered recipe suggestions from your ingredients.",
+  "author": "ultralight",
+  "entry": {
+    "functions": "index.ts"
+  },
+  "permissions": ["ai:call"],
+  "functions": {
+    "add_recipe": {
+      "description": "Save a recipe with ingredients and step-by-step instructions.",
+      "parameters": {
+        "name": { "type": "string", "description": "Recipe name", "required": true },
+        "ingredients": { "type": "array", "description": "List of ingredients", "items": { "type": "string" }, "required": true },
+        "steps": { "type": "array", "description": "Step-by-step instructions", "items": { "type": "string" }, "required": true },
+        "prep_time": { "type": "number", "description": "Prep time in minutes" },
+        "cook_time": { "type": "number", "description": "Cook time in minutes" },
+        "servings": { "type": "number", "description": "Number of servings" },
+        "tags": { "type": "array", "description": "Tags (e.g. vegetarian, quick, italian)", "items": { "type": "string" } },
+        "source": { "type": "string", "description": "Recipe source (URL or book name)" }
+      },
+      "returns": { "type": "object", "description": "Recipe ID and confirmation" }
+    },
+    "grocery_list": {
+      "description": "Generate a grocery list from recipes or manual items. Merges duplicate ingredients.",
+      "parameters": {
+        "recipe_ids": { "type": "array", "description": "Recipe IDs to pull ingredients from", "items": { "type": "string" } },
+        "items": { "type": "array", "description": "Manual items to add", "items": { "type": "string" } },
+        "name": { "type": "string", "description": "Name for this grocery list" }
+      },
+      "returns": { "type": "object", "description": "Grocery list with all items" }
+    },
+    "meal_plan": {
+      "description": "Add a meal to your weekly plan. Specify day, meal type, and recipe or description.",
+      "parameters": {
+        "week_start": { "type": "string", "description": "Week start date (YYYY-MM-DD, defaults to current week)" },
+        "day": { "type": "string", "description": "Day of the week", "required": true, "enum": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] },
+        "meal_type": { "type": "string", "description": "Meal type", "required": true, "enum": ["breakfast", "lunch", "dinner", "snack"] },
+        "recipe_id": { "type": "string", "description": "Link to a saved recipe" },
+        "description": { "type": "string", "description": "Meal description if not linking a recipe" }
+      },
+      "returns": { "type": "object", "description": "Meal plan update confirmation" }
+    },
+    "suggest": {
+      "description": "Get AI-powered recipe suggestions based on ingredients you have on hand.",
+      "parameters": {
+        "ingredients": { "type": "array", "description": "Ingredients you have available", "items": { "type": "string" }, "required": true },
+        "cuisine": { "type": "string", "description": "Cuisine preference (e.g. italian, mexican, asian)" },
+        "dietary": { "type": "string", "description": "Dietary restriction (e.g. vegetarian, gluten-free, keto)" },
+        "count": { "type": "number", "description": "Number of suggestions (default 3)" }
+      },
+      "returns": { "type": "object", "description": "Recipe suggestions with ingredients and steps" }
+    },
+    "walkthrough": {
+      "description": "Get detailed cooking guidance for a saved recipe, with timing tips and technique details.",
+      "parameters": {
+        "recipe_id": { "type": "string", "description": "Recipe ID to walk through", "required": true },
+        "step_number": { "type": "number", "description": "Specific step number to focus on (0-indexed)" }
+      },
+      "returns": { "type": "object", "description": "Detailed cooking guidance" }
+    },
+    "status": {
+      "description": "Overview of your recipe collection, grocery lists, and meal plans.",
+      "parameters": {},
+      "returns": { "type": "object", "description": "Recipe box stats" }
+    }
+  }
+}

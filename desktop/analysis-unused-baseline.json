@@ -1,0 +1,329 @@
+{
+  "issues": [
+    {
+      "file": "src/components/AgentConfigPanel.tsx",
+      "types": [
+        "AgentConfigPanelProps"
+      ]
+    },
+    {
+      "file": "src/components/AgentSidebar.tsx",
+      "files": [
+        "src/components/AgentSidebar.tsx"
+      ]
+    },
+    {
+      "file": "src/components/CmdKPalette.tsx",
+      "types": [
+        "BuildPaletteActionsArgs",
+        "PaletteAction"
+      ]
+    },
+    {
+      "file": "src/components/ConversationSidebar.tsx",
+      "files": [
+        "src/components/ConversationSidebar.tsx"
+      ]
+    },
+    {
+      "file": "src/components/DiscoverWidget.tsx",
+      "types": [
+        "DiscoverWidgetMode"
+      ]
+    },
+    {
+      "file": "src/components/ModelSelector.tsx",
+      "files": [
+        "src/components/ModelSelector.tsx"
+      ]
+    },
+    {
+      "file": "src/components/PermissionLevelSelector.tsx",
+      "files": [
+        "src/components/PermissionLevelSelector.tsx"
+      ]
+    },
+    {
+      "file": "src/components/ProjectDirIndicator.tsx",
+      "files": [
+        "src/components/ProjectDirIndicator.tsx"
+      ]
+    },
+    {
+      "exports": [
+        "IconArrowUp",
+        "IconBeaker",
+        "IconCheck",
+        "IconChevronDown",
+        "IconChevronRight",
+        "IconCompass",
+        "IconConnector",
+        "IconCornerDownLeft",
+        "IconFolder",
+        "IconKey",
+        "IconPackage",
+        "IconPaperclip",
+        "IconPencil",
+        "IconPlugin",
+        "IconPlus",
+        "IconShare",
+        "IconSlash",
+        "IconSparkles",
+        "Spark"
+      ],
+      "file": "src/components/ui/icons.tsx"
+    },
+    {
+      "file": "src/components/ui/Wordmark.tsx",
+      "files": [
+        "src/components/ui/Wordmark.tsx"
+      ]
+    },
+    {
+      "file": "src/components/WidgetCard.tsx",
+      "files": [
+        "src/components/WidgetCard.tsx"
+      ]
+    },
+    {
+      "file": "src/hooks/useAgentFleet.ts",
+      "types": [
+        "UseAgentFleetReturn"
+      ]
+    },
+    {
+      "file": "src/hooks/useAppState.ts",
+      "types": [
+        "UseAppStateReturn"
+      ]
+    },
+    {
+      "file": "src/hooks/useChat.ts",
+      "types": [
+        "UseChatOptions",
+        "UseChatReturn"
+      ]
+    },
+    {
+      "file": "src/hooks/useConversations.ts",
+      "types": [
+        "Conversation",
+        "UseConversationsReturn"
+      ]
+    },
+    {
+      "exports": [
+        "parseDeepLink"
+      ],
+      "file": "src/hooks/useDeepLink.ts",
+      "types": [
+        "DeepLinkNavigator"
+      ]
+    },
+    {
+      "file": "src/hooks/useInChatWidgets.ts",
+      "files": [
+        "src/hooks/useInChatWidgets.ts"
+      ]
+    },
+    {
+      "exports": [
+        "LOCAL_TOOL_NAMES"
+      ],
+      "file": "src/hooks/useLocalTools.ts",
+      "types": [
+        "UseLocalToolsReturn"
+      ]
+    },
+    {
+      "file": "src/hooks/useMcp.ts",
+      "types": [
+        "UseMcpReturn"
+      ]
+    },
+    {
+      "file": "src/hooks/usePermissions.ts",
+      "types": [
+        "UsePermissionsReturn"
+      ]
+    },
+    {
+      "file": "src/hooks/useProjectDir.ts",
+      "types": [
+        "UseProjectDirReturn"
+      ]
+    },
+    {
+      "file": "src/lib/agentLoop.ts",
+      "types": [
+        "AgentLoopOptions",
+        "AgentLoopResult",
+        "AgentLoopTrace"
+      ]
+    },
+    {
+      "exports": [
+        "generateStateSummary",
+        "syncAllSystemAgentStates"
+      ],
+      "file": "src/lib/agentStateSummary.ts"
+    },
+    {
+      "exports": [
+        "createCommandDashboard",
+        "deleteCommandDashboard",
+        "fetchCommandDashboards",
+        "updateCommandDashboard"
+      ],
+      "file": "src/lib/api.ts",
+      "types": [
+        "AcceptBidResult",
+        "ApiError",
+        "AppMcpToolCallOptions",
+        "CommandDashboardMetadataInput",
+        "CommandDashboardSummary",
+        "ConnectOnboardResult",
+        "ConvertEarningsResult",
+        "InferenceModelOption",
+        "InferenceProviderChoice",
+        "InstallLibraryAppResult",
+        "InstantAcquireResult",
+        "MarketplaceResponse",
+        "McpToolResult",
+        "OrchestrateEvent",
+        "PayoutWithdrawResult",
+        "PlaceBidResult",
+        "SetAskPriceResult",
+        "StoredCommandDashboardLayout",
+        "TaskContext",
+        "UpdateUserProfileInput",
+        "UserTransactionsResponse",
+        "WalletExpressIntentResult",
+        "WireTransferIntentResult"
+      ]
+    },
+    {
+      "file": "src/lib/auth.ts",
+      "types": [
+        "DesktopEmbedBridgeSession"
+      ]
+    },
+    {
+      "exports": [
+        "findProvider"
+      ],
+      "file": "src/lib/byok.ts",
+      "types": [
+        "VerifyResult"
+      ]
+    },
+    {
+      "file": "src/lib/environment.ts",
+      "types": [
+        "DesktopEnvironment",
+        "DesktopEnvSource"
+      ]
+    },
+    {
+      "file": "src/lib/parseFileOps.ts",
+      "types": [
+        "FileOperation"
+      ]
+    },
+    {
+      "exports": [
+        "PERMISSION_LEVELS"
+      ],
+      "file": "src/lib/permissions.ts"
+    },
+    {
+      "file": "src/lib/sse.ts",
+      "types": [
+        "ChatDelta"
+      ]
+    },
+    {
+      "duplicates": [
+        "{\"0\":{\"col\":14,\"line\":22,\"name\":\"DEFAULT_INTERPRETER_MODEL\",\"pos\":917},\"1\":{\"col\":14,\"line\":24,\"name\":\"DEFAULT_CHAT_MODEL\",\"pos\":1051}}"
+      ],
+      "exports": [
+        "clearInferencePreference",
+        "getOnboardingCompletedAt",
+        "setModel"
+      ],
+      "file": "src/lib/storage.ts"
+    },
+    {
+      "exports": [
+        "findSplitPoint"
+      ],
+      "file": "src/lib/summarizer.ts"
+    },
+    {
+      "file": "src/lib/systemAgents.ts",
+      "types": [
+        "SystemAgentState"
+      ]
+    },
+    {
+      "exports": [
+        "generateCodeModeTypes",
+        "generateConnectedAppsSchema",
+        "generateFleetContext",
+        "isCodeModeCapable"
+      ],
+      "file": "src/lib/systemPrompt.ts",
+      "types": [
+        "FleetMember"
+      ]
+    },
+    {
+      "exports": [
+        "getHomeDir",
+        "listMdFiles",
+        "parseFrontmatter"
+      ],
+      "file": "src/lib/templates.ts",
+      "types": [
+        "AgentTemplate",
+        "ContextFile"
+      ]
+    },
+    {
+      "exports": [
+        "ULTRALIGHT_RELEASES_REPO",
+        "ULTRALIGHT_UPDATER_ENDPOINT"
+      ],
+      "file": "src/lib/updater.ts"
+    },
+    {
+      "file": "src/lib/widgetContracts.ts",
+      "types": [
+        "DiscoveredWidgetSource",
+        "LegacyWidgetContractInventoryEntry",
+        "LegacyWidgetContractObservation",
+        "WidgetDiscoveryResult",
+        "WidgetToolDescriptor"
+      ]
+    },
+    {
+      "exports": [
+        "DEFAULT_WIDGET_PULL_INTERVAL_MS",
+        "fetchWidgetUiPayload",
+        "getWidgetSourceKey",
+        "isWidgetPullDue",
+        "updateWidgetHtmlCacheMeta",
+        "WIDGET_PULL_INTERVAL_OPTIONS"
+      ],
+      "file": "src/lib/widgetRuntime.ts",
+      "types": [
+        "WidgetDataPayload",
+        "WidgetHtmlCacheEntry",
+        "WidgetHtmlLoadResult",
+        "WidgetPullCostEstimate",
+        "WidgetPullSettings",
+        "WidgetUiPayload"
+      ]
+    }
+  ]
+}

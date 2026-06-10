@@ -1,0 +1,64 @@
+{
+  "name": "ultralight-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Ultralight Chat Agent Desktop",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "analyze": "npm run typecheck && npm run analyze:unused && npm run analyze:deps",
+    "analyze:deps": "node ../scripts/analysis/run-madge.mjs --package desktop",
+    "analyze:deps:update-baseline": "node ../scripts/analysis/run-madge.mjs --package desktop --write-baseline",
+    "analyze:unused": "node ../scripts/analysis/run-knip.mjs --package desktop",
+    "analyze:unused:update-baseline": "node ../scripts/analysis/run-knip.mjs --package desktop --write-baseline",
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "build:production": "tsc && vite build --mode production",
+    "build:staging": "tsc && vite build --mode staging",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "packageManager": "pnpm@10.28.2",
+  "dependencies": {
+    "@stripe/stripe-js": "^5.5.0",
+    "gpt-tokenizer": "^3.4.0",
+    "lucide-react": "^0.577.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/cli": "^2.10.1",
+    "@tauri-apps/plugin-dialog": "^2.6.0",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.1",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "autoprefixer": "^10.4.27",
+    "esbuild": "^0.27.4",
+    "knip": "^6.5.0",
+    "madge": "^8.0.0",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^3.4.19",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.10",
+    "vitest": "^4.1.5"
+  },
+  "pnpm": {
+    "overrides": {
+      "picomatch@<2.3.2": "2.3.2",
+      "picomatch@>=4.0.0 <4.0.4": "4.0.4"
+    },
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

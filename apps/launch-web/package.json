@@ -1,0 +1,31 @@
+{
+  "name": "ultralight-launch-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Launch-focused Ultralight web surface for external-agent tool install, discovery, widgets, and Light wallet.",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5178",
+    "build": "tsc && vite build",
+    "build:staging": "tsc && vite build --mode staging",
+    "build:production": "tsc && vite build --mode production",
+    "pages:deploy:staging": "npm run build:staging && pnpm dlx wrangler@4.67.0 pages deploy dist --project-name ultralight-launch-web --branch staging",
+    "pages:deploy:production": "npm run build:production && pnpm dlx wrangler@4.67.0 pages deploy dist --project-name ultralight-launch-web --branch main",
+    "preview": "vite preview --host 127.0.0.1 --port 4178",
+    "typecheck": "tsc --noEmit"
+  },
+  "packageManager": "pnpm@10.28.2",
+  "dependencies": {
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.10"
+  }
+}

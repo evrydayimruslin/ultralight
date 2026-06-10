@@ -1,0 +1,2 @@
+-- Intentionally empty for launch hardening.
+-- Add deterministic local-only fixtures here if database tests need them.

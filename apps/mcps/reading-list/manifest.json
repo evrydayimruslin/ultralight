@@ -1,0 +1,56 @@
+{
+  "name": "Reading List",
+  "version": "1.0.0",
+  "type": "mcp",
+  "description": "Track books, articles, tweets, and papers. Save URLs with automatic content extraction, highlights, notes, and semantic search.",
+  "author": "ultralight",
+  "entry": {
+    "functions": "index.ts"
+  },
+  "permissions": ["ai:call", "net:fetch"],
+  "functions": {
+    "save": {
+      "description": "Save a URL or item to your reading list. Automatically fetches title and content snippet from URLs. Generates embeddings for semantic search.",
+      "parameters": {
+        "url": { "type": "string", "description": "URL to save (article, tweet, paper, video)" },
+        "title": { "type": "string", "description": "Title (auto-extracted from URL if not provided)" },
+        "type": { "type": "string", "description": "Content type", "enum": ["article", "tweet", "paper", "book", "video", "podcast"] },
+        "tags": { "type": "array", "description": "Tags for organization", "items": { "type": "string" } },
+        "notes": { "type": "string", "description": "Personal notes" }
+      },
+      "returns": { "type": "object", "description": "Saved item with ID and extracted metadata" }
+    },
+    "list": {
+      "description": "List saved items, optionally filtered by tags, type, or read status.",
+      "parameters": {
+        "tags": { "type": "array", "description": "Filter by tags", "items": { "type": "string" } },
+        "type": { "type": "string", "description": "Filter by type", "enum": ["article", "tweet", "paper", "book", "video", "podcast"] },
+        "status": { "type": "string", "description": "Filter by read status", "enum": ["unread", "reading", "read"] },
+        "limit": { "type": "number", "description": "Max items (default 20)" }
+      },
+      "returns": { "type": "object", "description": "List of saved items" }
+    },
+    "search": {
+      "description": "Search your reading list semantically. Uses embeddings for meaning-based search, with text fallback.",
+      "parameters": {
+        "query": { "type": "string", "description": "Search query", "required": true },
+        "limit": { "type": "number", "description": "Max results (default 10)" }
+      },
+      "returns": { "type": "object", "description": "Ranked search results with relevance scores" }
+    },
+    "highlight": {
+      "description": "Save a highlight or annotation on a reading list item.",
+      "parameters": {
+        "item_id": { "type": "string", "description": "Item ID to highlight", "required": true },
+        "text": { "type": "string", "description": "Highlighted text", "required": true },
+        "note": { "type": "string", "description": "Note about this highlight" }
+      },
+      "returns": { "type": "object", "description": "Highlight confirmation" }
+    },
+    "status": {
+      "description": "Overview of your reading list: counts by type and read status, total highlights.",
+      "parameters": {},
+      "returns": { "type": "object", "description": "Reading list stats" }
+    }
+  }
+}

@@ -1,0 +1,88 @@
+name: Production Launch Gate
+run-name: Production launch gate (${{ github.event.inputs.release_tag || github.ref_name }})
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag to evaluate, e.g. v0.1.0'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  gate:
+    name: Evaluate production candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.release_tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Resolve release tag and candidate SHA
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RELEASE_TAG="${{ github.event.inputs.release_tag || github.ref_name }}"
+          if [[ -z "$RELEASE_TAG" ]]; then
+            echo "Missing release tag." >&2
+            exit 1
+          fi
+
+          git fetch --tags --force >/dev/null 2>&1 || true
+
+          CANDIDATE_SHA="$(git rev-list -n 1 "$RELEASE_TAG")"
+          if [[ -z "$CANDIDATE_SHA" ]]; then
+            echo "Unable to resolve commit SHA for tag $RELEASE_TAG" >&2
+            exit 1
+          fi
+
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "candidate_sha=$CANDIDATE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Evaluate required workflow runs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node scripts/release/check-production-launch-gate.mjs \
+            --repository "${{ github.repository }}" \
+            --tag "${{ steps.release.outputs.release_tag }}" \
+            --sha "${{ steps.release.outputs.candidate_sha }}" \
+            --poll-until-complete \
+            --timeout-seconds 2700 \
+            --poll-interval-seconds 20 \
+            --write-json /tmp/production-launch-gate-summary.json \
+            --write-md /tmp/production-launch-gate-summary.md
+
+      - name: Publish job summary
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f /tmp/production-launch-gate-summary.md ]]; then
+            cat /tmp/production-launch-gate-summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload production launch gate summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-launch-gate-${{ steps.release.outputs.release_tag }}
+          path: |
+            /tmp/production-launch-gate-summary.json
+            /tmp/production-launch-gate-summary.md
+          if-no-files-found: error

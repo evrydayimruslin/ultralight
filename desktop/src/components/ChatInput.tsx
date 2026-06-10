@@ -1,0 +1,769 @@
+// Chat input — premium-UI composer (Batches 2b-i + 2b-ii).
+//
+// Layout (mockup: handoff/mockups/composer.jsx PremiumComposer):
+//   Card chrome with focused-state ring; two rows:
+//     TOP    [paperclip] [textarea] [stop?] [send]
+//     BOTTOM [Tool selection pill]    [Flash | Heavy pills]
+//   Inline @-mention autocomplete rises above the card from useAgentFleet.
+//
+// Tool Selection popover renders ambient suggestions (passed in from
+// useAmbientSuggestions in ChatView). Model pills fetch inference settings
+// lazily on first open and persist picks via setInterpreterModel /
+// setHeavyModel.
+
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { ArrowUp, ChevronDown, Edit3, Image, Mic, Plus, Sparkles } from 'lucide-react';
+import type { InferenceRoutePreference } from '../../../shared/contracts/ai';
+import type { Agent } from '../hooks/useAgentFleet';
+import type { AmbientSuggestion } from '../types/ambientSuggestion';
+import ProjectDropdown from './ProjectDropdown';
+import ToolSelectionPopover from './composer/ToolSelectionPopover';
+import ModelPickerPopover from './composer/ModelPickerPopover';
+import Popover from './composer/Popover';
+import {
+  getInterpreterModel,
+  setInterpreterModel as persistInterpreterModel,
+  getHeavyModel,
+  setHeavyModel as persistHeavyModel,
+  getInferencePreference,
+  setInferencePreference as persistInferencePreference,
+} from '../lib/storage';
+import { fetchInferenceSettings, type InferenceSettings } from '../lib/api';
+import { appendVoiceTranscript, useVoiceInput } from '../lib/voiceInput';
+
+/** File attachment ready to send — base64-encoded with metadata */
+export interface ChatFile {
+  name: string;
+  size: number;
+  mimeType: string;
+  content: string; // base64 data URL
+}
+
+interface ChatInputProps {
+  onSend: (content: string, files?: ChatFile[]) => void;
+  isLoading: boolean;
+  onStop?: () => void;
+  /** When true, input stays enabled during loading — sends go to queue */
+  queueMode?: boolean;
+  /** Current conversation's project directory */
+  projectDir?: string | null;
+  /** Called when user picks a new project directory */
+  onProjectDirChange?: (dir: string) => void;
+  /** Agent fleet for @-mention autocomplete. Falls back to no autocomplete when undefined. */
+  agents?: Agent[];
+  /** Ambient + connected app suggestions (from useAmbientSuggestions). */
+  ambientSuggestions?: AmbientSuggestion[];
+  /** When true, the Tool Selection pill shows an animated halo to signal a fresh signal. */
+  ambientHasNew?: boolean;
+  /** Whether the in-chat suggestions panel is currently open. Drives the pill's
+   *  "active" state and routes clicks: click while panel-open closes the panel. */
+  suggestionsPanelOpen?: boolean;
+  /** Open the in-chat suggestions panel (also marks the signal as viewed). */
+  onOpenSuggestionsPanel?: () => void;
+  /** Close the in-chat suggestions panel. */
+  onCloseSuggestionsPanel?: () => void;
+  /** Mark the popover suggestions as viewed without opening the full panel. */
+  onViewSuggestions?: () => void;
+  /** Accept one ambient suggestion into the active chat/library. */
+  onAcceptSuggestion?: (suggestion: AmbientSuggestion) => void;
+  /** Dismiss one ambient suggestion. */
+  onDismissSuggestion?: (suggestion: AmbientSuggestion) => void;
+  /** Number of messages waiting in the runner queue. Drives the queue-mode
+   *  meta strip below the composer (A2). */
+  queuedCount?: number;
+  /** Open the per-agent custom-instructions surface. Wired from ChatView
+   *  for the A4 ＋ menu's second row. When unset, the row is hidden. */
+  onEditCustomInstructions?: () => void;
+  /** Seed the composer with a pre-typed draft on first mount. Used by the
+   *  onboarding wizard (E3) to pre-fill the user's step-3 tour-end prompt
+   *  so the next keystroke turns intent into a real message. Only read
+   *  once — the lazy initial state ignores later changes so the user's
+   *  typing isn't clobbered. */
+  initialDraft?: string;
+  /** Imperative draft replacement used by agentic next-step suggestions. */
+  draftOverride?: { id: string; text: string } | null;
+}
+
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const ACCEPTED_TYPES = '.pdf,.png,.jpg,.jpeg,.gif,.webp,.txt,.md,.csv,.json,.xml,.yaml,.yml,.html,.css,.js,.ts,.py,.rb,.go,.rs,.java,.c,.cpp,.h,.sh,.sql,.toml,.doc,.docx';
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+/** Short label for a model id (strips provider prefix + version filler). */
+function formatModelLabel(model: string): string {
+  // Strip provider prefix: "openrouter/anthropic/claude-haiku-4.5" -> "claude-haiku-4.5"
+  const tail = model.split('/').pop() ?? model;
+  // Cosmetic shortening to match mockup compactness
+  return tail
+    .replace(/^claude-/, '')
+    .replace(/^gpt-/, 'gpt-')
+    .replace(/^gemini-/, 'gem-')
+    .replace(/^deepseek-/, 'ds-')
+    .replace(/:nitro$/, '');
+}
+
+type SendState = 'idle' | 'armed' | 'flying' | 'landed';
+
+interface MentionMenu {
+  q: string;
+  idx: number;
+}
+
+// ── ChatInput ─────────────────────────────────────────────────────────
+
+export default function ChatInput({
+  onSend,
+  isLoading,
+  onStop,
+  queueMode = false,
+  projectDir,
+  onProjectDirChange,
+  agents,
+  ambientSuggestions = [],
+  ambientHasNew = false,
+  suggestionsPanelOpen = false,
+  onOpenSuggestionsPanel,
+  onCloseSuggestionsPanel,
+  onViewSuggestions,
+  onAcceptSuggestion,
+  onDismissSuggestion,
+  queuedCount = 0,
+  onEditCustomInstructions,
+  initialDraft,
+  draftOverride,
+}: ChatInputProps) {
+  const [value, setValue] = useState(() => initialDraft ?? '');
+  const [files, setFiles] = useState<ChatFile[]>([]);
+  const [send, setSend] = useState<SendState>('idle');
+  const [focused, setFocused] = useState(false);
+  const [mention, setMention] = useState<MentionMenu | null>(null);
+  const [popover, setPopover] = useState<'plus' | 'tools' | 'flash' | 'heavy' | null>(null);
+
+  // Reactive model selections — read once from storage, then maintain
+  // locally so picker updates re-render the pill label immediately.
+  const [flashModel, setFlashModel] = useState<string>(() => getInterpreterModel());
+  const [heavyModel, setHeavyModel] = useState<string>(() => getHeavyModel());
+  const [inferencePreference, setInferencePreferenceState] = useState<InferenceRoutePreference>(
+    () => getInferencePreference() ?? {},
+  );
+
+  // Inference options are lazy-loaded the first time a model popover opens,
+  // then cached for the lifetime of this composer instance.
+  const [inferenceOptions, setInferenceOptions] = useState<InferenceSettings | null>(null);
+  const inferenceFetchedRef = useRef(false);
+
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const plusBtnRef = useRef<HTMLButtonElement>(null);
+  const toolsBtnRef = useRef<HTMLButtonElement>(null);
+  const flashBtnRef = useRef<HTMLButtonElement>(null);
+  const heavyBtnRef = useRef<HTMLButtonElement>(null);
+
+  // Track in-flight launch timeouts so unmount mid-send doesn't leak +
+  // doesn't trigger "update on unmounted component" warnings.
+  const launchTimersRef = useRef<number[]>([]);
+  useEffect(() => () => {
+    for (const id of launchTimersRef.current) {
+      clearTimeout(id);
+    }
+    launchTimersRef.current = [];
+  }, []);
+
+  useEffect(() => {
+    const refresh = () => setInferencePreferenceState(getInferencePreference() ?? {});
+    window.addEventListener('ul-inference-preference-changed', refresh);
+    window.addEventListener('focus', refresh);
+    return () => {
+      window.removeEventListener('ul-inference-preference-changed', refresh);
+      window.removeEventListener('focus', refresh);
+    };
+  }, []);
+
+  const flashLabel = formatModelLabel(flashModel);
+  const heavyLabel = formatModelLabel(heavyModel);
+
+  // Lazy-fetch inference options on first model-popover open
+  useEffect(() => {
+    if (popover !== 'flash' && popover !== 'heavy') return;
+    if (inferenceFetchedRef.current) return;
+    inferenceFetchedRef.current = true;
+    fetchInferenceSettings()
+      .then(setInferenceOptions)
+      .catch(() => { inferenceFetchedRef.current = false; /* retry on next open */ });
+  }, [popover]);
+
+  // Handlers for model picks — write storage + update local state
+  const pickFlash = useCallback((id: string) => {
+    persistInterpreterModel(id);
+    setFlashModel(id);
+  }, []);
+  const pickHeavy = useCallback((id: string) => {
+    persistHeavyModel(id);
+    setHeavyModel(id);
+  }, []);
+
+  const setWebSearchEnabled = useCallback((enabled: boolean) => {
+    const next = { ...(getInferencePreference() ?? inferencePreference), webSearchEnabled: enabled };
+    setInferencePreferenceState(next);
+    persistInferencePreference(next);
+  }, [inferencePreference]);
+
+  // In queue mode, input is never disabled — messages go to queue
+  const inputDisabled = isLoading && !queueMode;
+  const isQueueing = isLoading && queueMode;
+
+  const appendVoiceText = useCallback((transcript: string) => {
+    setValue((prev) => appendVoiceTranscript(prev, transcript));
+  }, []);
+
+  const focusTextarea = useCallback(() => {
+    setTimeout(() => textareaRef.current?.focus(), 0);
+  }, []);
+
+  const voice = useVoiceInput({
+    disabled: inputDisabled,
+    onTranscript: appendVoiceText,
+    onAfterTranscript: focusTextarea,
+  });
+
+  // Auto-resize textarea
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+  }, [value]);
+
+  // Focus on mount
+  useEffect(() => {
+    textareaRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    if (!draftOverride) return;
+    setValue(draftOverride.text);
+    setTimeout(() => textareaRef.current?.focus(), 0);
+  }, [draftOverride?.id]);
+
+  const hasContent = value.trim().length > 0 || files.length > 0;
+
+  // Drive armed/idle state from content presence (not while flying/landed)
+  useEffect(() => {
+    setSend(s => (s === 'flying' || s === 'landed') ? s : (hasContent ? 'armed' : 'idle'));
+  }, [hasContent]);
+
+  // ── @-mention detection ───────────────────────────────────────
+  useEffect(() => {
+    if (!agents || agents.length === 0) {
+      if (mention) setMention(null);
+      return;
+    }
+    const match = value.match(/(^|\s)@([\w-]*)$/);
+    if (match) {
+      const q = match[2].toLowerCase();
+      setMention(prev => prev ? { ...prev, q } : { q, idx: 0 });
+    } else if (mention) {
+      setMention(null);
+    }
+  }, [value, agents]);
+
+  const filteredAgents = (mention && agents)
+    ? agents.filter(a => a.name.toLowerCase().replace(/\s/g, '').startsWith(mention.q.replace(/\s/g, '')))
+    : [];
+
+  const applyMention = useCallback((agent: Agent) => {
+    const inserted = '@' + agent.name.replace(/\s/g, '') + ' ';
+    setValue(prev => prev.replace(/@([\w-]*)$/, inserted));
+    setMention(null);
+    setTimeout(() => textareaRef.current?.focus(), 0);
+  }, []);
+
+  // ── Send / launch ─────────────────────────────────────────────
+  const launch = useCallback(() => {
+    const trimmed = value.trim();
+    if (!trimmed && files.length === 0) return;
+    if (isLoading && !queueMode) return;
+    if (send === 'flying') return;
+
+    setSend('flying');
+    // The flying frame lingers ~180ms so the animation reads as a launch
+    // before the textarea clears and the next state takes over.
+    const flyTimer = window.setTimeout(() => {
+      onSend(trimmed || '(attached files)', files.length > 0 ? files : undefined);
+      setValue('');
+      setFiles([]);
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+      }
+      setSend('landed');
+      const landTimer = window.setTimeout(() => setSend('idle'), 280);
+      launchTimersRef.current.push(landTimer);
+    }, 180);
+    launchTimersRef.current.push(flyTimer);
+  }, [value, files, isLoading, queueMode, send, onSend]);
+
+  // ── Keyboard ──────────────────────────────────────────────────
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    // @-mention navigation takes precedence
+    if (mention && filteredAgents.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setMention(m => m ? { ...m, idx: (m.idx + 1) % filteredAgents.length } : m);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setMention(m => m ? { ...m, idx: (m.idx - 1 + filteredAgents.length) % filteredAgents.length } : m);
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        applyMention(filteredAgents[mention.idx]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setMention(null);
+        return;
+      }
+    }
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      launch();
+      return;
+    }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      launch();
+    }
+  };
+
+  // ── Files ─────────────────────────────────────────────────────
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = e.target.files;
+    if (!selected) return;
+
+    Array.from(selected).forEach(file => {
+      if (file.size > MAX_FILE_SIZE) {
+        alert(`${file.name} is too large (max ${formatSize(MAX_FILE_SIZE)})`);
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const dataUrl = ev.target?.result as string;
+        if (!dataUrl) return;
+        setFiles(prev => [...prev, {
+          name: file.name,
+          size: file.size,
+          mimeType: file.type || 'application/octet-stream',
+          content: dataUrl,
+        }]);
+      };
+      reader.readAsDataURL(file);
+    });
+
+    // Reset input so the same file can be re-selected
+    e.target.value = '';
+  }, []);
+
+  const removeFile = useCallback((idx: number) => {
+    setFiles(prev => prev.filter((_, i) => i !== idx));
+  }, []);
+
+  // ── Send-button visuals ───────────────────────────────────────
+  // Maps SendState -> Tailwind classes. Exact-hex token mapping per
+  // DESIGN-TOKENS-DIFF: PC_C.text=#0a0a0a=ul-text, PC_C.mute=#999=ul-text-muted,
+  // PC_C.border=rgba(0,0,0,.08)=ul-border, PC_C.blue=#3b82f6=ul-info.
+  const sendClasses = (() => {
+    switch (send) {
+      case 'flying':
+        return 'border-ul-info bg-ul-info text-white -translate-y-0.5 scale-105';
+      case 'landed':
+        return hasContent
+          ? 'border-ul-text text-ul-text bg-transparent scale-90'
+          : 'border-ul-border text-ul-text-muted bg-transparent scale-90';
+      case 'armed':
+        return 'border-ul-text text-ul-text bg-transparent';
+      case 'idle':
+      default:
+        return 'border-ul-border text-ul-text-muted bg-transparent';
+    }
+  })();
+
+  // ── Render ────────────────────────────────────────────────────
+  return (
+    <div className="bg-ul-bg px-4 pt-3 pb-4">
+      <div className="max-w-narrow mx-auto">
+        {/* File chips — aligned with textarea */}
+        {files.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-2 pl-10">
+            {files.map((f, i) => (
+              <div
+                key={`${f.name}-${i}`}
+                className="flex items-center gap-1.5 px-2 py-1 bg-ul-bg-hover rounded-md text-xs text-ul-text-secondary max-w-[200px]"
+              >
+                <span className="truncate">{f.name}</span>
+                <span className="text-ul-text-muted flex-shrink-0">{formatSize(f.size)}</span>
+                <button
+                  onClick={() => removeFile(i)}
+                  className="text-ul-text-muted hover:text-ul-text-secondary flex-shrink-0 ml-0.5"
+                  title="Remove"
+                >
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="relative">
+          {/* @-mention autocomplete — rises above the card */}
+          {mention && filteredAgents.length > 0 && (
+            <div className="absolute left-0 right-0 z-10 rounded-lg border border-ul-border bg-ul-bg shadow-md overflow-hidden animate-fade-up"
+                 style={{ bottom: 'calc(100% + 4px)' }}>
+              <div className="px-3.5 pt-2.5 pb-1 text-nano text-ul-text-muted font-mono uppercase">
+                Agents
+              </div>
+              {filteredAgents.map((a, i) => {
+                const selected = i === mention.idx;
+                return (
+                  <div
+                    key={a.id}
+                    onMouseEnter={() => setMention(m => m ? { ...m, idx: i } : m)}
+                    onMouseDown={(e) => { e.preventDefault(); applyMention(a); }}
+                    className={`flex items-center gap-2.5 px-3.5 py-2 cursor-pointer ${
+                      selected ? 'bg-ul-bg-hover' : 'bg-transparent'
+                    }`}
+                  >
+                    <span className="text-micro font-mono text-ul-text font-medium">
+                      @{a.name}
+                    </span>
+                    <span className="text-caption text-ul-text-muted flex-1 truncate">
+                      {a.system_agent_type ? 'System agent' : (a.role || 'Agent')}
+                    </span>
+                    {selected && <span className="text-nano font-mono text-ul-text-muted">↵</span>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Composer card */}
+          <div
+            className={`rounded-xl border bg-ul-bg transition-all ${
+              focused
+                ? 'border-ul-border-strong shadow-glow'
+                : 'border-ul-border'
+            }`}
+          >
+            {/* Top row — input + send */}
+            <div className="flex items-end gap-2 px-3 pt-3 pb-2">
+              {/* ＋ menu (A4) — opens a 2-row popover: "Add files or photos"
+                  and "Edit custom instructions". Replaces the old standalone
+                  paperclip; the file picker is now invoked from the popover. */}
+              <div className="relative flex-shrink-0 mb-[3px]">
+                <button
+                  ref={plusBtnRef}
+                  onClick={() => setPopover(p => p === 'plus' ? null : 'plus')}
+                  disabled={inputDisabled}
+                  className={`flex items-center justify-center w-8 h-8 rounded-full transition-colors disabled:opacity-30 ${
+                    popover === 'plus'
+                      ? 'bg-ul-bg-active text-ul-text'
+                      : 'text-ul-text-muted hover:text-ul-text-secondary hover:bg-ul-bg-hover'
+                  }`}
+                  title="Add"
+                >
+                  <Plus className="w-5 h-5" strokeWidth={1.5} />
+                </button>
+
+                <Popover
+                  open={popover === 'plus'}
+                  onClose={() => setPopover(null)}
+                  anchorRef={plusBtnRef}
+                  width={260}
+                >
+                  <div className="p-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPopover(null);
+                        fileInputRef.current?.click();
+                      }}
+                      className="w-full flex items-center gap-3 h-9 px-2.5 rounded-md text-small font-medium text-ul-text hover:bg-ul-bg-hover transition-colors cursor-pointer border-none bg-transparent text-left"
+                    >
+                      <Image className="w-[15px] h-[15px] text-ul-text-muted-strong" strokeWidth={1.5} />
+                      <span>Add files or photos</span>
+                    </button>
+                    {onEditCustomInstructions && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPopover(null);
+                          onEditCustomInstructions();
+                        }}
+                        className="w-full flex items-center gap-3 h-9 px-2.5 rounded-md text-small font-medium text-ul-text hover:bg-ul-bg-hover transition-colors cursor-pointer border-none bg-transparent text-left"
+                      >
+                        <Edit3 className="w-[15px] h-[15px] text-ul-text-muted-strong" strokeWidth={1.5} />
+                        <span>Edit custom instructions</span>
+                      </button>
+                    )}
+                  </div>
+                </Popover>
+              </div>
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept={ACCEPTED_TYPES}
+                onChange={handleFileSelect}
+                className="hidden"
+              />
+
+              <textarea
+                ref={textareaRef}
+                value={value}
+                onChange={e => setValue(e.target.value)}
+                onKeyDown={handleKeyDown}
+                onFocus={() => setFocused(true)}
+                onBlur={() => setFocused(false)}
+                placeholder={isQueueing ? 'Queue a follow-up…' : 'Message...'}
+                rows={1}
+                className="flex-1 resize-none border-none px-0 text-small text-ul-text bg-transparent outline-none placeholder:text-ul-text-muted selectable"
+                style={{ paddingTop: '6px', paddingBottom: '6px', lineHeight: '20px' }}
+                disabled={inputDisabled}
+              />
+
+              {/* Stop button (A1) — ring + spinning border + inner square.
+                  Reads as a live run with a stop affordance underneath, not
+                  a disabled control. */}
+              {isLoading && (
+                <button
+                  onClick={onStop}
+                  className="relative flex items-center justify-center w-7 h-7 rounded-full bg-ul-bg-hover hover:bg-ul-bg-active transition-colors flex-shrink-0 mb-0.5"
+                  title="Stop"
+                  aria-label="Stop run"
+                >
+                  {/* Spinning ring: 1.5px circle on a 12% black base, with
+                      ul-text painted onto the top quadrant. */}
+                  <span
+                    className="absolute inset-[3px] rounded-full animate-spin"
+                    style={{
+                      borderWidth: '1.5px',
+                      borderStyle: 'solid',
+                      borderColor: 'rgba(0,0,0,0.12)',
+                      borderTopColor: 'var(--ul-text, #0a0a0a)',
+                      animationDuration: '0.8s',
+                    }}
+                  />
+                  {/* Inner stop glyph. */}
+                  <span className="relative w-[10px] h-[10px] bg-ul-text rounded-[2px]" />
+                </button>
+              )}
+
+              {voice.supported && !isLoading && (
+                <button
+                  type="button"
+                  onClick={() => void voice.toggle()}
+                  disabled={inputDisabled}
+                  className={`flex items-center justify-center w-7 h-7 rounded-full transition-all flex-shrink-0 mb-0.5 disabled:opacity-30 ${
+                    voice.listening
+                      ? 'bg-ul-text text-white shadow-[0_0_0_4px_rgba(0,0,0,0.08)]'
+                      : 'text-ul-text-muted hover:text-ul-text-secondary hover:bg-ul-bg-hover'
+                  }`}
+                  title={voice.listening ? 'Stop dictation' : 'Dictate'}
+                  aria-label={voice.listening ? 'Stop dictation' : 'Dictate'}
+                >
+                  <Mic className="w-3.5 h-3.5" strokeWidth={1.8} />
+                </button>
+              )}
+
+              {/* Queue / Send (A2) — amber circle with a tapered 3-bar queue
+                  glyph. Halo on hover + focus only (never looping per spec). */}
+              {isQueueing ? (
+                <button
+                  onClick={launch}
+                  disabled={!hasContent}
+                  className="flex items-center justify-center w-7 h-7 rounded-full bg-ul-warning text-white hover:bg-ul-warning-hover hover:shadow-[0_0_0_4px_rgba(245,158,11,0.18)] focus-visible:shadow-[0_0_0_4px_rgba(245,158,11,0.18)] focus-visible:outline-none disabled:opacity-30 transition-all flex-shrink-0 mb-0.5"
+                  title="Queue"
+                  aria-label="Queue follow-up"
+                >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 14 14" fill="white" aria-hidden="true">
+                    <rect x="1.5" y="2.5"  width="11"  height="2" rx="1" opacity="1" />
+                    <rect x="2.75" y="6"   width="8.5" height="2" rx="1" opacity="0.85" />
+                    <rect x="4" y="9.5"    width="6"   height="2" rx="1" opacity="0.7" />
+                  </svg>
+                </button>
+              ) : !isLoading ? (
+                <button
+                  onClick={launch}
+                  disabled={!hasContent && send !== 'flying'}
+                  className={`flex items-center justify-center w-7 h-7 rounded-full border transition-all duration-base disabled:cursor-not-allowed ${sendClasses}`}
+                  title="Send"
+                >
+                  <ArrowUp className="w-3.5 h-3.5" strokeWidth={2} />
+                </button>
+              ) : null}
+            </div>
+
+            {/* Bottom row — tools + model pills */}
+            <div className="flex items-center justify-between px-2 pb-2 gap-2">
+              <div className="flex items-center gap-1">
+                {/* Tool selection pill — pill is a strict toggle:
+                    • popover open  → close everything (popover + suggestions panel)
+                    • suggestions panel open → close panel (no popover)
+                    • neither open  → open the popover */}
+                <div className="relative">
+                  <button
+                    ref={toolsBtnRef}
+                    onClick={() => {
+                      if (popover === 'tools') {
+                        setPopover(null);
+                        onCloseSuggestionsPanel?.();
+                      } else if (suggestionsPanelOpen) {
+                        onCloseSuggestionsPanel?.();
+                      } else {
+                        onViewSuggestions?.();
+                        setPopover('tools');
+                      }
+                    }}
+                    className={`inline-flex items-center gap-1.5 h-7 px-3 rounded-full text-caption font-medium transition-colors text-ul-text-muted-strong ${
+                      popover === 'tools' || suggestionsPanelOpen ? 'bg-ul-accent-soft' : 'bg-transparent hover:bg-ul-bg-hover'
+                    }`}
+                  >
+                    {ambientHasNew ? (
+                      // Animated halo — static inner ring + pulsing outer ring
+                      // when the popover is closed. Outer ring is suppressed
+                      // when the popover is already open (you're looking at it).
+                      <span className="relative w-[7px] h-[7px] inline-block flex-shrink-0">
+                        <span className="absolute inset-0 rounded-full border border-black/[0.55] box-border" />
+                        {popover !== 'tools' && (
+                          <span
+                            className="absolute inset-0 rounded-full border border-black/[0.55] box-border"
+                            style={{ animation: 'ul-halo 1.8s ease-out infinite' }}
+                          />
+                        )}
+                      </span>
+                    ) : (
+                      <Sparkles className="w-3.5 h-3.5" strokeWidth={1.5} />
+                    )}
+                    <span>Tool selection</span>
+                  </button>
+                  <ToolSelectionPopover
+                    open={popover === 'tools'}
+                    onClose={() => setPopover(null)}
+                    anchorRef={toolsBtnRef}
+                    suggestions={ambientSuggestions}
+                    onOpenPanel={onOpenSuggestionsPanel}
+                    onAcceptSuggestion={(suggestion) => {
+                      onAcceptSuggestion?.(suggestion);
+                      setPopover(null);
+                    }}
+                    onDismissSuggestion={onDismissSuggestion}
+                  />
+                </div>
+              </div>
+
+              {/* Model pills — Flash | Heavy */}
+              <div className="flex items-center">
+                <div className="relative">
+                  <button
+                    ref={flashBtnRef}
+                    onClick={() => setPopover(p => p === 'flash' ? null : 'flash')}
+                    className={`inline-flex items-center gap-1.5 h-7 pl-2.5 pr-2 rounded-l-full text-micro transition-colors text-ul-text-muted-strong ${
+                      popover === 'flash' ? 'bg-ul-accent-soft' : 'bg-transparent hover:bg-ul-bg-hover'
+                    }`}
+                    title="Flash model"
+                  >
+                    <span>{flashLabel}</span>
+                  </button>
+                  <ModelPickerPopover
+                    open={popover === 'flash'}
+                    onClose={() => setPopover(null)}
+                    anchorRef={flashBtnRef}
+                    tier="flash"
+                    options={inferenceOptions}
+                    selectedModel={flashModel}
+                    onPick={pickFlash}
+                    webSearchEnabled={inferencePreference.webSearchEnabled === true}
+                    onWebSearchChange={setWebSearchEnabled}
+                  />
+                </div>
+
+                <span className="w-px h-3.5 bg-ul-border opacity-70" />
+
+                <div className="relative">
+                  <button
+                    ref={heavyBtnRef}
+                    onClick={() => setPopover(p => p === 'heavy' ? null : 'heavy')}
+                    className={`inline-flex items-center gap-1.5 h-7 pl-2 pr-2.5 rounded-r-full text-micro transition-colors text-ul-text-muted-strong ${
+                      popover === 'heavy' ? 'bg-ul-accent-soft' : 'bg-transparent hover:bg-ul-bg-hover'
+                    }`}
+                    title="Heavy model"
+                  >
+                    <span>{heavyLabel}</span>
+                    <ChevronDown className="w-2.5 h-2.5" strokeWidth={1.5} />
+                  </button>
+                  <ModelPickerPopover
+                    open={popover === 'heavy'}
+                    onClose={() => setPopover(null)}
+                    anchorRef={heavyBtnRef}
+                    tier="heavy"
+                    options={inferenceOptions}
+                    selectedModel={heavyModel}
+                    onPick={pickHeavy}
+                    webSearchEnabled={inferencePreference.webSearchEnabled === true}
+                    onWebSearchChange={setWebSearchEnabled}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Queue-mode meta strip (A2) — single line below the card so the
+            user sees how many follow-ups are stacked behind the running call.
+            Amber leading dot signals "in flight"; surrounding copy stays in
+            normal text tone. */}
+        {isQueueing && (
+          <div
+            className="mt-1.5 pl-3.5 pr-3 text-micro font-mono text-ul-text-muted-strong tabular-nums flex items-center gap-1.5"
+            aria-live="polite"
+          >
+            <span className="text-ul-warning leading-none" aria-hidden="true">·</span>
+            {queuedCount > 0 && (
+              <>
+                <span>{queuedCount} message{queuedCount === 1 ? '' : 's'} queued</span>
+                <span className="text-ul-text-muted" aria-hidden="true">·</span>
+              </>
+            )}
+            <span>running now</span>
+          </div>
+        )}
+
+        {(voice.interimTranscript || voice.error) && (
+          <div className="mt-1.5 pl-3.5 pr-3 text-micro text-ul-text-muted-strong" aria-live="polite">
+            {voice.interimTranscript || voice.error}
+          </div>
+        )}
+
+        {onProjectDirChange && (
+          <div className="mt-2 pl-10">
+            <ProjectDropdown
+              selectedDir={projectDir ?? null}
+              onSelect={(dir) => dir && onProjectDirChange(dir)}
+              dropUp
+              compact
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

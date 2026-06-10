@@ -1,0 +1,99 @@
+name: API CI
+
+on:
+  pull_request:
+    paths:
+      - 'api/**'
+      - 'apps/**'
+      - 'cli/**'
+      - 'packages/types/**'
+      - 'scripts/contracts/**'
+      - 'shared/**'
+      - 'sdk/**'
+      - 'scripts/checks/**'
+      - 'supabase/**'
+      - 'scripts/supabase/**'
+      - 'migration-*.sql'
+      - '.github/workflows/api-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'api/**'
+      - 'apps/**'
+      - 'cli/**'
+      - 'packages/types/**'
+      - 'scripts/contracts/**'
+      - 'shared/**'
+      - 'sdk/**'
+      - 'scripts/checks/**'
+      - 'supabase/**'
+      - 'scripts/supabase/**'
+      - 'migration-*.sql'
+      - '.github/workflows/api-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify API
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: api/package-lock.json
+
+      - name: Install Deno
+        run: |
+          curl -fsSL -o /tmp/deno.zip https://github.com/denoland/deno/releases/download/v2.6.10/deno-x86_64-unknown-linux-gnu.zip
+          mkdir -p "$HOME/.deno/bin"
+          unzip -q -o /tmp/deno.zip -d "$HOME/.deno/bin"
+          chmod +x "$HOME/.deno/bin/deno"
+          echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
+          "$HOME/.deno/bin/deno" --version
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate published contract artifacts
+        working-directory: .
+        run: node scripts/contracts/generate-types-package.mjs
+
+      - name: Verify generated contract artifacts are committed
+        working-directory: .
+        run: git diff --exit-code -- packages/types/index.d.ts packages/types/generated
+
+      - name: Contract guardrails
+        working-directory: .
+        run: node scripts/checks/check-contract-guardrails.mjs
+
+      - name: Widget contract guardrails
+        working-directory: .
+        run: node scripts/checks/check-widget-contracts.mjs
+
+      - name: Unused-code baseline
+        run: npm run analyze:unused
+
+      - name: Dependency-cycle baseline
+        run: npm run analyze:deps
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm run test:full
+
+      - name: Wrangler Dry Run
+        run: npm run deploy:dry-run
+
+      - name: Wrangler Dry Run (staging)
+        run: npx wrangler deploy --config wrangler.toml --env staging --dry-run

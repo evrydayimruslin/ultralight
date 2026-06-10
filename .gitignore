@@ -1,0 +1,63 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Deno
+.deno/
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Testing
+coverage/
+
+# Build outputs
+dist/
+build/
+
+# Shared contract compiler artifacts
+shared/contracts/*.js
+shared/contracts/*.js.map
+shared/contracts/*.d.ts
+shared/contracts/*.d.ts.map
+
+# Node
+node_modules/
+package-lock.json
+!api/package-lock.json
+*.tgz
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+!.env.example
+
+# Supabase CLI local state
+supabase/.temp/
+supabase/.branches/
+
+# Claude Code
+.claude/
+
+# Local SQLite database
+desktop/ultralight.db
+
+# Generated Tauri release configs
+desktop/src-tauri/tauri.release.conf.json
+desktop/src-tauri/tauri.windows.release.conf.json
+
+# UI handoff package (Claude Design reference; not committed)
+/handoff
+/handoff/

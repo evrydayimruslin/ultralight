@@ -1,0 +1,97 @@
+{
+  "name": "Memory Wiki",
+  "version": "1.0.0",
+  "type": "mcp",
+  "description": "Personal knowledge wiki with raw backlog, compiled pages, typed cross-references, and three-tier lint. Dump notes and sources into raw, sync to compile into an interlinked wiki. Browse, search, and query your knowledge base.",
+  "author": "ultralight",
+  "entry": { "functions": "index.ts" },
+  "permissions": ["ai:call"],
+  "widgets": [
+    { "id": "wiki_browser", "label": "Knowledge Wiki" }
+  ],
+  "functions": {
+    "search": {
+      "description": "Search wiki pages and raw sources by keyword. Returns matched pages and unsynced sources separately with snippets.",
+      "parameters": {
+        "query": { "type": "string", "description": "Search keywords", "required": true },
+        "wiki_id": { "type": "string", "description": "Wiki name or ID. Defaults to Personal wiki." }
+      },
+      "returns": { "type": "object", "description": "{ pages: [{id, title, slug, page_type, snippet}], sources: [{id, title, classification, snippet}] }" }
+    },
+    "query": {
+      "description": "Ask a question against your wiki. Synthesizes an answer from relevant pages using AI, with optional save back to wiki as a new synthesis page.",
+      "parameters": {
+        "question": { "type": "string", "description": "Question to answer from wiki knowledge", "required": true },
+        "wiki_id": { "type": "string", "description": "Wiki name or ID. Defaults to Personal wiki." },
+        "save": { "type": "boolean", "description": "Save the synthesized answer as a new wiki page. Defaults to false." }
+      },
+      "returns": { "type": "object", "description": "{ answer, sources: [slugs], saved_page_id? }" }
+    },
+    "browse": {
+      "description": "Navigate wiki structure. View a specific page with its linked pages, filter by type, search, or get an overview with page counts and recent pages.",
+      "parameters": {
+        "wiki_id": { "type": "string", "description": "Wiki name or ID. Defaults to Personal wiki." },
+        "page_type": { "type": "string", "description": "Filter by page type: person, decision, commitment, deadline, concept, preference, app_catalog, comparison, synthesis" },
+        "page_id": { "type": "string", "description": "View a specific page by ID — returns full content plus all linked pages" },
+        "search": { "type": "string", "description": "Keyword filter on page titles" }
+      },
+      "returns": { "type": "object", "description": "{ page?, linked_pages?, pages?, type_counts?, unsynced_count? }" }
+    },
+    "ingest": {
+      "description": "Add raw content to the wiki backlog. Fast — no AI processing. Content is queued for compilation during sync.",
+      "parameters": {
+        "content": { "type": "string", "description": "The raw content to ingest", "required": true },
+        "title": { "type": "string", "description": "Title for this source", "required": true },
+        "wiki_id": { "type": "string", "description": "Wiki name or ID. Defaults to Personal wiki." },
+        "source_type": { "type": "string", "description": "Type: note, article, bookmark, conversation, app_output. Default: note" },
+        "classification": { "type": "string", "description": "Classification: synthesis, preference, observation, bookmark, app_output, general. Default: general" }
+      },
+      "returns": { "type": "object", "description": "{ source_id, title }" }
+    },
+    "sync": {
+      "description": "Compile unsynced raw sources into wiki pages using AI. Extracts typed entities (people, decisions, commitments, deadlines, concepts), creates or updates pages, establishes cross-references, and runs structural lint.",
+      "parameters": {
+        "wiki_id": { "type": "string", "description": "Wiki name or ID. Defaults to Personal wiki." }
+      },
+      "returns": { "type": "object", "description": "{ synced, pages_created, pages_updated, lint_issues }" }
+    },
+    "lint": {
+      "description": "Health-check the wiki. Quick: structural checks (orphans, broken links, stale pages). Standard: adds AI contradiction detection. Deep: adds AI gap analysis for missing topics.",
+      "parameters": {
+        "wiki_id": { "type": "string", "description": "Wiki name or ID. Defaults to Personal wiki." },
+        "depth": { "type": "string", "description": "Lint depth: quick (default), standard, or deep" }
+      },
+      "returns": { "type": "object", "description": "{ issues: [{severity, type, message, page_slug?}], stats: {pages, sources_unsynced, links} }" }
+    },
+    "update_page": {
+      "description": "Edit a wiki page directly. Updates content, title, or type. Re-syncs cross-reference links if content changes.",
+      "parameters": {
+        "page_id": { "type": "string", "description": "Page ID to update", "required": true },
+        "content": { "type": "string", "description": "New page content (markdown with [[wikilinks]])" },
+        "title": { "type": "string", "description": "New page title" },
+        "page_type": { "type": "string", "description": "New page type" }
+      },
+      "returns": { "type": "object", "description": "{ success, page_id, slug }" }
+    },
+    "create_wiki": {
+      "description": "Create a new wiki (beyond the default Personal wiki). Useful for separate knowledge domains or shared team wikis.",
+      "parameters": {
+        "name": { "type": "string", "description": "Wiki name", "required": true },
+        "description": { "type": "string", "description": "Wiki description" }
+      },
+      "returns": { "type": "object", "description": "{ wiki_id, name }" }
+    },
+    "widget_wiki_browser_ui": {
+      "description": "DO NOT call this function directly. To show the wiki browser widget, include {{widget:wiki_browser:APP_ID}} in your response.",
+      "parameters": {}
+    },
+    "widget_wiki_browser_data": {
+      "description": "Internal widget data function — do not call directly.",
+      "parameters": {
+        "view": { "type": "string", "description": "View: index, page, raw, search" },
+        "page_id": { "type": "string", "description": "Page ID for page view" },
+        "search": { "type": "string", "description": "Search query" }
+      }
+    }
+  }
+}

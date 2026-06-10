@@ -1,0 +1,16 @@
+{
+  "imports": {
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.103.2",
+    "esbuild-wasm": "npm:esbuild-wasm@0.24.2",
+    "esbuild-wasm/esbuild.wasm": "./services/esbuild-wasm-deno-check-stub.ts",
+    "typescript": "npm:typescript@5.9.3",
+    "yaml": "npm:yaml@2.8.3"
+  },
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "types": ["npm:@cloudflare/workers-types@4.20260415.1"]
+  }
+}

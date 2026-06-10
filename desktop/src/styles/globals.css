@@ -1,0 +1,408 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  html, body, #root {
+    height: 100%;
+    width: 100%;
+    overscroll-behavior: none;
+  }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: #0a0a0a;
+    background: #ffffff;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    /* Prevent text selection during drag in Tauri */
+    user-select: none;
+  }
+
+  /* Allow text selection in chat messages */
+  .selectable {
+    user-select: text;
+  }
+
+  /* Hide all scrollbars globally (scroll functionality preserved) */
+  ::-webkit-scrollbar {
+    display: none;
+  }
+
+  * {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+@layer components {
+  /* Ultralight button base */
+  .btn {
+    @apply inline-flex items-center justify-center font-medium transition-all;
+    height: 36px;
+    padding: 0 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: pointer;
+    outline: none;
+    border: none;
+  }
+
+  .btn:focus-visible {
+    box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.06);
+  }
+
+  .btn-primary {
+    @apply btn;
+    background: #0a0a0a;
+    color: #ffffff;
+  }
+
+  .btn-primary:hover {
+    background: #333;
+  }
+
+  .btn-secondary {
+    @apply btn;
+    background: rgba(0, 0, 0, 0.04);
+    color: #0a0a0a;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+  }
+
+  .btn-secondary:hover {
+    background: rgba(0, 0, 0, 0.06);
+  }
+
+  .btn-ghost {
+    @apply btn;
+    background: transparent;
+    color: #555;
+  }
+
+  .btn-ghost:hover {
+    background: rgba(0, 0, 0, 0.04);
+    color: #0a0a0a;
+  }
+
+  .btn-sm {
+    height: 30px;
+    padding: 0 12px;
+    font-size: 12px;
+    border-radius: 6px;
+  }
+
+  .btn-lg {
+    height: 42px;
+    padding: 0 20px;
+    font-size: 14px;
+    border-radius: 12px;
+  }
+
+  /* Input base */
+  .input {
+    @apply w-full transition-all;
+    height: 36px;
+    padding: 0 12px;
+    border-radius: 8px;
+    font-size: 14px;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    background: #ffffff;
+    color: #0a0a0a;
+    outline: none;
+  }
+
+  .input:focus {
+    border-color: rgba(0, 0, 0, 0.4);
+    box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.06);
+  }
+
+  .input::placeholder {
+    color: #999;
+  }
+
+  /* Markdown content styling in chat */
+  .markdown-body {
+    @apply selectable;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  .markdown-body p {
+    margin-bottom: 8px;
+  }
+
+  .markdown-body p:last-child {
+    margin-bottom: 0;
+  }
+
+  .markdown-body code {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 13px;
+    background: rgba(0, 0, 0, 0.04);
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+
+  .markdown-body pre {
+    margin: 8px 0;
+    padding: 12px 16px;
+    background: #fafafa;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 8px;
+    overflow-x: auto;
+  }
+
+  .markdown-body pre code {
+    background: none;
+    padding: 0;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .markdown-body ul, .markdown-body ol {
+    margin: 8px 0;
+    padding-left: 24px;
+  }
+
+  .markdown-body ul {
+    list-style-type: disc;
+  }
+
+  .markdown-body ol {
+    list-style-type: decimal;
+  }
+
+  .markdown-body ul ul {
+    list-style-type: circle;
+  }
+
+  .markdown-body ul ul ul {
+    list-style-type: square;
+  }
+
+  .markdown-body li {
+    margin-bottom: 4px;
+  }
+
+  .markdown-body li > ul, .markdown-body li > ol {
+    margin-top: 4px;
+    margin-bottom: 0;
+  }
+
+  /* Tables */
+  .markdown-body table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 13px;
+  }
+
+  .markdown-body thead {
+    border-bottom: 2px solid rgba(0, 0, 0, 0.12);
+  }
+
+  .markdown-body th {
+    text-align: left;
+    padding: 8px 12px;
+    font-weight: 600;
+    color: #333;
+    white-space: nowrap;
+  }
+
+  .markdown-body td {
+    padding: 6px 12px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    vertical-align: top;
+  }
+
+  .markdown-body tbody tr:hover {
+    background: rgba(0, 0, 0, 0.02);
+  }
+
+  .markdown-body tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  /* Horizontal rules */
+  .markdown-body hr {
+    margin: 16px 0;
+    border: none;
+    border-top: 1px solid rgba(0, 0, 0, 0.1);
+  }
+
+  /* Headings */
+  .markdown-body h1, .markdown-body h2, .markdown-body h3,
+  .markdown-body h4, .markdown-body h5, .markdown-body h6 {
+    margin-top: 16px;
+    margin-bottom: 8px;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+
+  .markdown-body h1 { font-size: 1.4em; }
+  .markdown-body h2 { font-size: 1.2em; }
+  .markdown-body h3 { font-size: 1.1em; }
+  .markdown-body h4 { font-size: 1em; }
+
+  .markdown-body h1:first-child, .markdown-body h2:first-child,
+  .markdown-body h3:first-child, .markdown-body h4:first-child {
+    margin-top: 0;
+  }
+
+  /* Strong / emphasis */
+  .markdown-body strong {
+    font-weight: 600;
+  }
+
+  .markdown-body blockquote {
+    margin: 8px 0;
+    padding: 8px 16px;
+    border-left: 3px solid rgba(0, 0, 0, 0.15);
+    color: #555;
+  }
+
+  .markdown-body a {
+    color: #0a0a0a;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .markdown-body a:hover {
+    color: #333;
+  }
+}
+
+/* Typing indicator animation */
+@keyframes typing-dot {
+  0%, 60%, 100% { opacity: 0.3; }
+  30% { opacity: 1; }
+}
+
+.typing-dot {
+  animation: typing-dot 1.4s infinite;
+}
+
+.typing-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+/* ============================================================
+   PHASE 1 ADDITIONS — premium-UI motion vocabulary.
+
+   These are the named keyframes used by the premium mockups,
+   renamed from `pui-*` to `ul-*` to match the existing brand
+   prefix. See `handoff/DESIGN-TOKENS-DIFF.md` §7 for rationale.
+
+   Apply via Tailwind utilities declared in tailwind.config.ts
+   `theme.animation` — e.g. `className="animate-msg-rise"`. No
+   component should reference the raw keyframe name except inline
+   ad-hoc CSS (rare; flag in PR).
+   ============================================================ */
+
+/* ── Entry / arrival ── */
+@keyframes ul-pop {
+  0%   { transform: translateY(6px) scale(0.98); opacity: 0; }
+  100% { transform: translateY(0) scale(1);      opacity: 1; }
+}
+@keyframes ul-toolpop {
+  0%   { transform: translateY(4px) scale(0.985); opacity: 0; }
+  100% { transform: translateY(0) scale(1);       opacity: 1; }
+}
+@keyframes ul-fade-up {
+  0%   { opacity: 0; transform: translateY(6px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+@keyframes ul-fade-in {
+  0%   { opacity: 0; }
+  100% { opacity: 1; }
+}
+@keyframes ul-msg-rise {
+  0%   { opacity: 0; transform: translateY(4px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+@keyframes ul-dot-arrive {
+  0%   { opacity: 0; transform: scale(0.2); }
+  60%  { opacity: 1; transform: scale(1.15); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+/* ── Pulse / breathe / shimmer ── */
+@keyframes ul-pulse {
+  0%, 100% { opacity: 1;   transform: scale(1); }
+  50%      { opacity: 0.5; transform: scale(0.85); }
+}
+@keyframes ul-breathe {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.025); }
+}
+@keyframes ul-shimmer {
+  0%   { background-position: -40% 0; }
+  100% { background-position: 140% 0; }
+}
+@keyframes ul-halo {
+  0%   { transform: scale(0.6); opacity: 0.6; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+
+/* ── Typing / cursor / caret ── */
+@keyframes ul-typing {
+  0%, 60%, 100% { opacity: 0.3; }
+  30%           { opacity: 1; }
+}
+@keyframes ul-cursor {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0; }
+}
+@keyframes ul-caret {
+  0%, 50%   { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+/* ── Status: credit applied / ring resolve / card dealt ── */
+@keyframes ul-credit-rise {
+  0%   { opacity: 0; transform: translateY(8px); }
+  30%  { opacity: 1; transform: translateY(0); }
+  80%  { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-6px); }
+}
+@keyframes ul-ring-resolve {
+  0%   { box-shadow: 0 0 0 0  rgba(34,197,94,0.4); }
+  100% { box-shadow: 0 0 0 14px rgba(34,197,94,0); }
+}
+@keyframes ul-dealt-added-flash {
+  0%   { box-shadow: 0 0 0 0 rgba(34,197,94,0.0); }
+  30%  { box-shadow: 0 0 0 8px rgba(34,197,94,0.18); }
+  100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
+}
+
+/* ── Constellation empty state (chat hero / palette-and-empty) ── */
+/* ul-dot-arrive already defined above; reused here. */
+@keyframes ul-orbit {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+@keyframes ul-spark-pulse {
+  0%, 100% { transform: scale(1);    opacity: 0.85; }
+  50%      { transform: scale(1.15); opacity: 1; }
+}
+
+/* ── Edit-mode wiggle (Command homescreen) ── */
+/* Tiny rotation that ships on a continuous loop while the user is editing
+   their dashboard layout. Per-tile delay is set inline via animation-delay
+   so the deck doesn't move in lockstep. */
+@keyframes ul-wiggle {
+  0%, 100% { transform: rotate(-0.4deg); }
+  50%      { transform: rotate(0.4deg); }
+}

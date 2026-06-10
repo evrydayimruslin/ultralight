@@ -1,0 +1,66 @@
+# Wrangler local development secrets
+# Copy this to .dev.vars and fill in your values
+# These are used by `wrangler dev` for local development
+# For production, set via `wrangler secret put <NAME>`
+
+# Supabase
+SUPABASE_URL=
+SUPABASE_SERVICE_ROLE_KEY=
+SUPABASE_ANON_KEY=
+
+# Cloudflare (for D1 HTTP API — still needed until native D1 bindings)
+CF_ACCOUNT_ID=8d2df08dac65694aa1c6bf56233a2090
+CF_API_TOKEN=
+
+# Stripe
+STRIPE_SECRET_KEY=
+STRIPE_PUBLISHABLE_KEY=
+STRIPE_WEBHOOK_SECRET=
+
+# OpenRouter management key for Light-debit platform inference.
+# BYOK provider keys are saved per user and encrypted in Supabase.
+OPENROUTER_API_KEY=
+
+# DeepSeek platform key for Ultralight Light-debit DeepSeek model routing.
+DEEPSEEK_API_KEY=
+
+# Encryption key for user BYOK provider API keys.
+BYOK_ENCRYPTION_KEY=
+
+# Platform trust signing key for app version manifests
+LIGHT_TRUST_SIGNING_SECRET=
+
+# RunPod GPU
+GPU_SUPPORT_ENABLED=false
+RUNPOD_API_KEY=
+RUNPOD_TEMPLATE_ID=
+RUNPOD_BASE_IMAGE=
+RUNPOD_CONTAINER_REGISTRY_AUTH_ID=
+RUNPOD_ALLOW_SHARED_TEMPLATE_FALLBACK=false
+GPU_INTERNAL_SECRET=
+
+# GPU image builds (GitHub Actions + GHCR)
+GITHUB_BUILD_REPO=ultralight-run/ultralight-gpu-builds
+GITHUB_BUILD_WORKFLOW_ID=gpu-image-build.yml
+GITHUB_BUILD_REF=main
+GITHUB_ACTIONS_TOKEN=
+# Preferred for production instead of GITHUB_ACTIONS_TOKEN:
+GITHUB_APP_ID=
+GITHUB_APP_PRIVATE_KEY=
+GITHUB_INSTALLATION_ID=
+GHCR_IMAGE_NAMESPACE=ghcr.io/ultralight/gpu-apps
+GPU_BUILD_CALLBACK_SECRET=
+GPU_BUILD_CONTEXT_TTL_SECONDS=3600
+GPU_BUILD_LIGHT_PER_MINUTE=
+GPU_BASE_IMAGE_PYTHON_CUDA=ghcr.io/ultralight/gpu-bases/python-cuda:py3.11-cuda12.4
+GPU_BASE_IMAGE_TORCH_CUDA=ghcr.io/ultralight/gpu-bases/torch-cuda:py3.11-torch2.5-cuda12.4
+GPU_BASE_IMAGE_PYTHON_CUDA_SIZE_BYTES=
+GPU_BASE_IMAGE_TORCH_CUDA_SIZE_BYTES=
+
+# Supabase Management OAuth
+SUPABASE_MGMT_OAUTH_CLIENT_ID=
+SUPABASE_MGMT_OAUTH_CLIENT_SECRET=
+
+# Inter-service auth
+TIER_CHANGE_SECRET=
+GPU_SECRET=
