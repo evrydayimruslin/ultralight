@@ -15,9 +15,12 @@ of launch-relevant follow-ups discovered during implementation.
 - **Deploy ordering:** apply migration
   `20260610170000_mcp_call_logs_caller_attribution.sql` (adds
   `mcp_call_logs.caller_app_id` + `call_chain_depth`) before/with the next
-  API Worker deploy. Both columns are nullable and additive; existing readers
-  use explicit column projections, so nothing breaks if the deploy precedes
-  the migration — but receipts won't carry attribution until it lands.
+  API Worker deploy. The receipt insert omits the two new keys entirely for
+  direct user calls (`buildMcpCallLogInsertPayload`), so a deploy-before-
+  migrate window leaves the vast majority of receipts byte-identical to pre-4c
+  and they still insert; only the rare CROSS-Agent receipts would fail
+  (PGRST204 on the unknown column, fire-and-forget) until the column lands.
+  Prefer migrate-before-deploy regardless.
 - **codemode metering bypass (deferred — separate economic concern):**
   `ul.codemode` invokes library-app functions in-process and runs NO
   `preflightRuntimeCloudHold` / `settleAndLogAppExecution` / `recordGrantSpend`

@@ -73,8 +73,12 @@ export async function executeDynamicCodeMode(
     return await executeCodeMode(code, fns, timeoutMs);
   }
 
-  // Build the recipe module
-  const recipeModule = buildRecipeModule(code, toolMap, files);
+  // Build the recipe modules (entry + isolated user-recipe module)
+  const { entry: recipeModule, recipe: recipeUserModule } = buildRecipeModule(
+    code,
+    toolMap,
+    files,
+  );
 
   // Setup module: sets globalThis.ultralight with lazy getters
   // MUST run before any app module that captures globalThis.ultralight at init time
@@ -115,10 +119,11 @@ globalThis.ultralight = {
 };
 `;
 
-  // Build modules map: setup + recipe entry + all app bundles
+  // Build modules map: setup + recipe entry + isolated user recipe + bundles
   const modules: Record<string, string> = {
     'setup.js': setupModule,
     'recipe.js': recipeModule,
+    'recipe-user.js': recipeUserModule,
   };
   for (const [appId, bundle] of Object.entries(appBundles)) {
     const safeId = appId.replace(/-/g, '_');
@@ -194,7 +199,7 @@ function buildRecipeModule(
   recipeCode: string,
   toolMap: Record<string, { appId: string; fnName: string }>,
   files?: Array<{ name: string; size: number; mimeType: string; content: string }>,
-): string {
+): { entry: string; recipe: string } {
   // Collect unique app IDs
   const appIds = [...new Set(Object.values(toolMap).map(t => t.appId))];
 
@@ -223,13 +228,22 @@ function buildRecipeModule(
     }`;
   });
 
-  // The recipe code is embedded DIRECTLY as inline code in the module,
-  // NOT passed to new AsyncFunction() (which is blocked in CF Workers).
-  // The recipe is an async function body, so we wrap it in an async IIFE.
+  // SECURITY (P5 / Phase 4c): the user recipe lives in its OWN module that
+  // imports NO app bundles and receives the FILTERED `codemode` namespace as a
+  // parameter. This prevents the recipe from reaching a dropped function via
+  // lexical access to an `app_<id>` namespace — it can ONLY call what survives
+  // the access filter, via codemode.<fn>. The entry module imports the bundles
+  // (to build codemode) and the isolated recipe, then invokes it.
+  const recipe = `// Auto-generated user recipe — imports NO app bundles by design.
+export default async function __ulRecipe(codemode, console, __files) {
+${recipeCode}
+}
+`;
 
-  return `// Auto-generated Dynamic Worker recipe module
+  const entry = `// Auto-generated Dynamic Worker recipe entry module
 // setup.js MUST be imported first — sets globalThis.ultralight with lazy getters
 import './setup.js';
+import __ulRecipe from './recipe-user.js';
 ${imports.join('\n')}
 
 export default {
@@ -253,11 +267,9 @@ ${toolEntries.join(',\n')}
     const __files = ${files?.length ? JSON.stringify(files) : '[]'};
 
     try {
-      // Recipe code is inlined directly — no eval/AsyncFunction needed
-      const console = sandboxConsole;
-      const result = await (async () => {
-        ${recipeCode}
-      })();
+      // The recipe runs in its own module scope — only codemode/console/__files
+      // (plus globalThis.ultralight) are reachable; app_* bundles are not.
+      const result = await __ulRecipe(codemode, sandboxConsole, __files);
       return Response.json({ result, logs });
     } catch (err) {
       return Response.json({
@@ -269,4 +281,5 @@ ${toolEntries.join(',\n')}
   }
 };
 `;
+  return { entry, recipe };
 }

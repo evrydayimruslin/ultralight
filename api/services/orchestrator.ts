@@ -1519,12 +1519,26 @@ async function executeRecipe(
   userEmail: string,
   files?: ChatFileAttachment[],
 ): Promise<{ result: unknown; error?: string; logs: string[] }> {
-  const appIds = brokerResult.involvedAppIds;
+  // P5 (Phase 4c): the Flash orchestrator is the SECOND in-process codemode
+  // path (alongside ul.codemode). Apply the same cross-app access filter so a
+  // revoked non-owned-private grant or an explicit "never" policy is honored
+  // here too. Derive the bundle/binding app set FROM the filtered map so
+  // dropped apps get no bundles loaded at all.
+  const { filterCodemodeToolMapByAccess } = await import(
+    "./codemode-access.ts"
+  );
+  const filteredBrokerToolMap = await filterCodemodeToolMapByAccess(
+    userId,
+    brokerResult.toolMap,
+  );
 
   const toolMap: Record<string, { appId: string; fnName: string }> = {};
-  for (const [name, mapping] of Object.entries(brokerResult.toolMap)) {
+  for (const [name, mapping] of Object.entries(filteredBrokerToolMap)) {
     toolMap[name] = { appId: mapping.appId, fnName: mapping.fnName };
   }
+  const appIds = Array.from(
+    new Set(Object.values(toolMap).map((t) => t.appId)),
+  );
 
   // Load ESM bundles from KV (parallel)
   const bundleEntries = await Promise.all(

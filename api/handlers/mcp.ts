@@ -2179,6 +2179,8 @@ async function handleGpuExecution(
     widgetAction?: WidgetActionCallMetadata;
     agenticSurfaceAction?: AgenticSurfaceActionCallMetadata;
     routineContext?: RoutineTraceContext;
+    callerAppId?: string | null;
+    callChainDepth?: number | null;
   },
 ): Promise<Response> {
   if (!isGpuSupportEnabled()) {
@@ -2236,6 +2238,8 @@ async function handleGpuExecution(
       functionName,
       inputArgs: args,
       method: "tools/call",
+      callerAppId: meta?.callerAppId ?? null,
+      callChainDepth: meta?.callChainDepth ?? null,
       gpuResult,
       durationMs: gpuExecDuration,
       sessionId: meta?.sessionId,
@@ -2302,7 +2306,11 @@ async function executeAppFunction(
         args,
         userId,
         user,
-        meta,
+        {
+          ...meta,
+          callerAppId: callerContext.callerApp?.appId ?? null,
+          callChainDepth: callerContext.callerApp?.hop ?? null,
+        },
       );
     }
 

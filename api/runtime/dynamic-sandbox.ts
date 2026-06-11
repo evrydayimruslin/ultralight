@@ -328,6 +328,10 @@ export default {
   async fetch(request, env) {
     // Set RPC bindings for lazy getters in ultralight SDK
     globalThis.__rpcEnv = env;
+    // Reset the per-execution AI-cost accumulator. Each execution runs in a
+    // fresh isolate today, but resetting here keeps the per-grant cap
+    // accounting correct independent of any future CF isolate reuse.
+    globalThis.__aiCostLight = 0;
 
     const logs = [];
     const con = {

@@ -135,8 +135,17 @@ export function buildMcpCallLogInsertPayload(
     user_id: entry.userId,
     app_id: entry.appId || null,
     app_name: entry.appName || null,
-    caller_app_id: entry.callerAppId ?? null,
-    call_chain_depth: entry.callChainDepth ?? null,
+    // Cross-Agent attribution columns (migration 20260610170000). Only spread
+    // them when set: a direct user call (the vast majority, and ALL calls
+    // before the migration applies) produces a body byte-identical to pre-4c,
+    // so a deploy-before-migrate window never rejects the whole receipt with
+    // PGRST204 — only rare cross-Agent receipts would until the column lands.
+    ...(entry.callerAppId != null
+      ? { caller_app_id: entry.callerAppId }
+      : {}),
+    ...(entry.callChainDepth != null
+      ? { call_chain_depth: entry.callChainDepth }
+      : {}),
     function_name: entry.functionName,
     method: entry.method,
     success: entry.success,
