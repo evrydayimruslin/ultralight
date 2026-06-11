@@ -97,6 +97,26 @@ export async function createJob(params: {
   return jobId;
 }
 
+// Normalize a failed execution's error payload to failJob's {type, message}
+// shape (the `error` column is jsonb; ul.job surfaces it verbatim).
+function serializeJobError(value: unknown): { type: string; message: string } {
+  if (value && typeof value === 'object') {
+    const v = value as { type?: unknown; message?: unknown };
+    return {
+      type: typeof v.type === 'string' && v.type ? v.type : 'ExecutionError',
+      message: typeof v.message === 'string' && v.message
+        ? v.message
+        : JSON.stringify(value),
+    };
+  }
+  return {
+    type: 'ExecutionError',
+    message: value === null || value === undefined
+      ? 'Execution failed'
+      : String(value),
+  };
+}
+
 /** Complete a job with its result */
 export async function completeJob(jobId: string, result: {
   success: boolean;
@@ -124,10 +144,12 @@ export async function completeJob(jobId: string, result: {
   }
 
   const updatePayload: Record<string, unknown> = {
-    status: 'completed',
+    // A failed execution is a FAILED job — writing 'completed' here made
+    // ul.job report success with a null result and a hidden error.
+    status: result.success ? 'completed' : 'failed',
     result: storedResult,
     result_r2_key: resultR2Key,
-    error: result.success ? null : result.result,
+    error: result.success ? null : serializeJobError(result.result),
     logs: (result.logs || []).slice(0, 100), // Cap log entries
     duration_ms: result.durationMs,
     ai_cost_light: result.aiCostLight,
@@ -152,7 +174,12 @@ export async function completeJob(jobId: string, result: {
 export async function failJob(jobId: string, error: {
   type: string;
   message: string;
-}, durationMs: number): Promise<void> {
+}, durationMs: number, extras?: {
+  // AI calls that completed before the failure were still billed — keep the
+  // spend (and logs) on the row so ul.job reports the truth.
+  aiCostLight?: number;
+  logs?: unknown[];
+}): Promise<void> {
   activeJobCount = Math.max(0, activeJobCount - 1);
 
   const res = await fetch(
@@ -165,6 +192,10 @@ export async function failJob(jobId: string, error: {
         error,
         duration_ms: durationMs,
         completed_at: new Date().toISOString(),
+        ...(extras?.aiCostLight !== undefined
+          ? { ai_cost_light: extras.aiCostLight }
+          : {}),
+        ...(extras?.logs ? { logs: extras.logs.slice(0, 100) } : {}),
       }),
     }
   );

@@ -4,14 +4,25 @@
 
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { deductChatCost } from '../../services/chat-billing.ts';
+import { recordAiSpend } from '../../services/ai-spend-tracker.ts';
 import { resolvePlatformInferenceModel } from '../../services/platform-inference-models.ts';
 
 // ============================================
 // TYPES
 // ============================================
 
+// A hung provider (BYOK endpoint that never responds) must not idle the whole
+// execution to its sandbox abort — bound each provider call independently.
+const AI_FETCH_TIMEOUT_MS = 90_000;
+// Platform ceiling on a single completion. Tenant code passes max_tokens
+// straight through otherwise, maximizing both latency and per-call spend.
+const MAX_AI_MAX_TOKENS = 32_768;
+
 interface AIBindingProps {
   userId: string;
+  // Execution receipt key for the authoritative AI-spend ledger
+  // (ai-spend-tracker.ts). Null only for legacy callers.
+  executionId: string | null;
   apiKey: string | null;
   provider: string | null;
   upstreamProvider: string | null;
@@ -89,6 +100,7 @@ export class AIBinding extends WorkerEntrypoint<unknown, AIBindingProps> {
       requestDefaults,
       shouldDebitLight,
       userId,
+      executionId,
       unavailableReason,
     } = this.ctx.props;
 
@@ -119,34 +131,17 @@ export class AIBinding extends WorkerEntrypoint<unknown, AIBindingProps> {
       : provider === 'ultralight' && upstreamProvider !== 'openrouter'
       ? defaultModel || requestedModel
       : requestedModel;
-    const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://ultralight-api.rgn4jz429m.workers.dev',
-        'X-Title': 'Ultralight',
-      },
-      body: JSON.stringify({
-        model,
-        messages,
-        max_tokens: request.max_tokens || 4096,
-        temperature: request.temperature ?? 0.7,
-        ...(requestDefaults ?? {}),
-      }),
-    });
+    const maxTokens = Math.min(
+      Math.max(1, Math.floor(request.max_tokens || 4096)),
+      MAX_AI_MAX_TOKENS,
+    );
 
-    if (!response.ok) {
-      const errText = await response.text();
-      return {
-        content: '',
-        model,
-        usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
-        error: `AI call failed (${response.status}): ${errText}`,
-      };
-    }
+    // Bound the provider call (and its body read) so a hung endpoint fails
+    // fast instead of idling the execution to its sandbox abort.
+    const abort = new AbortController();
+    const timeoutId = setTimeout(() => abort.abort(), AI_FETCH_TIMEOUT_MS);
 
-    const data = await response.json() as {
+    let data: {
       choices: Array<{ message: { content: string } }>;
       model: string;
       usage: {
@@ -156,6 +151,52 @@ export class AIBinding extends WorkerEntrypoint<unknown, AIBindingProps> {
         prompt_cache_miss_tokens?: number;
       };
     };
+    try {
+      const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://ultralight-api.rgn4jz429m.workers.dev',
+          'X-Title': 'Ultralight',
+        },
+        body: JSON.stringify({
+          // Spread defaults FIRST so the clamped max_tokens (and explicit
+          // temperature) stay final even if a future platform default carries
+          // those keys. requestDefaults is platform-controlled, never tenant.
+          ...(requestDefaults ?? {}),
+          model,
+          messages,
+          max_tokens: maxTokens,
+          temperature: request.temperature ?? 0.7,
+        }),
+        signal: abort.signal,
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        return {
+          content: '',
+          model,
+          usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
+          error: `AI call failed (${response.status}): ${errText}`,
+        };
+      }
+
+      data = await response.json() as typeof data;
+    } catch (err) {
+      const timedOut = abort.signal.aborted;
+      return {
+        content: '',
+        model,
+        usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
+        error: timedOut
+          ? `AI call timed out after ${Math.round(AI_FETCH_TIMEOUT_MS / 1000)}s`
+          : `AI call failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    } finally {
+      clearTimeout(timeoutId);
+    }
     const promptTokens = data.usage?.prompt_tokens || 0;
     const completionTokens = data.usage?.completion_tokens || 0;
     const promptCacheHitTokens = data.usage?.prompt_cache_hit_tokens;
@@ -195,6 +236,9 @@ export class AIBinding extends WorkerEntrypoint<unknown, AIBindingProps> {
           },
         );
         costLight = billing.cost_light;
+        // Authoritative spend ledger: survives a sandbox abort (where the
+        // sandbox-side accumulator is lost) and is out of tenant reach.
+        recordAiSpend(executionId, costLight);
       } catch (err) {
         console.error('[AI-BINDING] Failed to debit Light for AI call:', err);
       }

@@ -276,6 +276,9 @@ async function dispatchOneEvent(
       failed++;
       await patchDelivery(db, deliveryId, {
         status: "failed",
+        // A failed handler still executed and settled — keep the receipt link
+        // so the failure is billable-traceable, not just a message.
+        receipt_id: outcome.receiptId ?? null,
         last_error: outcome.error ?? "delivery failed",
       });
     }

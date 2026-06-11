@@ -1,42 +1,6 @@
 {
   "issues": [
     {
-      "file": "handlers/admin-cloud-economics.test.ts",
-      "files": [
-        "handlers/admin-cloud-economics.test.ts"
-      ]
-    },
-    {
-      "file": "handlers/admin-cloud-usage-reconciliation.test.ts",
-      "files": [
-        "handlers/admin-cloud-usage-reconciliation.test.ts"
-      ]
-    },
-    {
-      "file": "handlers/admin-flash-training-export.test.ts",
-      "files": [
-        "handlers/admin-flash-training-export.test.ts"
-      ]
-    },
-    {
-      "file": "handlers/agent-grants-enforcement.test.ts",
-      "files": [
-        "handlers/agent-grants-enforcement.test.ts"
-      ]
-    },
-    {
-      "file": "handlers/app-referrals.test.ts",
-      "files": [
-        "handlers/app-referrals.test.ts"
-      ]
-    },
-    {
-      "file": "handlers/auth-referrals.test.ts",
-      "files": [
-        "handlers/auth-referrals.test.ts"
-      ]
-    },
-    {
       "exports": [
         "getUserId"
       ],
@@ -46,67 +10,6 @@
       "file": "handlers/cron.ts",
       "files": [
         "handlers/cron.ts"
-      ]
-    },
-    {
-      "file": "handlers/discover.test.ts",
-      "files": [
-        "handlers/discover.test.ts"
-      ]
-    },
-    {
-      "file": "handlers/fee-waivers.test.ts",
-      "files": [
-        "handlers/fee-waivers.test.ts"
-      ]
-    },
-    {
-      "file": "handlers/http-options.test.ts",
-      "files": [
-        "handlers/http-options.test.ts"
-      ]
-    },
-    {
-      "file": "handlers/launch.test.ts",
-      "files": [
-        "handlers/launch.test.ts"
-      ]
-    },
-    {
-      "file": "handlers/mcp-skills.test.ts",
-      "files": [
-        "handlers/mcp-skills.test.ts"
-      ]
-    },
-    {
-      "file": "handlers/platform-mcp-discovery.test.ts",
-      "files": [
-        "handlers/platform-mcp-discovery.test.ts"
-      ]
-    },
-    {
-      "file": "handlers/platform-mcp-docs.test.ts",
-      "files": [
-        "handlers/platform-mcp-docs.test.ts"
-      ]
-    },
-    {
-      "file": "handlers/platform-mcp-scaffold.test.ts",
-      "files": [
-        "handlers/platform-mcp-scaffold.test.ts"
-      ]
-    },
-    {
-      "exports": [
-        "executeDiscoverAppstore",
-        "executeScaffold"
-      ],
-      "file": "handlers/platform-mcp.ts"
-    },
-    {
-      "file": "handlers/publisher-publish-readiness.test.ts",
-      "files": [
-        "handlers/publisher-publish-readiness.test.ts"
       ]
     },
     {
@@ -124,12 +27,6 @@
       "file": "handlers/user.ts",
       "types": [
         "PermissionsResult"
-      ]
-    },
-    {
-      "file": "handlers/wave3-e2e.test.ts",
-      "files": [
-        "handlers/wave3-e2e.test.ts"
       ]
     },
     {

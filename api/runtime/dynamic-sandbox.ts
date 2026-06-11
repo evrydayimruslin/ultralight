@@ -12,6 +12,7 @@
 // By the time app.js captures globalThis.ultralight, the SDK is ready.
 
 import type { ExecutionResult, RuntimeConfig } from "./sandbox.ts";
+import { consumeAiSpend } from "../services/ai-spend-tracker.ts";
 import { debitCloudOperation } from "../services/cloud-usage.ts";
 
 interface DynamicWorkerEntrypointExports {
@@ -57,6 +58,7 @@ interface DynamicWorkerEntrypointExports {
   AIBinding(input: {
     props: {
       userId: string;
+      executionId: string | null;
       apiKey: string | null;
       provider: string | null;
       upstreamProvider: string | null;
@@ -462,6 +464,7 @@ export default {
       bindings.AI = ctx.exports.AIBinding({
         props: {
           userId: config.userId,
+          executionId: config.executionId || null,
           apiKey: config.aiRoute?.apiKey || config.userApiKey,
           provider: config.aiRoute?.provider || null,
           upstreamProvider: config.aiRoute?.upstreamProvider ||
@@ -531,19 +534,38 @@ export default {
           message: string;
         }
       >;
-      // Credits actually debited for in-sandbox AI calls this execution
-      // (accumulated by the SDK ai() wrapper). Drives both the receipt and
-      // the cross-Agent grant monthly cap.
+      // Sandbox-side accumulated AI cost (SDK ai() wrapper). Informational
+      // only — the authoritative value is the main-isolate spend ledger below,
+      // which tenant code cannot touch.
       aiCostLight?: number;
       error?: { type: string; message: string };
     };
+
+    // Credits actually debited for in-sandbox AI calls this execution, from
+    // the binding-side ledger. Drives both the receipt and the cross-Agent
+    // grant monthly cap. The sandbox-reported number is cross-checked only.
+    const aiCostLight = consumeAiSpend(config.executionId);
+    const reportedAiCost = typeof data.aiCostLight === "number"
+      ? data.aiCostLight
+      : 0;
+    if (Math.abs(aiCostLight - reportedAiCost) > 1e-6) {
+      console.warn(
+        "[AI-SPEND] Sandbox-reported AI cost differs from debit ledger",
+        {
+          appId: config.appId,
+          executionId: config.executionId,
+          reported: reportedAiCost,
+          debited: aiCostLight,
+        },
+      );
+    }
 
     return {
       success: data.success,
       result: data.result,
       logs: data.logs || [],
       durationMs: Date.now() - startTime,
-      aiCostLight: typeof data.aiCostLight === "number" ? data.aiCostLight : 0,
+      aiCostLight,
       ...(data.error ? { error: data.error } : {}),
     };
   } catch (err) {
@@ -552,7 +574,10 @@ export default {
       result: null,
       logs: [],
       durationMs: Date.now() - startTime,
-      aiCostLight: 0,
+      // An aborted/failed execution still pays for every AI call that
+      // completed before the failure — report the real debited spend so the
+      // receipt and grant-cap accounting stay truthful.
+      aiCostLight: consumeAiSpend(config.executionId),
       error: {
         type: err instanceof Error ? err.constructor.name : "UnknownError",
         message: err instanceof Error ? err.message : String(err),

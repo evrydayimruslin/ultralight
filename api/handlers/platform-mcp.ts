@@ -2663,7 +2663,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
   {
     name: "ul.job",
     description: "Poll an async job's status and retrieve its result. " +
-      "When a tool call takes longer than ~25 seconds, it is automatically promoted to an async job. " +
+      "When an AI-capable app's call exceeds the synchronous execution window (~120s), it is promoted to an async job; other apps fail at their 30s limit. " +
       "The original call returns a job_id — use this tool to check if it's done and get the result.",
     annotations: {
       readOnlyHint: true,
@@ -3238,7 +3238,7 @@ Execute any app's function through this single platform connection.
 - Uses your auth — no separate per-app connection needed
 
 ### ul.job({ job_id })
-Poll an async job's status. Functions that take longer than ~25 seconds are automatically promoted to async jobs.
+Poll an async job's status. AI-capable apps that exceed the synchronous execution window (~120s) are promoted to async jobs; other apps fail at their 30s limit.
 - When a tool call returns \`{ _async: true, job_id: "..." }\`, use this to poll for the result
 - Returns \`{ status: "running" }\` while in progress, \`{ status: "completed", result: ... }\` when done, or \`{ status: "failed", error: ... }\`
 - Poll every 5-10 seconds until completed or failed
@@ -4694,6 +4694,9 @@ async function handleToolsCall(
             status: "failed",
             duration_ms: job.duration_ms,
             error: job.error,
+            // AI calls that completed before the failure were still billed.
+            ai_cost_light: job.ai_cost_light,
+            logs: job.logs,
           };
         }
         break;

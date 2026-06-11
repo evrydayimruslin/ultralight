@@ -2137,6 +2137,9 @@ async function executeSDKTool(
             status: "failed",
             duration_ms: job.duration_ms,
             error: job.error,
+            // AI calls that completed before the failure were still billed.
+            ai_cost_light: job.ai_cost_light,
+            logs: job.logs,
           };
         }
         break;
@@ -2293,6 +2296,9 @@ async function executeAppFunction(
     routineContext?: RoutineTraceContext;
     callerGrantId?: string | null;
     incomingHop?: number;
+    // Event-bus deliveries are at-most-once and consume results inline — a
+    // promotion envelope is meaningless there (and would read as a timeout).
+    disableAsyncPromotion?: boolean;
   },
 ): Promise<Response> {
   try {
@@ -2751,7 +2757,7 @@ async function executeAppFunction(
       "../services/async-jobs.ts"
     );
 
-    if (isAiCapable && canAcceptAsyncJob()) {
+    if (isAiCapable && canAcceptAsyncJob() && !meta?.disableAsyncPromotion) {
       const promotionTimer = new Promise<"promote">((resolve) => {
         setTimeout(() => resolve("promote"), ASYNC_PROMOTION_MS);
       });
@@ -2831,7 +2837,10 @@ async function executeAppFunction(
               type: settlement.insufficientBalanceCode || "LIGHT_REQUIRED",
               message: settlement.insufficientBalanceMessage ||
                 "Credits balance required to call this app.",
-            }, result.durationMs);
+            }, result.durationMs, {
+              aiCostLight: result.aiCostLight,
+              logs: result.logs,
+            });
             return;
           }
           await completeJob(jobId, {
@@ -2994,40 +3003,99 @@ export async function executeEventDelivery(input: {
       callerGrantId: input.grantId,
       incomingHop: input.hop,
       sessionId: undefined,
+      disableAsyncPromotion: true,
     },
   );
 
   try {
     const body = await response.json() as JsonRpcResponse;
-    if (body.error) {
-      return {
-        success: false,
-        receiptId: null,
-        error: body.error.message || "Delivery failed",
-      };
-    }
-    const receiptId = extractReceiptIdFromResult(body.result);
-    return { success: true, receiptId };
+    return parseDeliveryOutcome(body);
   } catch {
     return { success: false, receiptId: null, error: "Unreadable delivery response" };
   }
 }
 
+// Interpret a delivery invocation's JSON-RPC body. Exported for tests.
+// Execution failures surface as tool RESULTS with isError: true (the JSON-RPC
+// layer succeeded; the function did not — formatToolError shape). Treating
+// them as success would mask every handler failure as a delivered event.
+export function parseDeliveryOutcome(
+  body: JsonRpcResponse,
+): { success: boolean; receiptId: string | null; error?: string } {
+  if (body.error) {
+    return {
+      success: false,
+      // Billing-relevant errors (e.g. -32009 insufficient balance AFTER a
+      // settled execution) carry the receipt in error.data — keep the link.
+      receiptId: extractReceiptIdFromResult(
+        (body.error as { data?: unknown }).data,
+      ),
+      error: body.error.message || "Delivery failed",
+    };
+  }
+  const receiptId = extractReceiptIdFromResult(body.result);
+  const toolResult = body.result as
+    | {
+      isError?: boolean;
+      structuredContent?: {
+        error?: unknown;
+        _async?: unknown;
+        job_id?: unknown;
+        status?: unknown;
+      };
+      content?: Array<{ type?: string; text?: string }>;
+    }
+    | undefined;
+  // An async-promotion envelope means the handler did NOT complete within the
+  // delivery window — recording it as delivered would mask a timeout. Defense
+  // in depth: deliveries pass disableAsyncPromotion so this shape should never
+  // occur; match the FULL platform envelope so a tenant result that merely
+  // echoes `_async: true` (e.g. proxying an inner promoted call) is less
+  // likely to collide. (PR3's queue-backed execution replaces this entirely.)
+  const sc = toolResult?.structuredContent;
+  if (
+    sc?._async === true && typeof sc.job_id === "string" &&
+    sc.status === "running"
+  ) {
+    return {
+      success: false,
+      receiptId,
+      error: "Delivery handler exceeded the synchronous execution window",
+    };
+  }
+  if (toolResult?.isError) {
+    const structuredError = toolResult.structuredContent?.error;
+    const error = typeof structuredError === "string" && structuredError
+      ? structuredError
+      : toolResult.content?.find((c) => c.type === "text" && c.text)?.text ||
+        "Delivery handler failed";
+    return { success: false, receiptId, error };
+  }
+  return { success: true, receiptId };
+}
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function extractReceiptIdFromResult(result: unknown): string | null {
-  // executeAppFunction stamps the receipt id into the tool result content;
-  // best-effort extraction for delivery tracking (null is acceptable). Must be a
-  // uuid — the deliveries.receipt_id column rejects anything else, and a failed
-  // PATCH would otherwise leave the delivery row stuck 'pending'.
-  if (result && typeof result === "object") {
-    const r = result as Record<string, unknown>;
-    const candidate = typeof r.receiptId === "string"
-      ? r.receiptId
-      : typeof r.receipt_id === "string"
-      ? r.receipt_id
-      : null;
-    if (candidate && UUID_RE.test(candidate)) return candidate;
+  // executeAppFunction stamps the receipt id into structuredContent (success:
+  // attachExecutionReceipt; failure: formatToolError) — read it from there,
+  // with the top level kept as a defensive fallback. Must be a uuid — the
+  // deliveries.receipt_id column rejects anything else, and a failed PATCH
+  // would otherwise leave the delivery row stuck 'pending'.
+  if (!result || typeof result !== "object") return null;
+  const r = result as Record<string, unknown>;
+  const structured = (r.structuredContent && typeof r.structuredContent === "object")
+    ? r.structuredContent as Record<string, unknown>
+    : null;
+  for (const candidate of [
+    structured?.receipt_id,
+    structured?.receiptId,
+    r.receipt_id,
+    r.receiptId,
+  ]) {
+    if (typeof candidate === "string" && UUID_RE.test(candidate)) {
+      return candidate;
+    }
   }
   return null;
 }
