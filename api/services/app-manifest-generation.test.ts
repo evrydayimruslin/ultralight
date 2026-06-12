@@ -117,6 +117,102 @@ Deno.test("manifest generation: external_functions survive full regeneration of 
   assertEquals(hydrated.manifest.external_functions, externalFunctions);
 });
 
+Deno.test("manifest generation: interfaces survive regeneration when descriptions are weak", async () => {
+  const interfaces = [
+    {
+      id: "dashboard",
+      label: "Dashboard",
+      entry: "interfaces/dashboard.html",
+      functions: ["run"],
+      hash: "a".repeat(64),
+    },
+  ];
+  // Placeholder-style descriptions force the regenerate branch, which must
+  // still carry forward interface declarations — they point at uploaded
+  // artifacts the source parser never sees.
+  const hydrated = await hydrateManifestForSource({
+    app: { name: "Caller", slug: "caller" },
+    existingManifest: {
+      name: "Caller",
+      version: "1.0.0",
+      type: "mcp",
+      entry: { functions: "index.ts" },
+      interfaces,
+      functions: {
+        run: { description: "Function run" },
+      },
+    },
+    sourceCode: "export async function run() { return { ok: true }; }",
+    filename: "index.ts",
+    version: "2.0.0",
+  });
+
+  assertEquals(hydrated.source, "generated");
+  assertEquals(hydrated.manifest.interfaces, interfaces);
+});
+
+Deno.test("manifest generation: interfaces survive full regeneration alongside external_functions", async () => {
+  const interfaces = [
+    {
+      id: "settings",
+      label: "Settings",
+      entry: "interfaces/settings.html",
+      functions: ["getConfig"],
+    },
+  ];
+  const externalFunctions = [
+    { app: "crm", functions: ["logLead"] },
+  ];
+  const hydrated = await hydrateManifestForSource({
+    app: { name: "Caller", slug: "caller" },
+    existingManifest: {
+      name: "Caller",
+      version: "1.0.0",
+      type: "mcp",
+      entry: { functions: "index.ts" },
+      interfaces,
+      external_functions: externalFunctions,
+      // No functions map -> hydration falls through to full regeneration.
+    },
+    sourceCode: "export async function run() { return { ok: true }; }",
+    filename: "index.ts",
+    version: "2.0.0",
+  });
+
+  assertEquals(hydrated.manifest.interfaces, interfaces);
+  assertEquals(hydrated.manifest.external_functions, externalFunctions);
+});
+
+Deno.test("manifest generation: interfaces survive the merged branch with rich descriptions", async () => {
+  const interfaces = [
+    {
+      id: "dashboard",
+      label: "Dashboard",
+      entry: "interfaces/dashboard.html",
+      functions: ["listTasks"],
+    },
+  ];
+  const hydrated = await hydrateManifestForSource({
+    app: { name: "Tasks", slug: "tasks" },
+    existingManifest: {
+      name: "Tasks",
+      version: "1.0.0",
+      type: "mcp",
+      entry: { functions: "index.ts" },
+      interfaces,
+      functions: {
+        listTasks: { description: "List all tasks" },
+      },
+    },
+    sourceCode: "export async function listTasks() { return []; }",
+    filename: "index.ts",
+    version: "2.0.0",
+  });
+
+  assertEquals(hydrated.source, "merged");
+  assertEquals(hydrated.manifest.interfaces, interfaces);
+});
+
 Deno.test("manifest generation: rebuilds stored manifest coverage from source when manifest.json is missing", async () => {
   const stored = await resolveStoredManifestCoverage({
     app: { name: "Search", slug: "search" },

@@ -19,6 +19,7 @@ export interface AppManifest {
     external_functions?: ManifestExternalDependency[];
     imports?: Record<string, ManifestSlotImport>;
     emits?: string[];
+    interfaces?: ManifestInterfaceDeclaration[];
     widgets?: WidgetDeclaration[];
     context_sources?: WidgetContextSourceDeclaration[];
     routines?: RoutineDeclaration[];
@@ -35,6 +36,15 @@ export interface ManifestSlotImport {
     description?: string;
     signature?: string;
     functions?: string[];
+}
+export interface ManifestInterfaceDeclaration {
+    id: string;
+    label: string;
+    description?: string;
+    entry: string;
+    functions: string[];
+    min_height?: number;
+    hash?: string;
 }
 export type ManifestHttpAuthMode = 'user' | 'public';
 export type ManifestHttpBillingMode = 'owner' | 'caller';

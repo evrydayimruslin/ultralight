@@ -40,6 +40,11 @@ export interface AppManifest {
   // A hint that prepopulates the subscription UI; emitting is unprivileged —
   // a subscriber only receives if the user wired a mode='subscribe' grant.
   emits?: string[];
+  // Static HTML UIs rendered in a sandboxed iframe on the Agent's public
+  // page. Each entry names a self-contained file in the uploaded bundle;
+  // the sandbox blocks all network access, so `functions` is the complete
+  // I/O surface — the host page only forwards bridge calls on that list.
+  interfaces?: ManifestInterfaceDeclaration[];
   widgets?: WidgetDeclaration[];
   context_sources?: WidgetContextSourceDeclaration[];
   routines?: RoutineDeclaration[];
@@ -68,6 +73,25 @@ export interface ManifestSlotImport {
   signature?: string;
   // Optional hint of the function name(s) the slot expects on the target.
   functions?: string[];
+}
+
+export interface ManifestInterfaceDeclaration {
+  // Unique within interfaces[]; doubles as the picker anchor on the Agent
+  // page, so it must be slug-safe.
+  id: string;
+  label: string;
+  description?: string;
+  // Path of a self-contained HTML file inside the uploaded bundle. The
+  // upload pipeline copies it to content-addressed storage; it is never
+  // served from the bundle location.
+  entry: string;
+  // Bridge allowlist: the only functions the host page will call on this
+  // interface's behalf. The sandbox has no other I/O path.
+  functions: string[];
+  min_height?: number;
+  // sha256 (hex) of the uploaded entry file. Stamped by the upload
+  // pipeline; developer-supplied values are overwritten, never trusted.
+  hash?: string;
 }
 
 export type ManifestHttpAuthMode = 'user' | 'public';
@@ -1008,6 +1032,124 @@ function validateManifestExternalFunctions(
         path: `${depPath}.access`,
         message:
           'external_functions access "write" is reserved until cross-Agent grants land; omit or use "read"',
+      });
+    }
+  });
+}
+
+const INTERFACE_ID_RE = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
+
+// Entry paths address files inside the developer's uploaded bundle; reject
+// anything that could escape it or smuggle a non-HTML artifact into the
+// interface serving path.
+function isSafeInterfaceEntryPath(entry: string): boolean {
+  if (!entry.endsWith('.html')) return false;
+  if (entry.startsWith('/') || entry.includes('\\')) return false;
+  return entry
+    .split('/')
+    .every((segment) => segment.length > 0 && segment !== '.' && segment !== '..');
+}
+
+function validateManifestInterfaces(
+  value: unknown,
+  functions: Record<string, unknown>,
+  errors: ManifestValidationError[],
+  warnings: string[],
+): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value)) {
+    errors.push({ path: 'interfaces', message: 'interfaces must be an array' });
+    return;
+  }
+
+  const seenIds = new Set<string>();
+  value.forEach((declaration, index) => {
+    const ifacePath = `interfaces.${index}`;
+    if (
+      !declaration || typeof declaration !== 'object' ||
+      Array.isArray(declaration)
+    ) {
+      errors.push({ path: ifacePath, message: 'interface must be an object' });
+      return;
+    }
+
+    const iface = declaration as Record<string, unknown>;
+    if (typeof iface.id !== 'string' || !INTERFACE_ID_RE.test(iface.id)) {
+      errors.push({
+        path: `${ifacePath}.id`,
+        message:
+          'id is required and must start with a letter and contain only letters, numbers, hyphens, or underscores (max 64 chars)',
+      });
+    } else if (seenIds.has(iface.id)) {
+      errors.push({
+        path: `${ifacePath}.id`,
+        message: `duplicate interface id "${iface.id}"`,
+      });
+    } else {
+      seenIds.add(iface.id);
+    }
+
+    if (typeof iface.label !== 'string' || !iface.label.trim()) {
+      errors.push({
+        path: `${ifacePath}.label`,
+        message: 'label is required and must be a non-empty string',
+      });
+    }
+    if (iface.description !== undefined && typeof iface.description !== 'string') {
+      errors.push({
+        path: `${ifacePath}.description`,
+        message: 'description must be a string',
+      });
+    }
+
+    if (
+      typeof iface.entry !== 'string' || !iface.entry.trim() ||
+      !isSafeInterfaceEntryPath(iface.entry)
+    ) {
+      errors.push({
+        path: `${ifacePath}.entry`,
+        message:
+          'entry is required and must be a relative bundle path ending in .html (no leading "/", no ".." segments)',
+      });
+    }
+
+    if (
+      !Array.isArray(iface.functions) ||
+      iface.functions.length === 0 ||
+      iface.functions.some((fn) => typeof fn !== 'string' || !fn.trim())
+    ) {
+      errors.push({
+        path: `${ifacePath}.functions`,
+        message: 'functions must be a non-empty array of strings',
+      });
+    } else if (Object.keys(functions).length > 0) {
+      const interfaceId = typeof iface.id === 'string' ? iface.id : `${index}`;
+      for (const fn of iface.functions) {
+        if (!functions[fn]) {
+          warnings.push(
+            `Interface "${interfaceId}" allowlists missing function "${fn}".`,
+          );
+        }
+      }
+    }
+
+    if (
+      iface.min_height !== undefined &&
+      (typeof iface.min_height !== 'number' ||
+        !Number.isFinite(iface.min_height) || iface.min_height <= 0)
+    ) {
+      errors.push({
+        path: `${ifacePath}.min_height`,
+        message: 'min_height must be a positive number of pixels',
+      });
+    }
+
+    // hash is server-stamped at upload; tolerate (and ignore) any supplied
+    // string so re-validating a stored manifest stays clean.
+    if (iface.hash !== undefined && typeof iface.hash !== 'string') {
+      errors.push({
+        path: `${ifacePath}.hash`,
+        message: 'hash must be a string (set by the platform at upload)',
       });
     }
   });
@@ -2587,6 +2729,12 @@ export function validateManifest(input: unknown): ManifestValidationResult {
     manifest.widgets,
     functionsForWidgetValidation,
     contextSourceIds,
+    errors,
+    warnings,
+  );
+  validateManifestInterfaces(
+    manifest.interfaces,
+    functionsForWidgetValidation,
     errors,
     warnings,
   );

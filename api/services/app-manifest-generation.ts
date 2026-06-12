@@ -155,15 +155,24 @@ export function generateManifestFromParseResult(
   };
 }
 
-// Regenerated manifests must not silently drop the publisher's declared
-// cross-Agent dependencies — external_functions is an authorization-bearing
-// declaration, not derivable from source parsing.
-function carryForwardExternalFunctions(
+// Regenerated manifests must not silently drop publisher declarations that
+// are not derivable from source parsing: external_functions is an
+// authorization-bearing declaration, and interfaces point at uploaded
+// artifacts the parser never sees.
+const CARRIED_MANIFEST_FIELDS = ['external_functions', 'interfaces'] as const;
+
+function carryForwardDeclaredFields(
   existing: AppManifest | null,
   generated: AppManifest,
 ): AppManifest {
-  if (!existing || existing.external_functions === undefined) return generated;
-  return { ...generated, external_functions: existing.external_functions };
+  if (!existing) return generated;
+  let result = generated;
+  for (const field of CARRIED_MANIFEST_FIELDS) {
+    if (existing[field] !== undefined) {
+      result = { ...result, [field]: existing[field] };
+    }
+  }
+  return result;
 }
 
 export function mergeManifestWithParseResult(
@@ -178,7 +187,7 @@ export function mergeManifestWithParseResult(
   if (existingManifest?.type === 'mcp' && hasManifestFunctionContracts(existingManifest)) {
     if (!hasRichManifestDescriptions(existingManifest)) {
       return {
-        manifest: carryForwardExternalFunctions(existingManifest, autoManifest),
+        manifest: carryForwardDeclaredFields(existingManifest, autoManifest),
         parseResult,
         source: 'generated',
       };
@@ -215,7 +224,7 @@ export function mergeManifestWithParseResult(
   }
 
   return {
-    manifest: carryForwardExternalFunctions(existingManifest, autoManifest),
+    manifest: carryForwardDeclaredFields(existingManifest, autoManifest),
     parseResult,
     source: 'generated',
   };
@@ -242,7 +251,7 @@ export async function hydrateManifestForSource(input: {
   }
 
   return {
-    manifest: carryForwardExternalFunctions(
+    manifest: carryForwardDeclaredFields(
       existingManifest,
       generateManifestFromParseResult(
         input.app,
