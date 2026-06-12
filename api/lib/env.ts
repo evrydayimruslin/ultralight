@@ -80,6 +80,9 @@ interface WorkerCode {
   modules: Record<string, string>;
   env: Record<string, unknown>;
   globalOutbound?: unknown;
+  // Per-isolate resource ceilings (workerd resource limits) — without them a
+  // loaded tenant isolate inherits the parent's full CPU/subrequest budget.
+  limits?: { cpuMs?: number; subRequests?: number };
 }
 
 interface WorkerEntrypoint {

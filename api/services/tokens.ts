@@ -390,6 +390,7 @@ export async function revokeToken(userId: string, tokenId: string): Promise<void
   if (error) {
     throw new Error(`Failed to revoke token: ${error.message}`);
   }
+  invalidateTokenVerdictsForUser(userId);
 }
 
 /**
@@ -404,6 +405,7 @@ export async function revokeAllTokens(userId: string): Promise<number> {
   if (error) {
     throw new Error(`Failed to revoke tokens: ${error.message}`);
   }
+  invalidateTokenVerdictsForUser(userId);
 
   return data?.length || 0;
 }
@@ -447,6 +449,10 @@ export async function revokeByToken(token: string): Promise<boolean> {
     return false;
   }
 
+  // We hold the raw token here, so evict the exact verdict — the public
+  // RFC 7009 endpoint is the revocation most likely invoked under credential
+  // compromise.
+  dropTokenVerdict(await tokenVerdictKey(token));
   return true;
 }
 
@@ -491,6 +497,7 @@ export async function revokeExcessTokens(
     }
   }
 
+  if (revokedNames.length > 0) invalidateTokenVerdictsForUser(userId);
   return {
     revoked_count: revokedNames.length,
     kept_count: maxTokens,
@@ -571,6 +578,97 @@ export async function validateToken(
   };
 }
 
+// ── API-token verdict cache ────────────────────────────────────────────────
+// Successful token verifications cost 2 Supabase reads (token row + user
+// row) on EVERY api-token request. Cache the verdict in-isolate for 60s,
+// keyed by a digest of the raw token (never the token itself). Failures are
+// NEVER cached. Staleness consequences within the TTL: a revoked token keeps
+// working ≤60s in isolates the revoke endpoint didn't run in (the revoking
+// isolate is invalidated immediately), last_used_at/_ip bump only on cache
+// misses, and a provisional 24h expiry lands ≤60s late.
+
+interface TokenVerdict {
+  id: string;
+  email: string;
+  tier: string;
+  provisional?: boolean;
+  tokenId: string;
+  tokenAppIds?: string[] | null;
+  tokenFunctionNames?: string[] | null;
+  scopes?: string[];
+}
+
+const TOKEN_VERDICT_TTL_MS = 60_000;
+const TOKEN_VERDICT_MAX_ENTRIES = 2_000;
+const tokenVerdictCache = new Map<
+  string,
+  { verdict: TokenVerdict; cachedAt: number }
+>();
+const tokenVerdictKeysByUser = new Map<string, Set<string>>();
+
+async function tokenVerdictKey(token: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(token),
+  );
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function cacheTokenVerdict(key: string, verdict: TokenVerdict): void {
+  if (tokenVerdictCache.size >= TOKEN_VERDICT_MAX_ENTRIES) {
+    // Maps iterate in insertion order; hits re-insert (below), so the first
+    // key is the least recently USED entry.
+    const oldest = tokenVerdictCache.keys().next().value;
+    if (oldest !== undefined) dropTokenVerdict(oldest);
+  }
+  // Copy the authorization-bearing arrays: the shallow spread on return
+  // shares them by reference, and a downstream in-place mutation must never
+  // poison authorization decisions for later requests.
+  tokenVerdictCache.set(key, {
+    verdict: {
+      ...verdict,
+      scopes: verdict.scopes ? [...verdict.scopes] : verdict.scopes,
+      tokenAppIds: verdict.tokenAppIds
+        ? [...verdict.tokenAppIds]
+        : verdict.tokenAppIds,
+      tokenFunctionNames: verdict.tokenFunctionNames
+        ? [...verdict.tokenFunctionNames]
+        : verdict.tokenFunctionNames,
+    },
+    cachedAt: Date.now(),
+  });
+  let keys = tokenVerdictKeysByUser.get(verdict.id);
+  if (!keys) {
+    keys = new Set();
+    tokenVerdictKeysByUser.set(verdict.id, keys);
+  }
+  keys.add(key);
+}
+
+function dropTokenVerdict(key: string): void {
+  const entry = tokenVerdictCache.get(key);
+  tokenVerdictCache.delete(key);
+  if (entry) {
+    const keys = tokenVerdictKeysByUser.get(entry.verdict.id);
+    if (keys) {
+      keys.delete(key);
+      if (keys.size === 0) tokenVerdictKeysByUser.delete(entry.verdict.id);
+    }
+  }
+}
+
+// Revocation hook (in-isolate; other isolates converge within the TTL). The
+// revoke endpoints know the user, not the raw token, so eviction is by user.
+// Exported for revocation paths that delete token rows outside this module.
+export function invalidateTokenVerdictsForUser(userId: string): void {
+  const keys = tokenVerdictKeysByUser.get(userId);
+  if (!keys) return;
+  for (const key of [...keys]) tokenVerdictCache.delete(key);
+  tokenVerdictKeysByUser.delete(userId);
+}
+
 /**
  * Get user info from a validated token
  * Used by auth middleware to get full user context
@@ -585,6 +683,25 @@ export async function getUserFromToken(token: string, clientIp?: string): Promis
   tokenFunctionNames?: string[] | null;
   scopes?: string[];
 } | null> {
+  const cacheKey = await tokenVerdictKey(token);
+  const cached = tokenVerdictCache.get(cacheKey);
+  if (cached && Date.now() - cached.cachedAt < TOKEN_VERDICT_TTL_MS) {
+    // Re-insert so Map insertion order tracks USE order (true LRU eviction).
+    tokenVerdictCache.delete(cacheKey);
+    tokenVerdictCache.set(cacheKey, cached);
+    return {
+      ...cached.verdict,
+      scopes: cached.verdict.scopes ? [...cached.verdict.scopes] : undefined,
+      tokenAppIds: cached.verdict.tokenAppIds
+        ? [...cached.verdict.tokenAppIds]
+        : cached.verdict.tokenAppIds,
+      tokenFunctionNames: cached.verdict.tokenFunctionNames
+        ? [...cached.verdict.tokenFunctionNames]
+        : cached.verdict.tokenFunctionNames,
+    };
+  }
+  if (cached) dropTokenVerdict(cacheKey);
+
   console.log(`[TOKEN] getUserFromToken called — token length: ${token.length}, prefix: ${token.substring(0, 8)}`);
 
   const validated = await validateToken(token, clientIp);
@@ -616,7 +733,7 @@ export async function getUserFromToken(token: string, clientIp?: string): Promis
   }
 
   console.log(`[TOKEN] getUserFromToken SUCCESS — user: ${user.id}, tier: ${user.tier}`);
-  return {
+  const verdict: TokenVerdict = {
     id: user.id,
     email: user.email,
     tier: user.tier || 'free',
@@ -626,6 +743,8 @@ export async function getUserFromToken(token: string, clientIp?: string): Promis
     tokenFunctionNames: validated.function_names,
     scopes: validated.scopes,
   };
+  cacheTokenVerdict(cacheKey, verdict);
+  return { ...verdict };
 }
 
 /**

@@ -59,6 +59,7 @@ import {
   getBillingConfig,
   normalizeBillingConfigRow,
   toPublicBillingConfig,
+  invalidateBillingConfigCache,
 } from "../services/billing-config.ts";
 import {
   getPublisherFeeWaiverCredit,
@@ -1080,6 +1081,9 @@ async function updateBillingConfig(request: Request): Promise<Response> {
     const config = normalizeBillingConfigRow(
       rows[0] as Parameters<typeof normalizeBillingConfigRow>[0],
     );
+    // This isolate sees the new rates immediately; others converge within
+    // the 60s read-cache TTL.
+    invalidateBillingConfigCache();
     return json({
       success: true,
       config,

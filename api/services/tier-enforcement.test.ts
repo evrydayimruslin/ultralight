@@ -4,6 +4,7 @@ import {
   checkPublisherPublishReadiness,
   checkVisibilityAllowed,
 } from "./tier-enforcement.ts";
+import { invalidateBillingConfigCache } from "./billing-config.ts";
 
 const TEST_ENV = {
   SUPABASE_URL: "https://supabase.test",
@@ -36,12 +37,16 @@ async function withMockedEnvAndFetch(
     ...TEST_ENV,
   };
   globalThis.fetch = handler as typeof fetch;
+  // Each test mocks its own billing config — the 60s in-isolate cache must
+  // not carry a previous test's config across.
+  invalidateBillingConfigCache();
 
   try {
     await fn();
   } finally {
     globalThis.fetch = previousFetch;
     globalWithEnv.__env = previousEnv;
+    invalidateBillingConfigCache();
   }
 }
 

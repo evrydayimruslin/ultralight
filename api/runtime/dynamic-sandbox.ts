@@ -521,6 +521,15 @@ export default {
       },
       env: bindings,
       globalOutbound: null,
+      // Tenant isolation: without explicit limits the loaded isolate inherits
+      // the parent's FULL budget (30s CPU / 1000 subrequests). These are
+      // deliberately generous — app CPU is pure JS compute (awaited IO costs
+      // no CPU) and SDK calls route one subrequest each through the parent —
+      // the point is a ceiling, not metering. Exceeding a limit kills the
+      // isolate and surfaces as an execution failure. Sized conservatively
+      // high until the staging smoke verifies what counts (net:fetch apps
+      // make direct outbound fetches; batch/async jobs make many SDK calls).
+      limits: { cpuMs: 10_000, subRequests: 512 },
     };
     // Network-capable apps need outbound fetch() for external APIs and internal TCP endpoints.
     if (hasOutboundNetwork) loadConfig.globalOutbound = undefined;

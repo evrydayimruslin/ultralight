@@ -138,6 +138,12 @@ globalThis.ultralight = {
       modules,
       env: bindings,
       globalOutbound: null,  // Block ALL network access
+      // Tenant isolation: codemode recipes are pure compute over binding RPC
+      // (network blocked above) — a bounded ceiling instead of inheriting the
+      // parent's full budget. Whether ctx.exports RPC counts against
+      // subRequests is unverified (staging smoke); sized so a legitimate
+      // multi-record recipe cannot trip it either way.
+      limits: { cpuMs: 10_000, subRequests: 128 },
     });
 
     // Execute with timeout

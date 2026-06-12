@@ -355,11 +355,36 @@ export function toPublicBillingConfig(config: BillingConfig) {
   };
 }
 
+// In-isolate cache for the billing-config singleton — it is read on every
+// execution settlement and several validation paths, but written only by the
+// rare admin PATCH. The admin handler invalidates its own isolate immediately;
+// other isolates converge within the TTL (acceptable staleness for rates).
+// Fetch errors and missing env are never cached; a SUCCESSFUL read of an
+// empty table IS cached (it resolves to the defaults — identical to what a
+// fresh read would serve, and the admin first-insert invalidates).
+const BILLING_CONFIG_TTL_MS = 60_000;
+let cachedBillingConfig: { value: BillingConfig; cachedAt: number } | null =
+  null;
+
+export function invalidateBillingConfigCache(): void {
+  cachedBillingConfig = null;
+}
+
 export async function getBillingConfig(): Promise<BillingConfig> {
+  if (
+    cachedBillingConfig &&
+    Date.now() - cachedBillingConfig.cachedAt < BILLING_CONFIG_TTL_MS
+  ) {
+    // Shallow copy: callers must not be able to poison the shared cache.
+    return { ...cachedBillingConfig.value };
+  }
+
   const SUPABASE_URL = getEnv("SUPABASE_URL");
   const SUPABASE_SERVICE_ROLE_KEY = getEnv("SUPABASE_SERVICE_ROLE_KEY");
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    return DEFAULT_BILLING_CONFIG;
+    // Copies on every path: the shared DEFAULT constant must never leak by
+    // reference to a caller that might mutate it.
+    return { ...DEFAULT_BILLING_CONFIG };
   }
 
   try {
@@ -372,10 +397,12 @@ export async function getBillingConfig(): Promise<BillingConfig> {
         },
       },
     );
-    if (!res.ok) return DEFAULT_BILLING_CONFIG;
+    if (!res.ok) return { ...DEFAULT_BILLING_CONFIG };
     const rows = await res.json() as BillingConfigRow[];
-    return normalizeBillingConfigRow(rows[0]);
+    const config = { ...normalizeBillingConfigRow(rows[0]) };
+    cachedBillingConfig = { value: config, cachedAt: Date.now() };
+    return { ...config };
   } catch {
-    return DEFAULT_BILLING_CONFIG;
+    return { ...DEFAULT_BILLING_CONFIG };
   }
 }

@@ -4,6 +4,7 @@
 // or /developer path on main domain.
 
 import { json, error } from './response.ts';
+import { invalidateTokenVerdictsForUser } from '../services/tokens.ts';
 import { authenticate } from './auth.ts';
 import { generateClientSecret, generateSecretSalt, hashClientSecret } from './oauth.ts';
 import { createClient } from '@supabase/supabase-js';
@@ -227,11 +228,28 @@ async function handleDeleteApp(request: Request, clientId: string): Promise<Resp
 
     if (deleteErr) return error('Failed to delete app', 500);
 
-    // Also revoke all tokens created via this client
+    // Also revoke all tokens created via this client. Read the affected
+    // users first so their cached token verdicts are evicted too — a raw
+    // delete alone would leave revoked tokens honored for up to the cache
+    // TTL in this isolate.
+    const tokenNamePattern = `oauth-${clientId.slice(0, 8)}%`;
+    const { data: affectedTokenRows } = await getSupabase()
+      .from('user_api_tokens')
+      .select('user_id')
+      .like('name', tokenNamePattern);
     await getSupabase()
       .from('user_api_tokens')
       .delete()
-      .like('name', `oauth-${clientId.slice(0, 8)}%`);
+      .like('name', tokenNamePattern);
+    for (
+      const affectedUserId of new Set(
+        (affectedTokenRows ?? [])
+          .map((row: { user_id?: string }) => row.user_id)
+          .filter((id: string | undefined): id is string => !!id),
+      )
+    ) {
+      invalidateTokenVerdictsForUser(affectedUserId);
+    }
 
     // Clean up consent records
     await getSupabase()

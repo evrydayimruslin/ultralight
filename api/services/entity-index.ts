@@ -32,12 +32,65 @@ const ENTITY_COLUMNS = new Set([
 
 // ── Build Index ──
 
+// A rebuild costs a Supabase app scan plus per-table D1 schema/row reads, and
+// the only consumer (context-resolver) is best-effort with a heuristic
+// fallback — so rebuilding after EVERY successful call was almost pure waste.
+// Debounce per user: in-isolate timestamp first (free), then a KV timestamp
+// (authoritative across isolates). The timestamp is written only after a
+// successful rebuild, so a missing/failed index never gets debounced away.
+const REBUILD_DEBOUNCE_MS = 5 * 60_000;
+const REBUILD_MAP_MAX_ENTRIES = 10_000;
+const lastRebuildByUser = new Map<string, number>();
+
+/**
+ * Rebuild the entity index for a user unless one completed within the
+ * debounce window. Returns null when skipped.
+ */
+export async function rebuildEntityIndex(
+  userId: string,
+): Promise<EntityIndex | null> {
+  const now = Date.now();
+  const inMemory = lastRebuildByUser.get(userId);
+  if (inMemory && now - inMemory < REBUILD_DEBOUNCE_MS) return null;
+
+  const kv = (globalThis as any).__env?.FN_INDEX;
+  if (kv) {
+    try {
+      const stamped = await kv.get(`entities-rebuilt:${userId}`);
+      const stampedMs = stamped ? Number(stamped) : 0;
+      if (stampedMs && now - stampedMs < REBUILD_DEBOUNCE_MS) {
+        lastRebuildByUser.set(userId, stampedMs);
+        return null;
+      }
+    } catch {
+      // KV read failed — proceed with the rebuild.
+    }
+  }
+
+  const index = await rebuildEntityIndexNow(userId);
+  if (lastRebuildByUser.size >= REBUILD_MAP_MAX_ENTRIES) {
+    lastRebuildByUser.clear(); // bounded memory; KV remains authoritative
+  }
+  lastRebuildByUser.set(userId, now);
+  if (kv) {
+    try {
+      await kv.put(`entities-rebuilt:${userId}`, String(now), {
+        // Self-cleaning; just needs to outlive the debounce window.
+        expirationTtl: 60 * 60,
+      });
+    } catch {
+      // Best-effort — the in-isolate map still debounces this isolate.
+    }
+  }
+  return index;
+}
+
 /**
  * Rebuild the entity index for a user.
  * Scans all D1-backed apps for tables with entity-like columns,
  * extracts recent rows, and builds a searchable index stored in KV.
  */
-export async function rebuildEntityIndex(userId: string): Promise<EntityIndex> {
+async function rebuildEntityIndexNow(userId: string): Promise<EntityIndex> {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getSupabaseEnv();
   const headers = {
     'apikey': SUPABASE_SERVICE_ROLE_KEY,

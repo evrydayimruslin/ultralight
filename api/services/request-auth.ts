@@ -11,7 +11,6 @@ import {
   isSandboxActorToken,
   verifySandboxActorToken,
 } from "./sandbox-actor.ts";
-import { getUserTier } from "./tier-enforcement.ts";
 import { getUserFromToken, isApiToken } from "./tokens.ts";
 
 export type RequestTokenSourcePolicy = "bearer_only" | "bearer_or_cookie";
@@ -227,10 +226,7 @@ export async function authenticateRequest(
     throw new Error("Invalid token payload");
   }
 
-  const [, resolvedTier] = await Promise.all([
-    ensureUserExists(user).catch(() => {}),
-    getUserTier(user.id).catch(() => "free" as string),
-  ]);
+  const resolvedTier = await resolveTierProvisioningIfMissing(user);
 
   return {
     id: user.id,
@@ -239,6 +235,57 @@ export async function authenticateRequest(
     authSource: "supabase",
     user_metadata: user.user_metadata,
   };
+}
+
+/**
+ * One read for the steady state: fetch the user's tier; only when the row is
+ * MISSING (first-ever request) run the full first-contact provisioning
+ * (ensureUserExists: insert + pending-permission resolution + default apps).
+ * This replaced a 3-RT-per-request chain (existence check + per-request
+ * pending-permissions sweep + separate tier read) — pending invites are only
+ * ever created for not-yet-registered emails, and the session-exchange
+ * endpoints still run ensureUserExists at session establishment as a
+ * backstop.
+ */
+async function resolveTierProvisioningIfMissing(
+  user: {
+    id: string;
+    email: string;
+    user_metadata?: { name?: string; avatar_url?: string; full_name?: string };
+  },
+): Promise<string> {
+  try {
+    const res = await fetch(
+      `${getEnv("SUPABASE_URL")}/rest/v1/users?id=eq.${user.id}&select=id,tier`,
+      {
+        headers: {
+          "apikey": getEnv("SUPABASE_SERVICE_ROLE_KEY"),
+          "Authorization": `Bearer ${getEnv("SUPABASE_SERVICE_ROLE_KEY")}`,
+        },
+      },
+    );
+    if (res.ok) {
+      const rows = await res.json() as Array<
+        { id: string; tier?: string | null }
+      >;
+      if (Array.isArray(rows) && rows[0]) {
+        return rows[0].tier || "free";
+      }
+    }
+    // !res.ok falls through: a degraded read must not skip first-contact
+    // provisioning (ensureUserExists is idempotent for existing users).
+  } catch {
+    return "free";
+  }
+
+  // Row absent (first contact) or read degraded: provision the account
+  // (insert if missing, pending permission resolution, default apps), then
+  // default tier — matching the pre-merge behavior where provisioning ran
+  // unconditionally.
+  await ensureUserExists(user).catch((err) => {
+    console.warn("[AUTH] First-contact provisioning failed:", err);
+  });
+  return "free";
 }
 
 export async function ensureUserExists(

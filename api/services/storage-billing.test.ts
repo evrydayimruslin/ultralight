@@ -1,4 +1,5 @@
 import { assert } from "https://deno.land/std@0.210.0/assert/assert.ts";
+import { invalidateBillingConfigCache } from "./billing-config.ts";
 import { assertAlmostEquals } from "https://deno.land/std@0.210.0/assert/assert_almost_equals.ts";
 import { assertEquals } from "https://deno.land/std@0.210.0/assert/assert_equals.ts";
 import {
@@ -31,6 +32,9 @@ async function withMockedEnvAndFetch(
   ) => Promise<Response>,
   fn: () => Promise<void>,
 ): Promise<void> {
+  // Billing config is cached in-isolate (60s); each test mocks its own
+  // config, so the cache must not carry state across tests/files.
+  invalidateBillingConfigCache();
   const globalWithEnv = globalThis as typeof globalThis & {
     __env?: Record<string, unknown>;
   };

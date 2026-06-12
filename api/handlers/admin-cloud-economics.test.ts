@@ -1,4 +1,5 @@
 import { assertEquals } from "https://deno.land/std@0.210.0/assert/assert_equals.ts";
+import { invalidateBillingConfigCache } from "../services/billing-config.ts";
 
 import { handleAdmin } from "./admin.ts";
 
@@ -28,6 +29,9 @@ const TEST_ENV = {
 };
 
 async function withAdminMocks<T>(fn: () => Promise<T>): Promise<T> {
+  // Billing config is cached in-isolate (60s); each test mocks its own
+  // config, so the cache must not carry state across tests/files.
+  invalidateBillingConfigCache();
   const previousFetch = globalThis.fetch;
   const previousEnv = globalThis.__env;
   globalThis.__env = {

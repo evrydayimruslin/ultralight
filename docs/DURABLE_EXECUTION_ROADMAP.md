@@ -186,6 +186,45 @@ From the cost audit (~10-13 serial Supabase RTs per call today):
 
 Acceptance: chokepoint RT count measured before/after (dev counter); all gates green.
 
+**Landed decisions (2026-06-11):**
+- Billing config: 60s in-isolate cache returning copies; admin PATCH
+  invalidates its own isolate, others converge within the TTL. Tests that mock
+  billing config must invalidate around themselves (tier-enforcement harness
+  does).
+- Auth chain: the supabase-bearer steady state collapsed 3 RTs → 1 (merged
+  id+tier read; ensureUserExists + the per-request pending-permissions sweep
+  demoted to the first-contact miss path — pending invites are only created
+  for not-yet-registered emails, and session-exchange endpoints keep
+  ensureUserExists as a backstop). API-token verdicts cached 60s in-isolate
+  (successes only), keyed by token digest, evicted by user on revoke;
+  last_used_at granularity becomes per-cache-miss.
+- Entity index: rebuild debounced ≥5 min/user (in-isolate map + KV stamp,
+  written only after success). The sole consumer is best-effort with a
+  heuristic fallback.
+- Tenant isolation: loader.load() now passes limits — apps
+  { cpuMs: 10s, subRequests: 256 }, codemode { cpuMs: 10s, subRequests: 32 }
+  (ceilings, not metering; previously tenants inherited the parent's full
+  budget). Runtime support needs the PR6 staging smoke alongside
+  ctx.exports-in-queue().
+- DEFERRED: batching per-op R2/KV debits. cloud_usage_events.idempotency_key
+  is UNIQUE and the key has no per-call discriminator, so repeated
+  same-operation debits per receipt are ALREADY collapsed server-side — an
+  accumulator would change charges, a billing-semantics decision (follow-up
+  chip spawned), not a perf tweak. D1 is already settlement-batched.
+- The "dev counter" acceptance is implemented as tests that pin RT counts
+  (services/perf-caches.test.ts) rather than a runtime counter.
+- Review-driven amendments: ALL token-revocation paths evict the verdict
+  cache (revokeToken/revokeAllTokens/revokeByToken — the public RFC 7009
+  endpoint — /revokeExcessTokens/developer-app deletion); the cache is true
+  LRU and deep-copies authorization-bearing arrays; billing-config fallback
+  paths return copies (never the shared DEFAULT by reference) and a
+  successful empty-table read IS cached (documented); a degraded users read
+  still attempts first-contact provisioning; limits resized apps
+  subRequests 512 / codemode 128 pending the staging smoke (whether binding
+  RPC counts is unverified); every billing-config-mocking test harness
+  invalidates the cache. Accepted: a cpuMs kill loses tenant logs (same as
+  any hard abort; PR1 spend accounting covers it).
+
 ## PR 6 — Launch ops  (size: process + smoke)
 
 The readiness-register gate, unchanged in substance: git remote → `main` → CI deploy
