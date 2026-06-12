@@ -1532,6 +1532,12 @@ button {
   align-items: start;
 }
 
+/* Search results take the full width — the sidebar is hidden while a query
+   is active. */
+.store-layout.searching {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .store-results,
 .store-sidebar {
   min-width: 0;

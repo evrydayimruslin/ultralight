@@ -260,21 +260,6 @@ const orbitAgents = [
   { alt: "Claude", className: "agent-four", src: agentClaudeUrl },
 ] as const;
 
-const primitives = [
-  [
-    "discover",
-    "Discover Agents",
-    "Find public Agents your connected agent can call.",
-    "/browse",
-  ],
-  [
-    "wallet",
-    "Credits wallet",
-    "Spendable credits for installs, calls, hosting.",
-    "/account?tab=balance",
-  ],
-] as const;
-
 const installTargets: InstallTarget[] = [
   {
     config: (key) => buildConnectPrompt(key),
@@ -410,7 +395,6 @@ const adminTabs = [
 
 type AdminTabId = typeof adminTabs[number][0];
 type LibraryView = "installed" | "owned";
-type StoreKindFilter = "all" | AgentFixture["kind"];
 type AgentPageTabId = "details" | "functions";
 
 const visibilityOptions = [
@@ -654,22 +638,6 @@ function liveApiKeyFixtures(keys?: LaunchApiKeySummary[]): ApiKeyFixture[] {
     name: key.name,
     prefix: key.tokenPrefix,
     scopes: key.scopes.join(" · ") || "all",
-  }));
-}
-
-function liveLeaderboardRows(
-  entries?: LaunchLeaderboardEntry[],
-): LeaderboardRow[] {
-  if (!entries || entries.length === 0) return [];
-  return entries.map((entry) => ({
-    color: stableColor(entry.userId),
-    eventCount: entry.eventCount || 0,
-    featured: entry.featuredTool?.name,
-    name: entry.profileSlug
-      ? `@${entry.profileSlug}`
-      : entry.displayName || `@${entry.userId.slice(0, 6)}`,
-    rank: entry.rank,
-    value: creditsValue(entry.value),
   }));
 }
 
@@ -1015,31 +983,25 @@ export function StoreFoundationPage(
   { live, location, navigate }: LaunchPageProps,
 ): ReactElement {
   const [query, setQuery] = useState(storeQueryFromSearch());
-  const [kind, setKind] = useState<StoreKindFilter>(storeKindFromSearch());
   useEffect(() => {
     setQuery(storeQueryFromSearch());
-    setKind(storeKindFromSearch());
   }, [location.search]);
 
   const updateQuery = (nextQuery: string) => {
     setQuery(nextQuery);
     syncSearchParams({ q: nextQuery.trim() || null });
   };
-  const updateKind = (nextKind: StoreKindFilter) => {
-    setKind(nextKind);
-    syncSearchParams({ kind: nextKind === "all" ? null : nextKind });
-  };
   const storeTools = liveStoreAgents(live.data.store?.results);
-  const builderRows = liveLeaderboardRows(
+  const developerRows = topDeveloperRows(
     live.data.builderLeaderboard?.entries,
+    live.data.feeLeaderboard?.entries,
   );
-  const feeRows = liveLeaderboardRows(live.data.feeLeaderboard?.entries);
+  const searching = query.trim().length > 0;
   const filteredTools = storeTools.filter((tool) =>
-    (kind === "all" || tool.kind === kind) &&
-    (!query ||
-      `${tool.name} ${tool.summary} ${tool.category}`.toLowerCase().includes(
-        query.toLowerCase(),
-      ))
+    !query ||
+    `${tool.name} ${tool.summary} ${tool.category}`.toLowerCase().includes(
+      query.toLowerCase(),
+    )
   );
 
   return (
@@ -1048,21 +1010,9 @@ export function StoreFoundationPage(
       <section className="store-heading">
         <h1>Agents your connected agent can call.</h1>
         <SearchControls query={query} setQuery={updateQuery} />
-        <div className="kind-tabs" aria-label="Agent kinds">
-          {(["all", "mcp", "http"] as const).map((option) => (
-            <button
-              className={kind === option ? "active" : ""}
-              key={option}
-              onClick={() => updateKind(option)}
-              type="button"
-            >
-              {option === "all" ? "All" : option.toUpperCase()}
-            </button>
-          ))}
-        </div>
       </section>
 
-      <div className="store-layout">
+      <div className={searching ? "store-layout searching" : "store-layout"}>
         <section className="store-results">
           <RetrievalNote
             mode={live.data.store?.retrieval?.mode}
@@ -1085,22 +1035,68 @@ export function StoreFoundationPage(
               : <NoResults onClear={() => updateQuery("")} query={query} />}
           </div>
         </section>
-        <aside className="store-sidebar">
-          <PrimitivesRail navigate={navigate} />
-          <Leaderboard
-            title="Top builders"
-            subtitle="By earned credits"
-            rows={builderRows}
-          />
-          <Leaderboard
-            title="Fee credit"
-            subtitle="Fee-waiver program"
-            rows={feeRows}
-          />
-        </aside>
+        {searching ? null : (
+          <aside className="store-sidebar">
+            <Leaderboard
+              title="Top Developers"
+              subtitle="Earned + fee credits"
+              rows={developerRows}
+            />
+          </aside>
+        )}
       </div>
     </div>
   );
+}
+
+// Consolidates the builder (earned credits) and fee-credit (fees waived)
+// leaderboards into one ranking. Both are credit-denominated developer
+// benefit, so a developer's value is earned + waived, with the waived share
+// called out on the row when present.
+function topDeveloperRows(
+  builders?: LaunchLeaderboardEntry[],
+  feeCredits?: LaunchLeaderboardEntry[],
+): LeaderboardRow[] {
+  const entryName = (entry: LaunchLeaderboardEntry): string =>
+    entry.profileSlug
+      ? `@${entry.profileSlug}`
+      : entry.displayName || `@${entry.userId.slice(0, 6)}`;
+
+  const waivedByUser = new Map<string, LaunchLeaderboardEntry>();
+  for (const entry of feeCredits ?? []) {
+    waivedByUser.set(entry.userId, entry);
+  }
+
+  const rows: LeaderboardRow[] = (builders ?? []).map((entry) => {
+    const waivedEntry = waivedByUser.get(entry.userId);
+    waivedByUser.delete(entry.userId);
+    const waived = waivedEntry ? creditsValue(waivedEntry.value) : 0;
+    return {
+      color: stableColor(entry.userId),
+      eventCount: entry.eventCount || 0,
+      featured: waived > 0
+        ? `incl. ${formatCredits(waived)} fees waived`
+        : (entry.featuredAgent ?? entry.featuredTool)?.name,
+      name: entryName(entry),
+      rank: 0,
+      value: creditsValue(entry.value) + waived,
+    };
+  });
+
+  // Developers whose entire benefit is waived fees still rank.
+  for (const entry of waivedByUser.values()) {
+    rows.push({
+      color: stableColor(entry.userId),
+      eventCount: entry.eventCount || 0,
+      featured: "fees waived",
+      name: entryName(entry),
+      rank: 0,
+      value: creditsValue(entry.value),
+    });
+  }
+
+  rows.sort((a, b) => b.value - a.value);
+  return rows.map((row, index) => ({ ...row, rank: index + 1 }));
 }
 
 export function AgentFoundationPage(
@@ -5560,29 +5556,6 @@ function Sparkline(
   );
 }
 
-function PrimitivesRail(
-  { navigate }: { navigate: (to: string) => void },
-): ReactElement {
-  return (
-    <Card className="primitives-rail">
-      <p className="section-label">For agents · platform primitives</p>
-      {primitives.map(([key, label, description, route]) => (
-        <button
-          key={key}
-          onClick={() => navigate(route)}
-          type="button"
-        >
-          <span>
-            <strong>{label}</strong>
-            <small>{description}</small>
-          </span>
-          <Mono>{route}</Mono>
-        </button>
-      ))}
-    </Card>
-  );
-}
-
 function Leaderboard({
   rows,
   subtitle,
@@ -5638,7 +5611,7 @@ function NoResults(
   return (
     <div className="store-empty">
       <EmptyState icon="search" title="No Agents match that yet">
-        Try broader terms, or browse by kind.
+        Try broader terms, or clear the search to browse everything.
       </EmptyState>
       <Button onClick={onClear} size="sm" variant="secondary">
         Clear search
@@ -5706,11 +5679,6 @@ function syncSearchParams(updates: Record<string, string | null>): void {
 
 function storeQueryFromSearch(): string {
   return queryParam("q");
-}
-
-function storeKindFromSearch(): StoreKindFilter {
-  const kind = queryParam("kind");
-  return kind === "http" || kind === "mcp" ? kind : "all";
 }
 
 function libraryViewFromSearch(): LibraryView {
