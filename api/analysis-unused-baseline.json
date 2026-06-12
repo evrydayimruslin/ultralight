@@ -1223,6 +1223,18 @@
     },
     {
       "exports": [
+        "SandboxActorTokenError"
+      ],
+      "file": "services/sandbox-actor.ts",
+      "types": [
+        "CreatedSandboxActorToken",
+        "CreateSandboxActorTokenInput",
+        "SandboxActorTokenClaims",
+        "SandboxActorUserInput"
+      ]
+    },
+    {
+      "exports": [
         "buildSensitiveRouteRateLimitHeaders",
         "SENSITIVE_ROUTE_RATE_LIMITS"
       ],
