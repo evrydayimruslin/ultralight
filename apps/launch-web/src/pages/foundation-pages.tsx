@@ -42,7 +42,6 @@ import {
 } from "../../../../shared/types/index.ts";
 import type { LaunchPageProps } from "../App";
 import {
-  getLaunchAuthDiagnostic,
   hasLaunchAuthToken,
   signOutLaunch,
   buildLaunchSignInUrl,
@@ -719,33 +718,11 @@ function shortDate(value?: string | null): string {
   return date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }
 
-function ApiNotice({
-  live,
-  noun,
-}: {
-  live: LaunchPageProps["live"];
-  noun: string;
-}): ReactElement | null {
-  if (live.status === "ready") return null;
-  if (live.status === "loading") {
-    return <div className="api-notice">Loading live {noun}...</div>;
-  }
-  if (live.status === "error") {
-    const diagnostic = getLaunchAuthDiagnostic();
-    return (
-      <div className="api-notice warning">
-        Live {noun} unavailable. {live.error}
-        {diagnostic
-          ? (
-            <small>
-              Last sign-in: {diagnostic.status}
-              {diagnostic.message ? ` (${diagnostic.message})` : ""}
-            </small>
-          )
-          : null}
-      </div>
-    );
-  }
+// Live API status notices (loading / error) are intentionally suppressed
+// across the launch surface — a no-op keeps the page call sites unchanged.
+function ApiNotice(
+  _props: { live: LaunchPageProps["live"]; noun: string },
+): ReactElement | null {
   return null;
 }
 
@@ -1008,16 +985,12 @@ export function StoreFoundationPage(
     <div className="launch-page-narrow store-page">
       <ApiNotice live={live} noun="store Agents" />
       <section className="store-heading">
-        <h1>Agents your connected agent can call.</h1>
+        <h1>Agents your agent can call.</h1>
         <SearchControls query={query} setQuery={updateQuery} />
       </section>
 
       <div className={searching ? "store-layout searching" : "store-layout"}>
         <section className="store-results">
-          <RetrievalNote
-            mode={live.data.store?.retrieval?.mode}
-            query={query}
-          />
           <div className="store-tool-grid">
             {filteredTools.length > 0
               ? filteredTools.map((tool) => (
@@ -5509,7 +5482,7 @@ function CompactAgentCard({ tool }: { tool: AgentFixture }): ReactElement {
         <Mono>
           {tool.installs !== null
             ? `${formatNumber(tool.installs)} installs`
-            : tool.category}
+            : ""}
         </Mono>
         {free
           ? <span>Free</span>
@@ -5543,38 +5516,19 @@ function SearchControls({
   );
 }
 
-function RetrievalNote(
-  { mode, query }: { mode?: string; query: string },
-): ReactElement {
-  // Only claim a retrieval mode the API actually reported.
-  if (!query) {
-    return (
-      <div className="retrieval-note">
-        Browsing all public Agents{mode ? ` · ${mode}` : ""}
-      </div>
-    );
-  }
-  return (
-    <div className="retrieval-note active">
-      <span /> {mode ? `${mode} retrieval` : "Search results"}
-    </div>
-  );
-}
-
 function StoreAgentCard({ tool }: { tool: AgentFixture }): ReactElement {
   return (
     <Card className="store-tool-card">
       <div className="store-card-title">
         <Avatar color={tool.color} name={tool.author} />
         <h3>{tool.name}</h3>
-        <Pill>{tool.kind}</Pill>
       </div>
       <p>{tool.summary}</p>
       <div className="store-card-meta">
         <Mono>
           {tool.installs !== null
             ? `${formatNumber(tool.installs)} installs`
-            : tool.category}
+            : ""}
         </Mono>
         {tool.free || tool.callPrice === 0
           ? <span>Free</span>

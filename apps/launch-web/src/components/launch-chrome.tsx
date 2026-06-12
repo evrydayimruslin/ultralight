@@ -1,4 +1,10 @@
-import { type ReactElement, type ReactNode, useId } from "react";
+import {
+  type ReactElement,
+  type ReactNode,
+  useEffect,
+  useId,
+  useState,
+} from "react";
 
 import { hasLaunchAuthToken } from "../lib/auth";
 import type { LaunchRouteDefinition, LaunchRouteKey } from "../lib/routes";
@@ -82,10 +88,49 @@ export function LaunchShell({
   const navRoutes = primaryRoutes.filter((route) => route.key !== "home");
   const signedIn = hasLaunchAuthToken();
   const openSignInModal = useSignInModal();
+  const isHome = activeRoute === "home";
+
+  // A subtle shadow fades in once the page scrolls (no static border).
+  const [scrolled, setScrolled] = useState(false);
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 4);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // On the home hero, the top-bar "Add to agent" stays hidden until the hero's
+  // own CTA scrolls up past the header. Elsewhere it's always shown.
+  const [pastHeroCta, setPastHeroCta] = useState(false);
+  useEffect(() => {
+    if (!isHome) {
+      setPastHeroCta(false);
+      return;
+    }
+    let observer: IntersectionObserver | null = null;
+    let raf = 0;
+    const attach = (): boolean => {
+      const cta = document.querySelector(".home-hero .hero-actions");
+      if (!cta) return false;
+      observer = new IntersectionObserver(
+        ([entry]) => setPastHeroCta(!entry.isIntersecting),
+        { rootMargin: "-64px 0px 0px 0px", threshold: 0 },
+      );
+      observer.observe(cta);
+      return true;
+    };
+    if (!attach()) raf = requestAnimationFrame(() => attach());
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      observer?.disconnect();
+    };
+  }, [isHome, activeRoute]);
+
+  const showTopBarAdd = !isHome || pastHeroCta;
 
   return (
     <div className="launch-shell">
-      <header className="top-nav">
+      <header className={scrolled ? "top-nav scrolled" : "top-nav"}>
         <button
           className="wordmark-button"
           onClick={() => navigate("/")}
@@ -107,7 +152,7 @@ export function LaunchShell({
           ))}
         </nav>
         <div className="top-actions">
-          <AddToAgentButton size="sm" variant="ghost" />
+          {showTopBarAdd ? <AddToAgentButton size="sm" variant="ghost" /> : null}
           {signedIn
             ? (
               <button
