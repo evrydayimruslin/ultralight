@@ -918,22 +918,25 @@ export function HomeFoundationPage(
       <section className="home-hero">
         <div className="home-hero-copy">
           <h1>
-            Many agents?<br />One Agent layer.
+            Connect once.<br />Access every tool.
           </h1>
           <p>
-            Connected agents now inherit every published Agent, with unified
-            auth and payments. Or deploy your own.
+            Add Ultralight to your agent so it can call any tool published to
+            the platform, with your auth, payments, and preferences in one
+            place. Pay per call. Nothing to subscribe to.
           </p>
           <div className="hero-actions left">
-            <AddToAgentButton instructions={installInstructions} />
-            <RouteButton
-              navigate={navigate}
+            <AddToAgentButton
+              instructions={installInstructions}
+              label="Add to your agent"
+            />
+            <Button
+              href={`${apiOrigin}/api/launch/openapi.json`}
               size="lg"
-              to="/browse"
               variant="secondary"
             >
-              Browse agents
-            </RouteButton>
+              Developer docs
+            </Button>
           </div>
         </div>
         <AgentOrbit />
@@ -942,10 +945,9 @@ export function HomeFoundationPage(
       <ValueProps />
 
       <section className="shared-core-section">
-        <h2>Thousands have given Ultralight to their agents</h2>
+        <h2>Every agent draws from one source.</h2>
         <p>
-          Every connected agent draws from one core: the same context, Agents,
-          auth, and payments.
+          The same context, tools, auth, and payments — wherever you work.
         </p>
         <SharedCore />
       </section>
@@ -4969,19 +4971,23 @@ function ValueProps(): ReactElement {
   const items = [
     [
       "01",
-      "One core",
-      "Plug in and inherit context, Agents, balance, and preferences.",
+      "Single source",
+      "Your context, memory, balance, and preferences live in one place, and follow you to any agent you use.",
     ],
-    ["02", "No subscriptions", "Agents pay per call, only for what they use."],
+    [
+      "02",
+      "Pay per call",
+      "Your agent spends only on what it uses. Never a monthly seat.",
+    ],
     [
       "03",
-      "Open marketplace",
-      "Every published Agent is discoverable and callable by any connected agent.",
+      "No setup, ever",
+      "New tools work the moment they're published. No accounts to create, no per-vendor keys, no integrations to maintain.",
     ],
     [
       "04",
-      "Inherited power",
-      "Every deployed Agent inherits composability and distribution.",
+      "Yours to leave with",
+      "Switch agents tomorrow and everything comes with you. Ultralight belongs to you, not to any one platform.",
     ],
   ] as const;
   return (
@@ -5000,7 +5006,7 @@ function ValueProps(): ReactElement {
 function SharedCore(): ReactElement {
   return (
     <div className="shared-core">
-      {["Context", "Agents", "Auth", "Payments"].map((item) => (
+      {["Context", "Tools", "Auth", "Payments"].map((item) => (
         <span key={item}>{item}</span>
       ))}
     </div>
