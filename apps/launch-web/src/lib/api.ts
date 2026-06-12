@@ -28,6 +28,7 @@ import type {
   LaunchInferenceOptionsResponse,
   LaunchInstallInstruction,
   LaunchInstallResponse,
+  LaunchJobStatusResponse,
   LaunchLeaderboardKind,
   LaunchLeaderboardResponse,
   LaunchLibraryResponse,
@@ -119,6 +120,15 @@ export interface LaunchApiClientOptions {
 export class LaunchApiAuthenticationError extends Error {
   override name = "LaunchApiAuthenticationError";
 }
+
+export class LaunchApiRequestError extends Error {
+  override name = "LaunchApiRequestError";
+  constructor(message: string, public readonly status: number) {
+    super(message);
+  }
+}
+
+export type { LaunchJobStatusResponse };
 
 const configuredLaunchApiBaseUrl =
   import.meta.env.VITE_LAUNCH_API_BASE_URL?.trim().replace(/\/$/u, "") || "";
@@ -226,6 +236,11 @@ export class LaunchApiClient {
     request: LaunchFunctionRunRequest = {},
   ): Promise<LaunchFunctionRunResponse> {
     return this.runAgentFunction(idOrSlug, functionName, request);
+  }
+
+  // Poll a durable async execution (a run that returned { _async, job_id }).
+  launchJob(jobId: string): Promise<LaunchJobStatusResponse> {
+    return this.fetchJson(`/api/launch/jobs/${encodeURIComponent(jobId)}`);
   }
 
   agentCallerPermissions(
@@ -557,8 +572,9 @@ export class LaunchApiClient {
           message || "Authentication required",
         );
       }
-      throw new Error(
+      throw new LaunchApiRequestError(
         message || `Launch API request failed (${response.status})`,
+        response.status,
       );
     }
     return await response.json() as T;

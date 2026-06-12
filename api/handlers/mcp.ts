@@ -67,8 +67,10 @@ import {
   buildMissingAppSecretsErrorDetails,
   buildMissingAppSecretsMessage,
   createAppD1Resources,
+  MAX_ASYNC_EXECUTION_MS,
   resolveAppRuntimeEnvVars,
   resolveAppSupabaseConfig,
+  resolveFunctionExecutionPolicy,
   resolveRuntimeAppCallDependencies,
   resolveStrictManifestPermissions,
   SupabaseConfigMigrationRequiredError,
@@ -128,7 +130,7 @@ import type {
 } from "../../shared/contracts/jsonrpc.ts";
 import { normalizeJsonRpcResponseId } from "../../shared/contracts/jsonrpc.ts";
 import type { App, BYOKProvider } from "../../shared/types/index.ts";
-import { getEnv } from "../lib/env.ts";
+import { getEnv, getExecQueue } from "../lib/env.ts";
 import {
   buildCallerPermissionConfigureUrl,
   enforceCallerFunctionPermission,
@@ -681,6 +683,33 @@ const SDK_TOOLS: MCPTool[] = [
     },
     outputSchema: {
       description: "The return value from the called function.",
+    },
+  },
+
+  // ---- Async Job Polling ----
+  {
+    name: "ultralight.job",
+    title: "Check Async Job Status",
+    description:
+      "Check the status of a queued/running async execution. Functions that " +
+      "run asynchronously return { _async: true, job_id } immediately — poll " +
+      "this tool with that job_id until status is completed or failed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        job_id: {
+          type: "string",
+          description: "The job_id from an async function-call envelope.",
+        },
+      },
+      required: ["job_id"],
+    },
+    outputSchema: {
+      description:
+        "Job status: { job_id, status: queued|running|completed|failed, " +
+        "result?, error?, logs?, duration_ms?, ai_cost_light?, " +
+        "execution_id? (links to the execution receipt and AI-spend ledger), " +
+        "elapsed_seconds?, message? }.",
     },
   },
 ];
@@ -2119,7 +2148,14 @@ async function executeSDKTool(
           result = { error: `Job ${jobId} not found` };
           break;
         }
-        if (job.status === "running") {
+        if (job.status === "queued") {
+          result = {
+            job_id: jobId,
+            status: "queued",
+            message:
+              "Waiting to be picked up. Poll again in a few seconds.",
+          };
+        } else if (job.status === "running") {
           const elapsed = Date.now() - new Date(job.created_at).getTime();
           result = {
             job_id: jobId,
@@ -2135,6 +2171,8 @@ async function executeSDKTool(
             result: job.result,
             logs: job.logs,
             ai_cost_light: job.ai_cost_light,
+            // Links this job to its execution receipt and AI-spend ledger.
+            execution_id: job.execution_id,
           };
         } else {
           result = {
@@ -2145,6 +2183,7 @@ async function executeSDKTool(
             // AI calls that completed before the failure were still billed.
             ai_cost_light: job.ai_cost_light,
             logs: job.logs,
+            execution_id: job.execution_id,
           };
         }
         break;
@@ -2301,12 +2340,26 @@ async function executeAppFunction(
     routineContext?: RoutineTraceContext;
     callerGrantId?: string | null;
     incomingHop?: number;
-    // Event-bus deliveries are at-most-once and consume results inline — a
-    // promotion envelope is meaningless there (and would read as a timeout).
+    // Skip the durable async dispatch: event-bus deliveries and queue-consumer
+    // executions consume results inline — handing them a job envelope would
+    // read as a timeout (deliveries) or recurse (consumer).
     disableAsyncPromotion?: boolean;
+    // Set by the queue consumer: record the execution outcome on this job row
+    // (full fidelity — result, logs, duration, AI spend) after settlement.
+    queuedJobId?: string | null;
+    // Queue-consumer executions reuse the job row's execution_id so the job,
+    // receipt, and AI-spend ledger entries all link to one execution.
+    executionId?: string;
+    // Queue-consumer executions run with an extended sandbox budget.
+    executionTimeoutMs?: number;
   },
 ): Promise<Response> {
   try {
+    // The reserved _async argument is platform routing, never function input —
+    // strip it before ANY execution branch (GPU included) sees the args.
+    const asyncOptIn = args._async === true;
+    if ("_async" in args) delete args._async;
+
     // ── GPU Runtime Branch (early return) ──
     // Must check BEFORE code fetching since GPU apps don't have JS code in R2.
     if (app.runtime === "gpu") {
@@ -2323,6 +2376,88 @@ async function executeAppFunction(
           callChainDepth: callerContext.callerApp?.hop ?? null,
         },
       );
+    }
+
+    // ── Durable async dispatch ──
+    // Declared-async functions (manifest execution.class) and caller opt-ins
+    // (the reserved _async argument) are ENQUEUED instead of executed: the
+    // caller gets a job envelope in milliseconds and the queue consumer runs
+    // the execution with an extended budget. Async is decided here, at
+    // dispatch time, never mid-flight — a mid-execution handoff would mean
+    // re-running a non-idempotent function (double side effects/billing).
+    //
+    // Callers that consume results inline never get a job envelope: routine
+    // handlers treat one as a failure and their retry machinery would enqueue
+    // duplicate executions; sandbox dependency calls surface it as the
+    // dependency's return value, and the sandbox's own bounded budget
+    // (30s/120s) cannot usefully poll a multi-minute job — both run
+    // synchronously.
+    const callerCanPoll = callerContext.authSource !== "routine_actor" &&
+      callerContext.authSource !== "sandbox_actor";
+    if (!meta?.disableAsyncPromotion && !meta?.queuedJobId && callerCanPoll) {
+      const executionPolicy = resolveFunctionExecutionPolicy(app, functionName);
+      if (executionPolicy.async || asyncOptIn) {
+        const queue = getExecQueue();
+        // No queue bound (local dev/tests): fall through to synchronous
+        // execution rather than failing the call.
+        if (queue) {
+          const { createQueuedJob, reclaimJobForSyncFallback } = await import(
+            "../services/async-jobs.ts"
+          );
+          const jobId = await createQueuedJob({
+            appId: app.id,
+            userId,
+            ownerId: app.owner_id,
+            functionName,
+            args,
+            callerAppId: callerContext.callerApp?.appId ?? null,
+            callerGrantId: meta?.callerGrantId ?? null,
+            hop: callerContext.callerApp?.hop ?? meta?.incomingHop ?? null,
+            meta: {
+              sessionId: meta?.sessionId,
+              userQuery: meta?.userQuery,
+              executionTimeoutMs: executionPolicy.timeoutMs,
+            },
+          });
+          let enqueued = false;
+          try {
+            await queue.send({ jobId });
+            enqueued = true;
+          } catch (err) {
+            // A send() throw does NOT prove non-delivery — the broker may
+            // have accepted the message. Only execute synchronously if we
+            // win the row back through the same 'queued' status filter the
+            // consumer claims through; otherwise the consumer owns it and
+            // running here would double-execute.
+            console.error("[MCP] EXEC_QUEUE send failed:", err);
+            const reclaimed = await reclaimJobForSyncFallback(jobId, {
+              type: "QueueError",
+              message: err instanceof Error ? err.message : String(err),
+            }).catch(() => false);
+            if (!reclaimed) enqueued = true;
+          }
+          if (enqueued) {
+            return jsonRpcResponse(id, {
+              content: [{
+                type: "text",
+                text: JSON.stringify({
+                  _async: true,
+                  job_id: jobId,
+                  status: "queued",
+                  message:
+                    `Execution queued. Poll with ultralight.job({ job_id: "${jobId}" }) on this connection (ul.job on the platform MCP) to get the result.`,
+                }),
+              }],
+              structuredContent: {
+                _async: true,
+                job_id: jobId,
+                status: "queued",
+              },
+              isError: false,
+            });
+          }
+        }
+      }
     }
 
     // Phase 2C: Run independent setup tasks in parallel
@@ -2428,7 +2563,14 @@ async function executeAppFunction(
       }
     }
     const appCallDependencies = [...manifestDependencies, ...grantDependencies];
-    const timeoutMs = permissions.includes("ai:call") ? 120_000 : 30_000;
+    // Queue-consumer executions (meta.executionTimeoutMs) get an extended
+    // budget, hard-capped at the platform ceiling; sync requests keep the
+    // 120s (AI) / 30s windows. The same value sizes the cloud-usage hold.
+    const timeoutMs = meta?.executionTimeoutMs
+      ? Math.min(meta.executionTimeoutMs, MAX_ASYNC_EXECUTION_MS)
+      : permissions.includes("ai:call")
+      ? 120_000
+      : 30_000;
     const runtimeAI = permissions.includes("ai:call")
       ? await createRuntimeAIContext(user)
       : {
@@ -2441,12 +2583,7 @@ async function executeAppFunction(
         unavailableReason: "ai:call permission not granted.",
       };
 
-    // ── Async promotion threshold: if execution exceeds this, return a job envelope ──
-    // Set high to avoid promotion — CF Workers Dynamic Worker sub-isolates don't survive
-    // after the parent response is sent, even with ctx.waitUntil(). Keep sync for reliability.
-    const ASYNC_PROMOTION_MS = 120_000;
-    const isAiCapable = permissions.includes("ai:call");
-    const executionId = crypto.randomUUID();
+    const executionId = meta?.executionId ?? crypto.randomUUID();
     const receiptId = createExecutionReceiptId();
     const widgetPull = meta?.widgetPull;
     const widgetAction = meta?.widgetAction;
@@ -2600,7 +2737,6 @@ async function executeAppFunction(
       ? createMeteredAppDataService(_rawAppDataService2, userId)
       : _rawAppDataService2;
 
-    const execStart = Date.now();
     const sandboxConfig = {
       appId: app.id,
       userId,
@@ -2720,178 +2856,74 @@ async function executeAppFunction(
       argsArray,
     );
 
-    // ── Async promotion: race execution against timer ──
-    // Only promote AI-capable apps (others complete fast enough)
-    const { canAcceptAsyncJob, createJob, completeJob, failJob } = await import(
-      "../services/async-jobs.ts"
-    );
+    // Synchronous execution. Sync calls complete (or fail honestly at their
+    // timeout) within the request — the old mid-flight "promotion" race is
+    // gone: it could never deliver a result (sub-isolates die with the parent
+    // response; waitUntil caps at ~30s) and only produced zombie job rows.
+    // Long work goes through the dispatch-time queue branch above instead.
+    const result = await executionPromise;
+    const settlement = await runPostExecution(result);
 
-    if (isAiCapable && canAcceptAsyncJob() && !meta?.disableAsyncPromotion) {
-      const promotionTimer = new Promise<"promote">((resolve) => {
-        setTimeout(() => resolve("promote"), ASYNC_PROMOTION_MS);
-      });
-
-      const raceResult = await Promise.race([
-        executionPromise.then((r) => ({ type: "sync" as const, result: r })),
-        promotionTimer.then(() => ({
-          type: "promote" as const,
-          result: undefined as unknown,
-        })),
-      ]);
-
-      if (raceResult.type === "sync") {
-        // Fast path: completed within threshold — business as usual
-        const result = raceResult.result as {
-          success: boolean;
-          result: unknown;
-          error?: unknown;
-          logs: Array<{ time: string; level: string; message: string }>;
-          durationMs: number;
-          aiCostLight: number;
-        };
-        const settlement = await runPostExecution(result);
-
-        // Fire-and-forget: rebuild entity index after successful execution
-        if (result.success) {
-          import("../services/entity-index.ts")
-            .then(({ rebuildEntityIndex }) => rebuildEntityIndex(userId))
-            .catch((err) =>
-              console.error("[MCP] Entity index rebuild failed:", err)
-            );
-        }
-
-        if (result.success && settlement.insufficientBalance) {
-          return jsonRpcErrorResponse(
-            id,
-            -32009,
-            settlement.insufficientBalanceMessage ||
-              "Credits balance required to call this app.",
-            {
-              type: settlement.insufficientBalanceCode || "LIGHT_REQUIRED",
-              receipt_id: receiptId,
-              settlement: settlement.metadata,
-            },
-          );
-        }
-
-        if (result.success) {
-          // Auto-stamp widget responses with app version for client cache busting
-          if (isWidgetAppResponse(result.result)) {
-            result.result.version = app.current_version || "1";
-          }
-          return jsonRpcResponse(
-            id,
-            formatToolResult(result.result, result.logs, receiptId),
-          );
-        } else {
-          return jsonRpcResponse(id, formatToolError(result.error, receiptId));
-        }
-      } else {
-        // Slow path: promote to async job
-        const jobId = await createJob({
-          appId: app.id,
-          userId,
-          ownerId: app.owner_id,
-          functionName,
-          executionId,
-          meta: { sessionId: meta?.sessionId, userQuery: meta?.userQuery },
-        });
-
-        // Attach completion handler — execution continues in background
-        // Must use ctx.waitUntil() to keep CF Worker alive after response is sent
-        const completionPromise = executionPromise.then(async (result) => {
-          const settlement = await runPostExecution(result);
-          if (result.success && settlement.insufficientBalance) {
-            await failJob(jobId, {
-              type: settlement.insufficientBalanceCode || "LIGHT_REQUIRED",
-              message: settlement.insufficientBalanceMessage ||
-                "Credits balance required to call this app.",
-            }, result.durationMs, {
-              aiCostLight: result.aiCostLight,
-              logs: result.logs,
-            });
-            return;
-          }
-          await completeJob(jobId, {
-            success: result.success,
-            result: result.success ? result.result : result.error,
-            logs: result.logs,
-            durationMs: result.durationMs,
-            aiCostLight: result.aiCostLight,
-          });
-        }).catch(async (err) => {
-          await failJob(jobId, {
-            type: "ExecutionError",
-            message: err instanceof Error ? err.message : String(err),
-          }, Date.now() - execStart);
-        });
-
-        // Keep CF Worker alive until async execution completes
-        const ctx = globalThis.__ctx;
-        if (ctx?.waitUntil) ctx.waitUntil(completionPromise);
-
-        // Return job envelope immediately
-        return jsonRpcResponse(id, {
-          content: [{
-            type: "text",
-            text: JSON.stringify({
-              _async: true,
-              job_id: jobId,
-              receipt_id: receiptId,
-              status: "running",
-              message:
-                `Execution promoted to async job. Poll with ul.job({ job_id: "${jobId}" }) to get the result.`,
-            }),
-          }],
-          structuredContent: {
-            _async: true,
-            job_id: jobId,
-            receipt_id: receiptId,
-            status: "running",
-          },
-          isError: false,
-        });
-      }
-    } else {
-      // Non-AI apps or async limit reached: synchronous execution (original behavior)
-      const result = await executionPromise;
-      const settlement = await runPostExecution(result);
-
-      // Fire-and-forget: rebuild entity index after successful execution
+    // Durable-job bookkeeping: a queue-consumer execution records its outcome
+    // on the job row with full fidelity (result, logs, duration, AI spend).
+    if (meta?.queuedJobId) {
+      const { completeJob, failJob } = await import(
+        "../services/async-jobs.ts"
+      );
       if (result.success && settlement.insufficientBalance) {
-        return jsonRpcErrorResponse(
-          id,
-          -32009,
-          settlement.insufficientBalanceMessage ||
+        await failJob(meta.queuedJobId, {
+          type: settlement.insufficientBalanceCode || "LIGHT_REQUIRED",
+          message: settlement.insufficientBalanceMessage ||
             "Credits balance required to call this app.",
-          {
-            type: settlement.insufficientBalanceCode || "LIGHT_REQUIRED",
-            receipt_id: receiptId,
-            settlement: settlement.metadata,
-          },
-        );
-      }
-
-      if (result.success) {
-        import("../services/entity-index.ts")
-          .then(({ rebuildEntityIndex }) => rebuildEntityIndex(userId))
-          .catch((err) =>
-            console.error("[MCP] Entity index rebuild failed:", err)
-          );
-      }
-
-      if (result.success) {
-        // Auto-stamp widget responses with app version for client cache busting
-        if (isWidgetAppResponse(result.result)) {
-          result.result.version = app.current_version || "1";
-        }
-        return jsonRpcResponse(
-          id,
-          formatToolResult(result.result, result.logs, receiptId),
-        );
+        }, result.durationMs, {
+          aiCostLight: result.aiCostLight,
+          logs: result.logs,
+        });
       } else {
-        return jsonRpcResponse(id, formatToolError(result.error, receiptId));
+        await completeJob(meta.queuedJobId, {
+          success: result.success,
+          result: result.success ? result.result : result.error,
+          logs: result.logs,
+          durationMs: result.durationMs,
+          aiCostLight: result.aiCostLight,
+        });
       }
+    }
+
+    if (result.success && settlement.insufficientBalance) {
+      return jsonRpcErrorResponse(
+        id,
+        -32009,
+        settlement.insufficientBalanceMessage ||
+          "Credits balance required to call this app.",
+        {
+          type: settlement.insufficientBalanceCode || "LIGHT_REQUIRED",
+          receipt_id: receiptId,
+          settlement: settlement.metadata,
+        },
+      );
+    }
+
+    // Fire-and-forget: rebuild entity index after successful execution
+    if (result.success) {
+      import("../services/entity-index.ts")
+        .then(({ rebuildEntityIndex }) => rebuildEntityIndex(userId))
+        .catch((err) =>
+          console.error("[MCP] Entity index rebuild failed:", err)
+        );
+    }
+
+    if (result.success) {
+      // Auto-stamp widget responses with app version for client cache busting
+      if (isWidgetAppResponse(result.result)) {
+        result.result.version = app.current_version || "1";
+      }
+      return jsonRpcResponse(
+        id,
+        formatToolResult(result.result, result.logs, receiptId),
+      );
+    } else {
+      return jsonRpcResponse(id, formatToolError(result.error, receiptId));
     }
   } catch (err) {
     console.error(`App function ${functionName} error:`, err);
@@ -3041,6 +3073,167 @@ export function parseDeliveryOutcome(
     return { success: false, receiptId, error };
   }
   return { success: true, receiptId };
+}
+
+// ============================================
+// QUEUED EXECUTION (PR3 durable async)
+// ============================================
+
+// Run a queue-claimed job through the full execution pipeline. Mirrors
+// executeEventDelivery: caller context is rebuilt from the persisted scalars
+// (the user's bearer token never rides the queue — queued executions cannot
+// make as-the-user calls; grant-gated cross-Agent calls are unaffected since
+// the caller token is minted fresh in-pipeline). The job outcome is recorded
+// on the row INSIDE executeAppFunction (meta.queuedJobId) with full fidelity;
+// this wrapper only handles can't-even-start failures.
+export async function executeQueuedJob(
+  job: import("../services/async-jobs.ts").AsyncJob,
+): Promise<void> {
+  const { failJobIfActive } = await import("../services/async-jobs.ts");
+  const startedAt = Date.now();
+
+  const appsService = createAppsService();
+  const app = await appsService.findById(job.app_id);
+  if (!app || app.deleted_at) {
+    await failJobIfActive(job.id, {
+      type: "AppNotFound",
+      message: "The Agent for this job no longer exists",
+    }, Date.now() - startedAt);
+    return;
+  }
+
+  // GPU apps cannot be queued at dispatch (the GPU branch precedes the queue
+  // branch), so a GPU runtime here means the app changed between enqueue and
+  // claim. The GPU pipeline has no job bookkeeping — running it would bill an
+  // execution whose result the row could never report. Refuse instead.
+  if (app.runtime === "gpu") {
+    await failJobIfActive(job.id, {
+      type: "AppRuntimeChanged",
+      message:
+        "The Agent switched to the GPU runtime after this job was queued — re-run the function directly",
+    }, Date.now() - startedAt);
+    return;
+  }
+
+  let user: UserContext | null = null;
+  try {
+    const { createUserService } = await import("../services/user.ts");
+    const profile = await createUserService().getUser(job.user_id);
+    if (profile) {
+      user = {
+        id: profile.id,
+        email: profile.email,
+        displayName: profile.display_name,
+        avatarUrl: profile.avatar_url,
+        tier: profile.tier,
+      };
+    }
+  } catch (err) {
+    console.warn("[QUEUE-EXEC] Failed to load user context:", err);
+  }
+
+  const callerContext: RequestCallerContext = {
+    authState: "authenticated",
+    authSource: "routine_actor",
+    authUser: null,
+    userId: job.user_id,
+    user,
+    userProfile: null,
+    userApiKey: null,
+    tokenAppIds: null,
+    tokenFunctionNames: null,
+    callerApp: job.caller_app_id
+      ? {
+        appId: job.caller_app_id,
+        callerFunction: null,
+        hop: job.hop ?? 1,
+      }
+      : undefined,
+  };
+
+  // Cross-Agent jobs were grant-checked at dispatch, but the queue introduces
+  // a dispatch→execution gap synchronous calls never had: re-check that the
+  // grant is still active so a revocation between enqueue and claim is
+  // honored (cap accounting still happens in-pipeline via callerGrantId).
+  if (job.caller_grant_id) {
+    try {
+      const { getGrant } = await import("../services/agent-grants.ts");
+      const grant = await getGrant(job.user_id, job.caller_grant_id);
+      if (!grant || grant.status !== "active") {
+        await failJobIfActive(job.id, {
+          type: "GrantRevoked",
+          message:
+            "The cross-Agent grant for this job was revoked before it executed",
+        }, Date.now() - startedAt);
+        return;
+      }
+    } catch (err) {
+      console.warn("[QUEUE-EXEC] Grant re-check failed, refusing to run:", err);
+      await failJobIfActive(job.id, {
+        type: "GrantCheckFailed",
+        message: "Could not verify the cross-Agent grant for this job",
+      }, Date.now() - startedAt);
+      return;
+    }
+  }
+
+  const metaTimeout = job.meta &&
+      typeof job.meta.executionTimeoutMs === "number"
+    ? job.meta.executionTimeoutMs
+    : null;
+
+  const response = await executeAppFunction(
+    crypto.randomUUID(),
+    job.function_name,
+    (job.args && typeof job.args === "object" ? job.args : {}) as Record<
+      string,
+      unknown
+    >,
+    app,
+    job.user_id,
+    user,
+    callerContext,
+    {
+      callerGrantId: job.caller_grant_id,
+      incomingHop: job.hop ?? undefined,
+      sessionId: typeof job.meta?.sessionId === "string"
+        ? job.meta.sessionId
+        : undefined,
+      userQuery: typeof job.meta?.userQuery === "string"
+        ? job.meta.userQuery
+        : undefined,
+      disableAsyncPromotion: true,
+      queuedJobId: job.id,
+      executionId: job.execution_id || undefined,
+      executionTimeoutMs: metaTimeout ?? undefined,
+    },
+  );
+
+  // The job row was finalized inside executeAppFunction (meta.queuedJobId).
+  // A failure surfacing HERE means the pipeline threw before the bookkeeping:
+  // JSON-RPC errors (missing secrets, preflight insufficient balance) AND
+  // thrown errors the outer catch formats as isError tool RESULTS (D1/env
+  // resolution, settlement throws) — the same shape lesson as deliveries, so
+  // reuse parseDeliveryOutcome. failJobIfActive's status guard makes this a
+  // no-op whenever the in-pipeline bookkeeping already settled the row.
+  try {
+    const body = await response.json() as JsonRpcResponse;
+    const outcome = parseDeliveryOutcome(body);
+    if (!outcome.success) {
+      const errorData = body.error?.data as { type?: unknown } | undefined;
+      await failJobIfActive(job.id, {
+        type: typeof errorData?.type === "string" && errorData.type
+          ? errorData.type
+          : "ExecutionError",
+        message: outcome.error || "Queued execution failed",
+      }, Date.now() - startedAt);
+    }
+  } catch {
+    await failJobIfActive(job.id, {
+      type: "ExecutionError",
+      message: "Unreadable queued execution response",
+    }, Date.now() - startedAt);
+  }
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

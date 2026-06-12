@@ -36,6 +36,27 @@ binding = "LOADER"
 binding = "SELF"
 service = "ultralight-api"
 
+# Durable-execution queue: async-class function calls are enqueued at dispatch
+# time and executed by this same worker's queue() consumer (15-min wall budget
+# per INVOCATION — what makes >120s inference jobs actually complete).
+# max_batch_size MUST stay 1: messages are processed serially and each job may
+# legitimately hold the consumer for its full 300s budget — batching N jobs
+# stacks budgets past the 15-min wall and kills healthy claimed executions.
+# Throughput comes from Queues' consumer auto-scaling, not batching.
+# Provision before deploy:
+#   wrangler queues create ultralight-exec
+#   wrangler queues create ultralight-exec-dlq
+[[queues.producers]]
+binding = "EXEC_QUEUE"
+queue = "ultralight-exec"
+
+[[queues.consumers]]
+queue = "ultralight-exec"
+max_batch_size = 1
+max_batch_timeout = 2
+max_retries = 3
+dead_letter_queue = "ultralight-exec-dlq"
+
 [vars]
 BASE_URL = "https://ultralight-api.rgn4jz429m.workers.dev"
 LAUNCH_WEB_BASE_URL = "https://ultralight-launch-web.pages.dev"
@@ -74,6 +95,20 @@ binding = "LOADER"
 [[env.staging.services]]
 binding = "SELF"
 service = "ultralight-api-staging"
+
+# Provision before deploy:
+#   wrangler queues create ultralight-exec-staging
+#   wrangler queues create ultralight-exec-staging-dlq
+[[env.staging.queues.producers]]
+binding = "EXEC_QUEUE"
+queue = "ultralight-exec-staging"
+
+[[env.staging.queues.consumers]]
+queue = "ultralight-exec-staging"
+max_batch_size = 1
+max_batch_timeout = 2
+max_retries = 3
+dead_letter_queue = "ultralight-exec-staging-dlq"
 
 [env.staging.vars]
 BASE_URL = "https://ultralight-api-staging.rgn4jz429m.workers.dev"

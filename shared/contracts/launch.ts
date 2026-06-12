@@ -92,6 +92,7 @@ export const LAUNCH_API_ROUTES = [
   "GET /api/launch/wallet/payouts",
   "GET /api/launch/wallet/topup/quote",
   "POST /api/launch/wallet/topup/intent",
+  "GET /api/launch/jobs/:id",
   "GET /api/launch/leaderboard",
   "GET /api/launch/platform-primitives",
 ] as const;
@@ -357,6 +358,23 @@ export interface LaunchFunctionRunResponse {
     message: string;
     details?: unknown;
   } | null;
+  generatedAt: string;
+}
+
+/** GET /api/launch/jobs/:id — poll a durable async execution (twin of ul.job). */
+export interface LaunchJobStatusResponse {
+  jobId: string;
+  status: "queued" | "running" | "completed" | "failed";
+  /** Present only when status is completed. */
+  result: unknown;
+  /** Present only when status is failed. */
+  error: unknown;
+  durationMs: number | null;
+  aiCostCredits: number;
+  /** Links the job to its execution receipt and AI-spend ledger entries. */
+  executionId: string | null;
+  createdAt: string;
+  completedAt: string | null;
   generatedAt: string;
 }
 

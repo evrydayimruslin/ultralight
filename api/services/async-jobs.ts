@@ -1,7 +1,9 @@
-// Async Job Service
-// Manages transparent async promotion for long-running sandbox executions.
-// Jobs are created in 'running' state when execution exceeds the promotion threshold.
-// The execution continues in-process; this service tracks state in Supabase.
+// Async Job Service — durable execution (PR3).
+// A job is created in 'queued' status at dispatch time with everything the
+// queue consumer needs to reconstruct the execution; the consumer claims it
+// ('queued' -> 'running', the at-least-once idempotency guard), runs the full
+// pipeline, and finishes it 'completed'/'failed'. State lives in Supabase;
+// the queue message carries only { jobId }.
 
 import { getEnv } from '../lib/env.ts';
 
@@ -17,14 +19,19 @@ function supabaseHeaders() {
 /** Max result size before offloading to R2 (1MB) */
 const MAX_RESULT_SIZE = 1_000_000;
 
-/** Max concurrent async jobs per server instance */
-const MAX_CONCURRENT_JOBS = 20;
+/**
+ * Stale 'running' threshold, keyed off started_at (claim time). Must exceed
+ * the max consumer execution budget (300s) plus settlement headroom — a
+ * running row older than this means the consumer invocation died mid-flight.
+ */
+const STALE_RUNNING_MS = 10 * 60_000;
 
-/** Stale job threshold — jobs running longer than this are considered dead (3 min) */
-const STALE_JOB_MS = 180_000;
-
-/** In-flight job counter for this instance */
-let activeJobCount = 0;
+/**
+ * Stale 'queued' backstop, keyed off created_at. Queues are at-least-once
+ * with retries + DLQ, so a queued row this old means its message was lost or
+ * dead-lettered.
+ */
+const STALE_QUEUED_MS = 60 * 60_000;
 
 export interface AsyncJob {
   id: string;
@@ -32,7 +39,11 @@ export interface AsyncJob {
   user_id: string;
   owner_id: string;
   function_name: string;
-  status: 'running' | 'completed' | 'failed';
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  args: Record<string, unknown>;
+  caller_app_id: string | null;
+  caller_grant_id: string | null;
+  hop: number | null;
   result: unknown;
   result_r2_key: string | null;
   error: unknown;
@@ -41,36 +52,33 @@ export interface AsyncJob {
   ai_cost_light: number;
   execution_id: string;
   server_instance: string;
+  started_at: string | null;
   completed_at: string | null;
   expires_at: string;
   meta: Record<string, unknown>;
   created_at: string;
 }
 
-/** Get a stable server instance identifier for crash detection */
-export function getServerInstance(): string {
-  // Use a combination of startup time + random suffix for uniqueness across restarts
-  return serverInstance;
-}
+const serverInstance = `cf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-const serverInstance = `deno-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-/** Check if we can accept another async job */
-export function canAcceptAsyncJob(): boolean {
-  return activeJobCount < MAX_CONCURRENT_JOBS;
-}
-
-/** Create a job record when promoting execution to async */
-export async function createJob(params: {
+/**
+ * Create a job in 'queued' status at dispatch time. Persists the full
+ * execution request (the queue message carries only the job id). The caller's
+ * bearer token is deliberately NOT persisted — queued executions cannot make
+ * as-the-user calls, exactly like event deliveries.
+ */
+export async function createQueuedJob(params: {
   appId: string;
   userId: string;
   ownerId: string;
   functionName: string;
-  executionId: string;
+  args: Record<string, unknown>;
+  callerAppId?: string | null;
+  callerGrantId?: string | null;
+  hop?: number | null;
   meta?: Record<string, unknown>;
 }): Promise<string> {
   const jobId = crypto.randomUUID();
-  activeJobCount++;
 
   const res = await fetch(`${getEnv('SUPABASE_URL')}/rest/v1/async_jobs`, {
     method: 'POST',
@@ -81,20 +89,50 @@ export async function createJob(params: {
       user_id: params.userId,
       owner_id: params.ownerId,
       function_name: params.functionName,
-      status: 'running',
-      execution_id: params.executionId,
-      server_instance: serverInstance,
+      status: 'queued',
+      args: params.args ?? {},
+      caller_app_id: params.callerAppId ?? null,
+      caller_grant_id: params.callerGrantId ?? null,
+      hop: params.hop ?? null,
+      // Reused as the sandbox executionId on claim, linking job <-> receipt
+      // <-> AI-spend ledger.
+      execution_id: crypto.randomUUID(),
       meta: params.meta || {},
     }),
   });
 
   if (!res.ok) {
-    activeJobCount--;
     const err = await res.text().catch(() => res.statusText);
-    throw new Error(`Failed to create async job: ${err}`);
+    throw new Error(`Failed to create queued job: ${err}`);
   }
 
   return jobId;
+}
+
+/**
+ * Optimistically claim a queued job ('queued' -> 'running'). Returns the
+ * claimed row, or null when the job was already claimed/terminal — the
+ * consumer's at-least-once duplicate-delivery guard.
+ */
+export async function claimQueuedJob(jobId: string): Promise<AsyncJob | null> {
+  const res = await fetch(
+    `${getEnv('SUPABASE_URL')}/rest/v1/async_jobs?id=eq.${jobId}&status=eq.queued`,
+    {
+      method: 'PATCH',
+      headers: supabaseHeaders(),
+      body: JSON.stringify({
+        status: 'running',
+        started_at: new Date().toISOString(),
+        server_instance: serverInstance,
+      }),
+    },
+  );
+  if (!res.ok) {
+    const err = await res.text().catch(() => res.statusText);
+    throw new Error(`Failed to claim queued job ${jobId}: ${err}`);
+  }
+  const rows = await res.json().catch(() => []) as AsyncJob[];
+  return Array.isArray(rows) && rows[0] ? rows[0] : null;
 }
 
 // Normalize a failed execution's error payload to failJob's {type, message}
@@ -125,8 +163,6 @@ export async function completeJob(jobId: string, result: {
   durationMs: number;
   aiCostLight: number;
 }): Promise<void> {
-  activeJobCount = Math.max(0, activeJobCount - 1);
-
   // Check result size — offload to R2 if too large
   let storedResult = result.success ? result.result : null;
   let resultR2Key: string | null = null;
@@ -180,7 +216,6 @@ export async function failJob(jobId: string, error: {
   aiCostLight?: number;
   logs?: unknown[];
 }): Promise<void> {
-  activeJobCount = Math.max(0, activeJobCount - 1);
 
   const res = await fetch(
     `${getEnv('SUPABASE_URL')}/rest/v1/async_jobs?id=eq.${jobId}`,
@@ -202,6 +237,76 @@ export async function failJob(jobId: string, error: {
 
   if (!res.ok) {
     console.error(`[ASYNC-JOBS] Failed to fail job ${jobId}:`, await res.text().catch(() => ''));
+  }
+}
+
+/**
+ * Reclaim a job after queue.send() threw, so the dispatcher can safely fall
+ * back to synchronous execution. A send() rejection does NOT prove the
+ * message was never enqueued — the broker may have accepted it before the
+ * error. This PATCH races the consumer's claim through the same status
+ * filter: whoever flips 'queued' first owns the execution. Returns true when
+ * we won (row marked failed; run synchronously), false when the consumer
+ * already claimed it (do NOT execute — return the job envelope instead).
+ */
+export async function reclaimJobForSyncFallback(
+  jobId: string,
+  error: { type: string; message: string },
+): Promise<boolean> {
+  const res = await fetch(
+    `${getEnv('SUPABASE_URL')}/rest/v1/async_jobs?id=eq.${jobId}&status=eq.queued`,
+    {
+      method: 'PATCH',
+      headers: supabaseHeaders(),
+      body: JSON.stringify({
+        status: 'failed',
+        error,
+        duration_ms: 0,
+        completed_at: new Date().toISOString(),
+      }),
+    },
+  );
+  if (!res.ok) {
+    // Ambiguous: we could not take ownership, and the consumer might. The
+    // only safe answer is "don't run it here".
+    console.error(
+      `[ASYNC-JOBS] Reclaim failed for job ${jobId}:`,
+      await res.text().catch(() => ''),
+    );
+    return false;
+  }
+  const rows = await res.json().catch(() => []) as unknown[];
+  return Array.isArray(rows) && rows.length > 0;
+}
+
+/**
+ * Fail a job only while it is still non-terminal. Used by the queue consumer
+ * for pipeline-level failures: when the pipeline already finalized the row
+ * (e.g. insufficient-balance writes a detailed failure BEFORE returning a
+ * JSON-RPC error), this is a no-op instead of clobbering it.
+ */
+export async function failJobIfActive(jobId: string, error: {
+  type: string;
+  message: string;
+}, durationMs: number): Promise<void> {
+  const res = await fetch(
+    `${getEnv('SUPABASE_URL')}/rest/v1/async_jobs?id=eq.${jobId}&status=in.(queued,running)`,
+    {
+      method: 'PATCH',
+      headers: supabaseHeaders(),
+      body: JSON.stringify({
+        status: 'failed',
+        error,
+        duration_ms: durationMs,
+        completed_at: new Date().toISOString(),
+      }),
+    },
+  );
+  if (!res.ok) {
+    console.error(
+      `[ASYNC-JOBS] Failed to fail job ${jobId}:`,
+      await res.text().catch(() => ''),
+    );
   }
 }
 
@@ -229,32 +334,53 @@ export async function getJob(jobId: string, userId: string): Promise<AsyncJob | 
   return job;
 }
 
-/** Fail stale running jobs (from crashed servers or expired) */
+/** Fail stale jobs (consumer crashed mid-execution, or queue message lost) */
 export async function cleanupStaleJobs(): Promise<number> {
-  const cutoff = new Date(Date.now() - STALE_JOB_MS).toISOString();
+  // 'running' staleness keys off started_at (claim time): a row older than
+  // the consumer's max budget + headroom means the invocation died mid-flight
+  // (created_at would wrongly kill jobs that merely waited in a backlog;
+  // started_at-less legacy rows fall back to created_at). 'queued' is a
+  // backstop: at-least-once delivery + retries + DLQ make a lost message
+  // near-impossible, but a queued row this old will never execute.
+  const runningCutoff = new Date(Date.now() - STALE_RUNNING_MS).toISOString();
+  const queuedCutoff = new Date(Date.now() - STALE_QUEUED_MS).toISOString();
+  const staleFilter = `or=(` +
+    `and(status.eq.running,started_at.lt.${runningCutoff}),` +
+    `and(status.eq.running,started_at.is.null,created_at.lt.${runningCutoff}),` +
+    `and(status.eq.queued,created_at.lt.${queuedCutoff}))`;
 
-  // Fail jobs that are still 'running' but created before the cutoff
+  // Cheap probe first — the minute cron must not issue a blind write per tick.
+  const probe = await fetch(
+    `${getEnv('SUPABASE_URL')}/rest/v1/async_jobs?${staleFilter}&select=id&limit=200`,
+    { headers: supabaseHeaders() },
+  );
+  if (!probe.ok) return 0;
+  const stale = await probe.json().catch(() => []) as Array<{ id: string }>;
+  if (!Array.isArray(stale) || stale.length === 0) return 0;
+
+  // The write re-applies the FULL staleness filter, not just a status check:
+  // a queued job claimed between probe and PATCH gets a fresh started_at and
+  // must not be failed by a sweep that probed it under its old status.
+  const ids = stale.map((row) => row.id).join(',');
   const res = await fetch(
-    `${getEnv('SUPABASE_URL')}/rest/v1/async_jobs?status=eq.running&created_at=lt.${cutoff}`,
+    `${getEnv('SUPABASE_URL')}/rest/v1/async_jobs?id=in.(${ids})&${staleFilter}`,
     {
       method: 'PATCH',
       headers: { ...supabaseHeaders(), 'Prefer': 'return=headers-only' },
       body: JSON.stringify({
         status: 'failed',
-        error: { type: 'ServerTimeout', message: 'Execution exceeded maximum duration or server restarted' },
+        error: {
+          type: 'ServerTimeout',
+          message:
+            'Execution exceeded its window or was never picked up (worker restart or lost queue message)',
+        },
         completed_at: new Date().toISOString(),
       }),
-    }
+    },
   );
 
   if (!res.ok) return 0;
-  // Parse content-range header to get count
-  const range = res.headers.get('content-range');
-  if (range) {
-    const match = range.match(/\d+-\d+\/(\d+)/);
-    return match ? parseInt(match[1]) : 0;
-  }
-  return 0;
+  return stale.length;
 }
 
 /** R2 storage helpers for large results */
@@ -281,29 +407,3 @@ async function loadResultFromR2(key: string): Promise<unknown> {
   return res.json();
 }
 
-/** Start the background cleanup processor */
-export function startAsyncJobCleanupJob(): void {
-  const INTERVAL_MS = 60_000;
-  const STARTUP_DELAY_MS = 15_000;
-
-  console.log('[ASYNC-JOBS] Starting cleanup processor (every 60s)');
-
-  // On startup, clean up any stale jobs from previous crashes
-  setTimeout(async () => {
-    try {
-      const count = await cleanupStaleJobs();
-      if (count > 0) console.log(`[ASYNC-JOBS] Startup cleanup: failed ${count} stale jobs`);
-    } catch (err) {
-      console.error('[ASYNC-JOBS] Startup cleanup error:', err);
-    }
-  }, STARTUP_DELAY_MS);
-
-  setInterval(async () => {
-    try {
-      const count = await cleanupStaleJobs();
-      if (count > 0) console.log(`[ASYNC-JOBS] Cleaned up ${count} stale jobs`);
-    } catch (err) {
-      console.error('[ASYNC-JOBS] Cleanup error:', err);
-    }
-  }, INTERVAL_MS);
-}

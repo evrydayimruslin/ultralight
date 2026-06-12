@@ -491,6 +491,58 @@ export function resolveManifestPermissions(
   return permissions;
 }
 
+// Durable execution: max budget a queue-consumer execution may run. Bounded
+// by the queue consumer's 15-min wall budget with settlement headroom.
+export const MAX_ASYNC_EXECUTION_MS = 300_000;
+
+interface FunctionExecutionPolicy {
+  // True when the manifest declares execution.class 'async' for the function.
+  async: boolean;
+  // Consumer budget for async executions: manifest timeout_ms may LOWER the
+  // platform ceiling, never raise it.
+  timeoutMs: number;
+}
+
+/**
+ * Read a function's declared execution policy from the app manifest.
+ * Malformed manifests resolve to the synchronous default — never crash
+ * execution setup.
+ */
+export function resolveFunctionExecutionPolicy(
+  app: Pick<RuntimeApp, "manifest">,
+  functionName: string,
+): FunctionExecutionPolicy {
+  const fallback: FunctionExecutionPolicy = {
+    async: false,
+    timeoutMs: MAX_ASYNC_EXECUTION_MS,
+  };
+  try {
+    const rawManifest = app.manifest;
+    const parsed = typeof rawManifest === "string"
+      ? JSON.parse(rawManifest)
+      : rawManifest;
+    const fn = parsed?.functions?.[functionName];
+    const execution = fn && typeof fn === "object"
+      ? (fn as { execution?: unknown }).execution
+      : undefined;
+    if (!execution || typeof execution !== "object") return fallback;
+    const { class: executionClass, timeout_ms: timeoutMs } = execution as {
+      class?: unknown;
+      timeout_ms?: unknown;
+    };
+    return {
+      async: executionClass === "async",
+      timeoutMs:
+        typeof timeoutMs === "number" && Number.isFinite(timeoutMs) &&
+          timeoutMs > 0
+          ? Math.min(Math.floor(timeoutMs), MAX_ASYNC_EXECUTION_MS)
+          : MAX_ASYNC_EXECUTION_MS,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
 const STRICT_RUNTIME_PERMISSIONS = new Set([
   "storage:read",
   "storage:write",

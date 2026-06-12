@@ -32,6 +32,7 @@ import {
   fetchAppEntryCode,
   resolveAppRuntimeEnvVars,
   resolveAppSupabaseConfig,
+  resolveFunctionExecutionPolicy,
   resolveRuntimeAppCallDependencies,
   resolveStrictManifestPermissions,
   SupabaseConfigMigrationRequiredError,
@@ -60,7 +61,7 @@ import {
   createMemoryService,
   type MemoryService as MemoryServiceImpl,
 } from "../services/memory.ts";
-import { getEnv } from "../lib/env.ts";
+import { getEnv, getExecQueue } from "../lib/env.ts";
 import {
   buildCallerPermissionConfigureUrl,
   enforceCallerFunctionPermission,
@@ -209,6 +210,15 @@ export async function handleRun(
       }
     }
 
+    // The reserved _async argument is platform routing, never function input —
+    // strip it before ANY execution branch (GPU included) sees the args.
+    let asyncOptIn = false;
+    if (args && typeof args === "object" && !Array.isArray(args)) {
+      const argsRecord = args as Record<string, unknown>;
+      asyncOptIn = argsRecord._async === true;
+      if ("_async" in argsRecord) delete argsRecord._async;
+    }
+
     // ── GPU Runtime Branch ──
     if (app.runtime === "gpu") {
       if (!isGpuSupportEnabled()) {
@@ -314,6 +324,57 @@ export async function handleRun(
         return json(gpuResponse);
       } finally {
         gpuSlot.release();
+      }
+    }
+
+    // ── Durable async dispatch ──
+    // Declared-async functions (and explicit _async opt-ins) are enqueued:
+    // the caller gets { _async, job_id } immediately and polls
+    // GET /api/launch/jobs/:id (or ul.job). Mirrors the per-app MCP dispatch;
+    // the queue consumer runs the full pipeline with the extended budget.
+    if (args && typeof args === "object" && !Array.isArray(args)) {
+      const argsRecord = args as Record<string, unknown>;
+      const executionPolicy = resolveFunctionExecutionPolicy(app, functionName);
+      if (executionPolicy.async || asyncOptIn) {
+        const queue = getExecQueue();
+        if (queue) {
+          const { createQueuedJob, reclaimJobForSyncFallback } = await import(
+            "../services/async-jobs.ts"
+          );
+          const jobId = await createQueuedJob({
+            appId: app.id,
+            userId,
+            ownerId: app.owner_id,
+            functionName,
+            args: argsRecord,
+            meta: { executionTimeoutMs: executionPolicy.timeoutMs },
+          });
+          let enqueued = false;
+          try {
+            await queue.send({ jobId });
+            enqueued = true;
+          } catch (err) {
+            // A send() throw does NOT prove non-delivery. Only run
+            // synchronously if we win the row back through the same 'queued'
+            // status filter the consumer claims through; otherwise the
+            // consumer owns the execution and running here would double it.
+            console.error("[RUN] EXEC_QUEUE send failed:", err);
+            const reclaimed = await reclaimJobForSyncFallback(jobId, {
+              type: "QueueError",
+              message: err instanceof Error ? err.message : String(err),
+            }).catch(() => false);
+            if (!reclaimed) enqueued = true;
+          }
+          if (enqueued) {
+            return json({
+              success: true,
+              result: { _async: true, job_id: jobId, status: "queued" },
+              logs: [],
+              duration_ms: 0,
+            } as RunResponse);
+          }
+        }
+        // No queue bound (local dev/tests): execute synchronously below.
       }
     }
 

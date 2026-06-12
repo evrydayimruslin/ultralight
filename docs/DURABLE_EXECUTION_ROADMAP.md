@@ -121,6 +121,25 @@ Acceptance: a declared-async function running 3+ min of inference completes; job
 `completed` with the real result; receipts/caps/attribution settle; DLQ catches
 poison messages; sync paths byte-identical.
 
+**Landed decisions (review-driven, 2026-06-11):**
+- `max_batch_size = 1`, not 5-10: messages process serially and each job may hold
+  its full 300s budget — batching stacks budgets past the consumer's 15-min wall
+  and kills healthy claimed executions. Throughput comes from Queues' consumer
+  auto-scaling, not batching.
+- Async dispatch is gated to callers that can actually poll: `routine_actor` and
+  `sandbox_actor` calls always run synchronously (routine retry machinery would
+  enqueue duplicate executions; sandbox code can't reach ul.job).
+- `queue.send()` failure does NOT fall straight back to sync (a throw doesn't
+  prove non-delivery): the dispatcher reclaims the row through the same
+  `status=eq.queued` filter the consumer claims through, and only runs sync if
+  it wins.
+- Cross-Agent jobs re-check the grant is still active at execution time
+  (revocation in the dispatch→claim gap is honored).
+- Accepted risks (LOW, revisit post-launch): `_async: true` opt-in grants the
+  300s budget to functions whose owners never declared async (balance-gated,
+  grant-capped cross-agent); a queued row that out-lives the 60-min sweep due
+  to a real backlog fails honestly rather than executing late.
+
 ## PR 4 — Event bus on Queues  (size: M)
 
 1. Emit endpoint additionally enqueues `{eventId}`; consumer performs the fan-out

@@ -138,6 +138,37 @@ export default {
   },
 
   /**
+   * Queue consumer — durable async execution (PR3). Each message carries
+   * { jobId }; the consumer claims the job row and runs the full execution
+   * pipeline with the extended budget. Awaiting before ack is what lets
+   * >120s inference complete — there is no response boundary here.
+   */
+  async queue(batch: MessageBatch<unknown>, env: Env, ctx: ExecutionContext) {
+    globalThis.__env = env;
+    globalThis.__ctx = ctx;
+
+    const { processExecMessage } = await import(
+      '../services/async-exec-consumer.ts'
+    );
+    for (const message of batch.messages) {
+      try {
+        const outcome = await processExecMessage(message.body);
+        if (outcome === 'retry') {
+          message.retry({
+            delaySeconds: Math.min(30 * message.attempts, 300),
+          });
+        } else {
+          message.ack();
+        }
+      } catch (err) {
+        // processExecMessage handles its own failures; this is a backstop.
+        cronLogger.error('Queue message processing crashed', { error: err });
+        message.ack();
+      }
+    }
+  },
+
+  /**
    * Scheduled (cron) handler — replaces setInterval background jobs.
    * Each cron trigger routes to the appropriate job functions.
    * Uses ctx.waitUntil() to avoid blocking the scheduler.

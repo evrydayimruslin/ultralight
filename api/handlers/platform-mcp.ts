@@ -2664,7 +2664,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
   {
     name: "ul.job",
     description: "Poll an async job's status and retrieve its result. " +
-      "When an AI-capable app's call exceeds the synchronous execution window (~120s), it is promoted to an async job; other apps fail at their 30s limit. " +
+      "Functions declared async (manifest execution.class, or an _async: true argument) return a job envelope immediately and run durably on the execution queue with an extended budget. " +
       "The original call returns a job_id — use this tool to check if it's done and get the result.",
     annotations: {
       readOnlyHint: true,
@@ -3239,7 +3239,7 @@ Execute any app's function through this single platform connection.
 - Uses your auth — no separate per-app connection needed
 
 ### ul.job({ job_id })
-Poll an async job's status. AI-capable apps that exceed the synchronous execution window (~120s) are promoted to async jobs; other apps fail at their 30s limit.
+Poll an async job's status. Async-declared functions (manifest execution.class, or an _async: true argument) return { _async, job_id } immediately and run durably on the execution queue; synchronous calls complete in-request (120s AI / 30s limit).
 - When a tool call returns \`{ _async: true, job_id: "..." }\`, use this to poll for the result
 - Returns \`{ status: "running" }\` while in progress, \`{ status: "completed", result: ... }\` when done, or \`{ status: "failed", error: ... }\`
 - Poll every 5-10 seconds until completed or failed
@@ -4644,13 +4644,19 @@ async function handleToolsCall(
         // Detect async job envelope — propagate directly so agent knows to poll
         const asyncResult = getAsyncToolJobEnvelope(unwrappedResult);
         if (asyncResult) {
+          // Pass the source envelope's status through — dispatch-time queueing
+          // returns "queued" (the execution has not started yet).
+          const jobStatus = typeof asyncResult.status === "string"
+            ? asyncResult.status
+            : "running";
           result = {
             _context: { app_id: targetAppId, function: targetFn },
             _async: true,
             job_id: asyncResult.job_id,
-            status: "running",
-            message:
-              `Function is still running. Poll with: ul.job({ job_id: "${asyncResult.job_id}" })`,
+            status: jobStatus,
+            message: jobStatus === "queued"
+              ? `Execution queued. Poll with: ul.job({ job_id: "${asyncResult.job_id}" })`
+              : `Function is still running. Poll with: ul.job({ job_id: "${asyncResult.job_id}" })`,
           };
           break;
         }
@@ -4700,7 +4706,14 @@ async function handleToolsCall(
 
         if (!job) throw new ToolError(NOT_FOUND, `Job ${jobId} not found`);
 
-        if (job.status === "running") {
+        if (job.status === "queued") {
+          result = {
+            job_id: jobId,
+            status: "queued",
+            message:
+              "Waiting to be picked up. Poll again in a few seconds.",
+          };
+        } else if (job.status === "running") {
           const elapsed = Date.now() - new Date(job.created_at).getTime();
           result = {
             job_id: jobId,
@@ -4716,6 +4729,8 @@ async function handleToolsCall(
             result: job.result,
             logs: job.logs,
             ai_cost_light: job.ai_cost_light,
+            // Links this job to its execution receipt and AI-spend ledger.
+            execution_id: job.execution_id,
           };
         } else {
           result = {
@@ -4726,6 +4741,7 @@ async function handleToolsCall(
             // AI calls that completed before the failure were still billed.
             ai_cost_light: job.ai_cost_light,
             logs: job.logs,
+            execution_id: job.execution_id,
           };
         }
         break;

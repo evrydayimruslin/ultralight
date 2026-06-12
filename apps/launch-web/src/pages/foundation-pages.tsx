@@ -44,7 +44,12 @@ import {
   hasLaunchAuthToken,
   signOutLaunch,
 } from "../lib/auth";
-import { launchApi, launchApiOrigin } from "../lib/api";
+import {
+  launchApi,
+  LaunchApiAuthenticationError,
+  launchApiOrigin,
+  LaunchApiRequestError,
+} from "../lib/api";
 import { getStripe, type Stripe, type StripeElements } from "../lib/stripe";
 import {
   Avatar,
@@ -1599,10 +1604,78 @@ function FunctionSandboxCard({
     null,
   );
   const [runState, setRunState] = useState<
-    "idle" | "running" | "success" | "error"
+    "idle" | "running" | "queued" | "success" | "error"
   >("idle");
+  const pollTimerRef = useRef<number | null>(null);
+  // Bumped on re-run and unmount: an in-flight poll fetch resolving after
+  // either event must not touch state or schedule another tick.
+  const pollGenRef = useRef(0);
+
+  useEffect(() => () => {
+    pollGenRef.current++;
+    if (pollTimerRef.current !== null) clearTimeout(pollTimerRef.current);
+  }, []);
+
+  // A durable async run returned { _async, job_id }: poll the job until it
+  // finishes (or a 5-minute client cap — the job keeps running server-side).
+  const pollJob = (jobId: string, startedAt: number, gen: number) => {
+    pollTimerRef.current = window.setTimeout(async () => {
+      try {
+        const job = await launchApi.launchJob(jobId);
+        if (pollGenRef.current !== gen) return;
+        if (job.status === "completed") {
+          setResponse({
+            ...(job.result && typeof job.result === "object" &&
+                !Array.isArray(job.result)
+              ? job.result as Record<string, unknown>
+              : { result: job.result ?? null }),
+            success: true,
+          });
+          setRunState("success");
+          return;
+        }
+        if (job.status === "failed") {
+          setResponse({ error: job.error ?? "Execution failed" });
+          setRunState("error");
+          return;
+        }
+      } catch (err) {
+        if (pollGenRef.current !== gen) return;
+        // Definitive rejections (job not found, bad id, expired session) end
+        // the poll; only network/server blips merit another tick.
+        const terminal = err instanceof LaunchApiAuthenticationError ||
+          (err instanceof LaunchApiRequestError && err.status < 500);
+        if (terminal) {
+          setResponse({
+            job_id: jobId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          setRunState("error");
+          return;
+        }
+      }
+      if (Date.now() - startedAt > 5 * 60_000) {
+        setResponse({
+          job_id: jobId,
+          note:
+            "Still running. The job continues server-side — check back or poll ul.job from your agent.",
+        });
+        setRunState("queued");
+        return;
+      }
+      pollJob(jobId, startedAt, gen);
+    }, 3000);
+  };
 
   const runFunction = async () => {
+    // A re-run supersedes any in-flight poll chain from a previous async run.
+    // Capture the bumped generation NOW: a re-run or unmount during the run
+    // POST below bumps it again, and this invocation must notice.
+    const gen = ++pollGenRef.current;
+    if (pollTimerRef.current !== null) {
+      clearTimeout(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
     setRunState("running");
     const data = new FormData(formRef.current || undefined);
     // Send exactly what the form contains — never silently substitute demo
@@ -1614,16 +1687,34 @@ function FunctionSandboxCard({
       const result = await launchApi.runAgentFunction(tool.id, fn.name, {
         args,
       });
+      // Superseded (re-run) or unmounted while the POST was in flight.
+      if (pollGenRef.current !== gen) return;
+      const resultRecord = result.result && typeof result.result === "object" &&
+          !Array.isArray(result.result)
+        ? result.result as Record<string, unknown>
+        : null;
+      if (
+        resultRecord?._async === true &&
+        typeof resultRecord.job_id === "string" &&
+        resultRecord.status === "queued"
+      ) {
+        setResponse({
+          job_id: resultRecord.job_id,
+          status: "queued",
+          note: "Queued for durable execution — waiting for the result…",
+        });
+        setRunState("queued");
+        pollJob(resultRecord.job_id, Date.now(), gen);
+        return;
+      }
       setResponse({
-        ...(result.result && typeof result.result === "object" &&
-            !Array.isArray(result.result)
-          ? result.result as Record<string, unknown>
-          : { result: result.result ?? null }),
+        ...(resultRecord ?? { result: result.result ?? null }),
         receiptId: result.receiptId || null,
         success: result.success,
       });
       setRunState(result.success ? "success" : "error");
     } catch (err) {
+      if (pollGenRef.current !== gen) return;
       setResponse({
         error: err instanceof Error ? err.message : String(err),
       });

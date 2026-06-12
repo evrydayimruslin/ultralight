@@ -46,6 +46,7 @@ import {
   type LaunchDiscoverySource,
   type LaunchFunctionRunRequest,
   type LaunchFunctionRunResponse,
+  type LaunchJobStatusResponse,
   type LaunchFunctionSummary,
   type LaunchInferenceOptionsResponse,
   type LaunchInstallInstruction,
@@ -509,6 +510,35 @@ export async function handleLaunch(request: Request): Promise<Response> {
       return await handleLaunchWiringTargets(request, url, method);
     }
 
+    // Durable async executions: poll a queued/running job (website twin of
+    // ul.job). User-scoped read.
+    const jobMatch = path.match(/^\/api\/launch\/jobs\/([^/]+)$/);
+    if (jobMatch) {
+      if (method !== "GET") {
+        return error("Method not allowed for launch job status", 405);
+      }
+      const user = await requireLaunchUser(request);
+      const jobId = decodeURIComponent(jobMatch[1]).trim();
+      if (!isUuid(jobId)) {
+        return error("Invalid job id", 400);
+      }
+      const { getJob } = await import("../services/async-jobs.ts");
+      const job = await getJob(jobId, user.id);
+      if (!job) return error("Job not found", 404);
+      return json({
+        jobId: job.id,
+        status: job.status,
+        result: job.status === "completed" ? job.result : null,
+        error: job.status === "failed" ? job.error : null,
+        durationMs: job.duration_ms,
+        aiCostCredits: job.ai_cost_light,
+        executionId: job.execution_id || null,
+        createdAt: job.created_at,
+        completedAt: job.completed_at,
+        generatedAt: new Date().toISOString(),
+      } satisfies LaunchJobStatusResponse);
+    }
+
     if (path === "/api/launch/settings") {
       return await handleLaunchSettings(request, method);
     }
@@ -684,6 +714,7 @@ function buildLaunchStatus(request: Request): Record<string, unknown> {
       // Deprecated alias keys kept for one rename window.
       toolFunctions: "/api/launch/agents/{id}/functions",
       functionRun: "/api/launch/agents/{id}/functions/{functionName}/run",
+      jobStatus: "/api/launch/jobs/{jobId}",
       callerPermissions: "/api/launch/agents/{id}/caller-permissions",
       agentPermissions: "/api/launch/agents/{id}/caller-permissions",
       wiring: "/api/launch/agents/{id}/wiring",
@@ -1558,6 +1589,35 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
           },
         },
       },
+      "/api/launch/jobs/{jobId}": {
+        get: {
+          operationId: "getLaunchJobStatus",
+          summary: "Poll a durable async execution",
+          description:
+            "Authenticated account-session endpoint. Functions declared async (or run with _async: true) return { _async: true, job_id, status: \"queued\" } from the run endpoint; poll this endpoint with that job_id until status is completed or failed. Jobs are user-scoped.",
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: "jobId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" },
+              description: "The job_id from an async run envelope",
+            },
+          ],
+          responses: {
+            "200": {
+              description: "Current job status (result present once completed)",
+              content: jsonContent({
+                $ref: "#/components/schemas/JobStatusResponse",
+              }),
+            },
+            "400": { description: "Invalid job id" },
+            "401": { description: "Authentication required" },
+            "404": { description: "Job not found" },
+          },
+        },
+      },
       "/api/launch/agents/{id}/caller-permissions": {
         get: {
           operationId: "getLaunchToolAgentPermissions",
@@ -2372,6 +2432,29 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
             generatedAt: { type: "string", format: "date-time" },
           },
         },
+        JobStatusResponse: {
+          type: "object",
+          required: ["jobId", "status", "aiCostCredits", "generatedAt"],
+          properties: {
+            jobId: { type: "string", format: "uuid" },
+            status: {
+              type: "string",
+              enum: ["queued", "running", "completed", "failed"],
+            },
+            result: { description: "Present only when status is completed." },
+            error: { description: "Present only when status is failed." },
+            durationMs: { type: ["number", "null"] },
+            aiCostCredits: { type: "number" },
+            executionId: {
+              type: ["string", "null"],
+              description:
+                "Links the job to its execution receipt and AI-spend ledger.",
+            },
+            createdAt: { type: "string", format: "date-time" },
+            completedAt: { type: ["string", "null"], format: "date-time" },
+            generatedAt: { type: "string", format: "date-time" },
+          },
+        },
         FunctionRunResponse: {
           type: "object",
           required: [
@@ -2388,7 +2471,10 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
               description: "Deprecated alias of agent.",
             },
             functionName: { type: "string" },
-            result: {},
+            result: {
+              description:
+                "Function return value. Async-declared functions (or _async: true runs) instead return { _async: true, job_id, status: \"queued\" } — poll /api/launch/jobs/{jobId}.",
+            },
             receiptId: { type: ["string", "null"] },
             warnings: { type: "array", items: { type: "object" } },
             error: {

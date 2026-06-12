@@ -202,10 +202,6 @@
       ]
     },
     {
-      "exports": [
-        "getServerInstance",
-        "startAsyncJobCleanupJob"
-      ],
       "file": "services/async-jobs.ts",
       "types": [
         "AsyncJob"

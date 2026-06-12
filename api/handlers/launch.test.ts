@@ -2244,3 +2244,118 @@ Deno.test('launch facade: status and openapi advertise grant/wiring routes', asy
     );
   });
 });
+
+// ── Durable async job polling (GET /api/launch/jobs/:id) ──
+
+function jobSessionMock(rows: unknown[]): typeof fetch {
+  return (async (input: Request | URL | string) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url === 'https://supabase.test/auth/v1/user') {
+      return jsonResponse({
+        id: 'user-1',
+        email: 'founder@example.com',
+        user_metadata: {},
+      });
+    }
+    if (url.includes('/rest/v1/async_jobs?')) {
+      // The handler must scope the read to the session user.
+      assertStringIncludes(url, 'user_id=eq.user-1');
+      return jsonResponse(rows);
+    }
+    if (url.includes('/rest/v1/users?')) {
+      return jsonResponse([{ id: 'user-1' }]);
+    }
+    return jsonResponse([]);
+  }) as typeof fetch;
+}
+
+const JOB_ID = '7f1e6f0a-2b3c-4d5e-8f90-123456789abc';
+
+Deno.test('launch facade: job status requires authentication', async () => {
+  await withLaunchEnv(async () => {
+    const response = await handleLaunch(
+      new Request(`https://ultralight.test/api/launch/jobs/${JOB_ID}`),
+    );
+    assertEquals(response.status, 401);
+  }, jobSessionMock([]));
+});
+
+Deno.test('launch facade: job status rejects non-uuid ids', async () => {
+  await withLaunchEnv(async () => {
+    const response = await handleLaunch(
+      new Request('https://ultralight.test/api/launch/jobs/not-a-uuid', {
+        headers: { Authorization: 'Bearer browser-session-token' },
+      }),
+    );
+    const body = await response.json() as { error?: string };
+    assertEquals(response.status, 400);
+    assertStringIncludes(body.error || '', 'Invalid job id');
+  }, jobSessionMock([]));
+});
+
+Deno.test('launch facade: job status 404s for unknown (or other-user) jobs', async () => {
+  await withLaunchEnv(async () => {
+    const response = await handleLaunch(
+      new Request(`https://ultralight.test/api/launch/jobs/${JOB_ID}`, {
+        headers: { Authorization: 'Bearer browser-session-token' },
+      }),
+    );
+    assertEquals(response.status, 404);
+  }, jobSessionMock([]));
+});
+
+Deno.test('launch facade: completed job returns the LaunchJobStatusResponse shape', async () => {
+  await withLaunchEnv(async () => {
+    const response = await handleLaunch(
+      new Request(`https://ultralight.test/api/launch/jobs/${JOB_ID}`, {
+        headers: { Authorization: 'Bearer browser-session-token' },
+      }),
+    );
+    const body = await response.json() as Record<string, unknown>;
+    assertEquals(response.status, 200);
+    assertEquals(body.jobId, JOB_ID);
+    assertEquals(body.status, 'completed');
+    assertEquals(body.result, { answer: 42 });
+    assertEquals(body.error, null);
+    assertEquals(body.aiCostCredits, 1.5);
+    assertEquals(body.executionId, 'exec-1');
+    assertEquals(typeof body.generatedAt, 'string');
+  }, jobSessionMock([{
+    id: JOB_ID,
+    status: 'completed',
+    result: { answer: 42 },
+    result_r2_key: null,
+    error: null,
+    duration_ms: 1234,
+    ai_cost_light: 1.5,
+    execution_id: 'exec-1',
+    created_at: '2026-06-11T00:00:00Z',
+    completed_at: '2026-06-11T00:01:00Z',
+  }]));
+});
+
+Deno.test('launch facade: queued job reports queued (never failed) with no result/error', async () => {
+  await withLaunchEnv(async () => {
+    const response = await handleLaunch(
+      new Request(`https://ultralight.test/api/launch/jobs/${JOB_ID}`, {
+        headers: { Authorization: 'Bearer browser-session-token' },
+      }),
+    );
+    const body = await response.json() as Record<string, unknown>;
+    assertEquals(response.status, 200);
+    assertEquals(body.status, 'queued');
+    assertEquals(body.result, null);
+    assertEquals(body.error, null);
+  }, jobSessionMock([{
+    id: JOB_ID,
+    status: 'queued',
+    result: null,
+    result_r2_key: null,
+    error: null,
+    duration_ms: null,
+    ai_cost_light: 0,
+    execution_id: 'exec-1',
+    created_at: '2026-06-11T00:00:00Z',
+    completed_at: null,
+  }]));
+});

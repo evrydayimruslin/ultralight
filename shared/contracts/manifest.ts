@@ -117,6 +117,16 @@ export interface ManifestFunction {
   examples?: string[];
   annotations?: MCPToolAnnotations;
   generation_hints?: WidgetGenerationHints;
+  // Durable execution: class 'async' dispatches calls to the execution queue
+  // — the caller gets a { _async, job_id } envelope in milliseconds and polls
+  // ul.job. Queue executions run with an extended budget (timeout_ms can only
+  // LOWER it; the platform ceiling applies). Default/'sync' runs in-request.
+  execution?: ManifestFunctionExecution;
+}
+
+export interface ManifestFunctionExecution {
+  class?: 'sync' | 'async';
+  timeout_ms?: number;
 }
 
 export interface ManifestSkill {
@@ -2415,6 +2425,40 @@ export function validateManifest(input: unknown): ManifestValidationResult {
           `functions.${fnName}.generation_hints`,
           errors,
         );
+
+        if (fn.execution !== undefined) {
+          if (!fn.execution || typeof fn.execution !== 'object') {
+            errors.push({
+              path: `functions.${fnName}.execution`,
+              message: 'execution must be an object',
+            });
+          } else {
+            const execution = fn.execution as Record<string, unknown>;
+            if (
+              execution.class !== undefined && execution.class !== 'sync' &&
+              execution.class !== 'async'
+            ) {
+              errors.push({
+                path: `functions.${fnName}.execution.class`,
+                message: "execution.class must be 'sync' or 'async'",
+              });
+            }
+            if (execution.timeout_ms !== undefined) {
+              const timeout = execution.timeout_ms;
+              if (
+                typeof timeout !== 'number' || !Number.isFinite(timeout) ||
+                !Number.isInteger(timeout) || timeout <= 0 ||
+                timeout > 600_000
+              ) {
+                errors.push({
+                  path: `functions.${fnName}.execution.timeout_ms`,
+                  message:
+                    'execution.timeout_ms must be a positive integer of milliseconds (max 600000)',
+                });
+              }
+            }
+          }
+        }
 
         if (fn.parameters !== undefined) {
           if (typeof fn.parameters !== 'object') {
