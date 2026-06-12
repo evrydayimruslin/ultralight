@@ -297,11 +297,16 @@ export function calcD1WriteCloudUnits(
 // suffix regenerates whenever the bounded map resets, so a reset mid-receipt
 // can never re-collide with keys already issued.
 const CLOUD_OP_SEQUENCE_MAX_ENTRIES = 50_000;
-let cloudOpSequenceEpoch = crypto.randomUUID().slice(0, 8);
+// Lazily initialized: Workers reject scripts that generate random values in
+// global scope (deploy-time validation error 10021).
+let cloudOpSequenceEpoch: string | null = null;
 const cloudOpSequences = new Map<string, number>();
 
 function nextCloudOperationKey(baseKey: string | null): string | null {
   if (!baseKey) return null;
+  if (cloudOpSequenceEpoch === null) {
+    cloudOpSequenceEpoch = crypto.randomUUID().slice(0, 8);
+  }
   if (cloudOpSequences.size >= CLOUD_OP_SEQUENCE_MAX_ENTRIES) {
     cloudOpSequences.clear();
     cloudOpSequenceEpoch = crypto.randomUUID().slice(0, 8);

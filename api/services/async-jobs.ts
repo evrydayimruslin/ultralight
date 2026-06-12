@@ -59,7 +59,18 @@ export interface AsyncJob {
   created_at: string;
 }
 
-const serverInstance = `cf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+// Lazily initialized: Workers reject scripts that generate random values in
+// global scope (deploy-time validation error 10021).
+let serverInstance: string | null = null;
+
+function getServerInstance(): string {
+  if (serverInstance === null) {
+    serverInstance = `cf-${Date.now()}-${
+      Math.random().toString(36).slice(2, 8)
+    }`;
+  }
+  return serverInstance;
+}
 
 /**
  * Create a job in 'queued' status at dispatch time. Persists the full
@@ -123,7 +134,7 @@ export async function claimQueuedJob(jobId: string): Promise<AsyncJob | null> {
       body: JSON.stringify({
         status: 'running',
         started_at: new Date().toISOString(),
-        server_instance: serverInstance,
+        server_instance: getServerInstance(),
       }),
     },
   );

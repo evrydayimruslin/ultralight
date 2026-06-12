@@ -18,6 +18,7 @@ export interface AppManifest {
     permissions?: string[];
     external_functions?: ManifestExternalDependency[];
     imports?: Record<string, ManifestSlotImport>;
+    emits?: string[];
     widgets?: WidgetDeclaration[];
     context_sources?: WidgetContextSourceDeclaration[];
     routines?: RoutineDeclaration[];
@@ -71,6 +72,11 @@ export interface ManifestFunction {
     examples?: string[];
     annotations?: MCPToolAnnotations;
     generation_hints?: WidgetGenerationHints;
+    execution?: ManifestFunctionExecution;
+}
+export interface ManifestFunctionExecution {
+    class?: 'sync' | 'async';
+    timeout_ms?: number;
 }
 export interface ManifestSkill {
     name?: string;
