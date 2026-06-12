@@ -2,7 +2,11 @@ import { assert } from "https://deno.land/std@0.210.0/assert/assert.ts";
 import { assertEquals } from "https://deno.land/std@0.210.0/assert/assert_equals.ts";
 import { assertRejects } from "https://deno.land/std@0.210.0/assert/assert_rejects.ts";
 
-import { emitEvent } from "./agent-events.ts";
+import {
+  claimEventById,
+  dispatchPendingEvents,
+  emitEvent,
+} from "./agent-events.ts";
 import { resolveSubscribeGrant, resolveSubscribers } from "./agent-grants.ts";
 import { MAX_AGENT_CALL_HOP_DEPTH } from "../../shared/contracts/agent-grants.ts";
 
@@ -273,4 +277,191 @@ Deno.test("resolveSubscribers: returns the active subscribe grants for an emitte
       assertEquals(subs[1].targetFunction, "ship");
     },
   );
+});
+
+
+// ── PR4: queue-driven dispatch ──────────────────────────────────────────────
+
+interface QueueCapture {
+  sent: unknown[];
+  failSend?: boolean;
+}
+
+// withMockedDb + an EVENT_QUEUE binding (the queue producer is read from
+// globalThis.__env, same as the DB config).
+async function withMockedDbAndQueue<T>(
+  handler: Handler,
+  queue: QueueCapture,
+  fn: () => Promise<T>,
+): Promise<T> {
+  return await withMockedDb(handler, async () => {
+    const env = globalThis.__env as Record<string, unknown>;
+    env.EVENT_QUEUE = {
+      send: (body: unknown) => {
+        if (queue.failSend) return Promise.reject(new Error("queue down"));
+        queue.sent.push(body);
+        return Promise.resolve();
+      },
+    };
+    try {
+      return await fn();
+    } finally {
+      delete env.EVENT_QUEUE;
+    }
+  });
+}
+
+function eventRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "evt-1",
+    user_id: "user-1",
+    emitter_app_id: "app-emitter",
+    topic: "sale.created",
+    payload: { orderId: 7 },
+    status: "pending",
+    attempts: 0,
+    emit_hop: 1,
+    lease_until: null,
+    created_at: new Date(NOW - 10_000).toISOString(),
+    dispatched_at: null,
+    ...overrides,
+  };
+}
+
+Deno.test("emitEvent: enqueues {eventId} to EVENT_QUEUE after the row insert", async () => {
+  const queue: QueueCapture = { sent: [] };
+  const out = await withMockedDbAndQueue(
+    (url) => {
+      if (url.pathname.endsWith("/agent_events")) {
+        return jsonResponse([{ id: "evt-9" }], 201);
+      }
+      return jsonResponse([]);
+    },
+    queue,
+    () =>
+      emitEvent({
+        userId: "user-1",
+        emitterAppId: "app-emitter",
+        topic: "sale.created",
+        emitHop: 1,
+      }),
+  );
+  assertEquals(out.eventId, "evt-9");
+  assertEquals(queue.sent, [{ eventId: "evt-9" }]);
+});
+
+Deno.test("emitEvent: a failed queue send still returns the eventId (sweeper recovers)", async () => {
+  const queue: QueueCapture = { sent: [], failSend: true };
+  const out = await withMockedDbAndQueue(
+    () => jsonResponse([{ id: "evt-9" }], 201),
+    queue,
+    () =>
+      emitEvent({
+        userId: "user-1",
+        emitterAppId: "app-emitter",
+        topic: "sale.created",
+        emitHop: 1,
+      }),
+  );
+  assertEquals(out.eventId, "evt-9");
+  assertEquals(queue.sent, []);
+});
+
+Deno.test("claimEventById: read-then-claim through the pending/expired-lease filter", async () => {
+  const patches: { url: URL; body: Record<string, unknown> }[] = [];
+  const claimed = await withMockedDb(
+    (url, init) => {
+      if ((init?.method ?? "GET") === "GET") {
+        return jsonResponse([eventRow({ attempts: 2 })]);
+      }
+      patches.push({ url, body: JSON.parse(String(init?.body)) });
+      return jsonResponse([eventRow({ status: "delivering", attempts: 3 })]);
+    },
+    () => claimEventById("evt-1", NOW),
+  );
+  assertEquals(patches.length, 1);
+  const filter = patches[0].url.searchParams.get("or") ?? "";
+  assert(filter.includes("status.eq.pending"));
+  assert(filter.includes("status.eq.delivering,lease_until.lt."));
+  assertEquals(patches[0].body.status, "delivering");
+  // attempts counts dispatch passes, derived from the read row.
+  assertEquals(patches[0].body.attempts, 3);
+  assertEquals(claimed?.id, "evt-1");
+  assertEquals(claimed?.attempts, 3);
+});
+
+Deno.test("claimEventById: already claimed (filter matches nothing) → null", async () => {
+  const claimed = await withMockedDb(
+    (_url, init) =>
+      (init?.method ?? "GET") === "GET"
+        ? jsonResponse([eventRow({ status: "delivering" })])
+        : jsonResponse([]),
+    () => claimEventById("evt-1", NOW),
+  );
+  assertEquals(claimed, null);
+});
+
+Deno.test("claimEventById: infra failure throws (queue consumer retries pre-claim)", async () => {
+  await withMockedDb(
+    () => new Response("db down", { status: 500 }),
+    () => assertRejects(() => claimEventById("evt-1", NOW)),
+  );
+});
+
+Deno.test("sweeper with queue bound: re-enqueues stuck rows only, never dispatches inline", async () => {
+  const queue: QueueCapture = { sent: [] };
+  const requests: { method: string; url: URL }[] = [];
+  const result = await withMockedDbAndQueue(
+    (url, init) => {
+      requests.push({ method: init?.method ?? "GET", url });
+      return jsonResponse([eventRow(), eventRow({ id: "evt-2" })]);
+    },
+    queue,
+    () => dispatchPendingEvents({ nowMs: NOW }),
+  );
+  assertEquals(result.scanned, 2);
+  assertEquals(queue.sent, [{ eventId: "evt-1" }, { eventId: "evt-2" }]);
+  // Enqueue-only: a single scan GET, no claim PATCH, no delivery traffic —
+  // the cron can never blow its wall budget on a slow fan-out again.
+  assertEquals(requests.map((r) => r.method), ["GET"]);
+  // Grace window: pending rows younger than the cutoff belong to the queue
+  // consumer; sweeping them would race its claim every tick.
+  const filter = requests[0].url.searchParams.get("or") ?? "";
+  const match = filter.match(/status\.eq\.pending,created_at\.lt\.([^)]+)/);
+  assert(match, "pending arm must carry a created_at cutoff");
+  assertEquals(new Date(match[1]).getTime(), NOW - 2 * 60_000);
+});
+
+Deno.test("sweeper without queue (dev): scans without grace and dispatches inline", async () => {
+  const methods: string[] = [];
+  const scanFilters: string[] = [];
+  await withMockedDb(
+    (url, init) => {
+      const method = init?.method ?? "GET";
+      methods.push(method);
+      if (method === "GET" && url.pathname.endsWith("/agent_events")) {
+        scanFilters.push(url.searchParams.get("or") ?? "");
+        // Scan returns one pending row; the claim read reuses this handler.
+        return jsonResponse([eventRow()]);
+      }
+      if (method === "PATCH" && url.pathname.endsWith("/agent_events")) {
+        const body = JSON.parse(String(init?.body));
+        // Claim succeeds; terminal patch captured implicitly.
+        return jsonResponse(
+          body.status === "delivering"
+            ? [eventRow({ status: "delivering", attempts: 1 })]
+            : [],
+        );
+      }
+      // resolveSubscribers → no grants: zero-subscriber fan-out.
+      return jsonResponse([]);
+    },
+    () => dispatchPendingEvents({ nowMs: NOW }),
+  );
+  // The pre-queue pending arm exactly: NO created_at predicate (a cross-clock
+  // comparison would let DB skew hide a just-emitted row for a tick).
+  assert(scanFilters[0].includes("status.eq.pending,and"));
+  assert(!scanFilters[0].includes("created_at"));
+  // Inline path engaged: at least one PATCH (the claim) was issued.
+  assert(methods.includes("PATCH"));
 });

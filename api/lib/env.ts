@@ -145,8 +145,20 @@ export function getSelfFetcher(): ((
   return null;
 }
 
-interface ExecQueue {
+interface QueueProducer {
   send(body: unknown, options?: { delaySeconds?: number }): Promise<void>;
+}
+
+function getQueueProducer(binding: string): QueueProducer | null {
+  const queue = globalThis.__env?.[binding];
+  if (
+    queue && typeof queue === "object" &&
+    typeof (queue as { send?: unknown }).send === "function"
+  ) {
+    const producer = queue as QueueProducer;
+    return { send: producer.send.bind(producer) };
+  }
+  return null;
 }
 
 /**
@@ -154,14 +166,15 @@ interface ExecQueue {
  * EXEC_QUEUE), or null when unbound (tests, local setups without queues —
  * callers fall back to synchronous execution).
  */
-export function getExecQueue(): ExecQueue | null {
-  const queue = globalThis.__env?.EXEC_QUEUE;
-  if (
-    queue && typeof queue === "object" &&
-    typeof (queue as { send?: unknown }).send === "function"
-  ) {
-    const producer = queue as ExecQueue;
-    return { send: producer.send.bind(producer) };
-  }
-  return null;
+export function getExecQueue(): QueueProducer | null {
+  return getQueueProducer("EXEC_QUEUE");
+}
+
+/**
+ * The event-bus dispatch queue producer (wrangler [[queues.producers]]
+ * EVENT_QUEUE), or null when unbound — emit falls back to the cron sweeper's
+ * inline dispatch.
+ */
+export function getEventQueue(): QueueProducer | null {
+  return getQueueProducer("EVENT_QUEUE");
 }

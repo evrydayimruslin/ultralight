@@ -57,6 +57,25 @@ max_batch_timeout = 2
 max_retries = 3
 dead_letter_queue = "ultralight-exec-dlq"
 
+# Event-bus dispatch queue: ultralight.emit enqueues {eventId}; the consumer
+# performs the fan-out with bounded concurrency (per-delivery at-most-once is
+# the delivery-row claim, exactly as the cron path). max_batch_size stays 1
+# for the same wall-budget reason as the exec queue — one event's fan-out can
+# legitimately hold an invocation for minutes.
+# Provision before deploy:
+#   wrangler queues create ultralight-events
+#   wrangler queues create ultralight-events-dlq
+[[queues.producers]]
+binding = "EVENT_QUEUE"
+queue = "ultralight-events"
+
+[[queues.consumers]]
+queue = "ultralight-events"
+max_batch_size = 1
+max_batch_timeout = 2
+max_retries = 3
+dead_letter_queue = "ultralight-events-dlq"
+
 [vars]
 BASE_URL = "https://ultralight-api.rgn4jz429m.workers.dev"
 LAUNCH_WEB_BASE_URL = "https://ultralight-launch-web.pages.dev"
@@ -109,6 +128,20 @@ max_batch_size = 1
 max_batch_timeout = 2
 max_retries = 3
 dead_letter_queue = "ultralight-exec-staging-dlq"
+
+# Provision before deploy:
+#   wrangler queues create ultralight-events-staging
+#   wrangler queues create ultralight-events-staging-dlq
+[[env.staging.queues.producers]]
+binding = "EVENT_QUEUE"
+queue = "ultralight-events-staging"
+
+[[env.staging.queues.consumers]]
+queue = "ultralight-events-staging"
+max_batch_size = 1
+max_batch_timeout = 2
+max_retries = 3
+dead_letter_queue = "ultralight-events-staging-dlq"
 
 [env.staging.vars]
 BASE_URL = "https://ultralight-api-staging.rgn4jz429m.workers.dev"

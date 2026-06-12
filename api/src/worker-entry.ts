@@ -138,21 +138,37 @@ export default {
   },
 
   /**
-   * Queue consumer — durable async execution (PR3). Each message carries
-   * { jobId }; the consumer claims the job row and runs the full execution
-   * pipeline with the extended budget. Awaiting before ack is what lets
-   * >120s inference complete — there is no response boundary here.
+   * Queue consumer — durable async execution (PR3) and event-bus dispatch
+   * (PR4), routed by source queue. Exec messages carry { jobId }; event
+   * messages carry { eventId }. Claims on the backing rows are the
+   * at-most-once guards; post-claim failures never retry the message.
+   * Awaiting before ack is what lets >120s work complete — there is no
+   * response boundary here.
    */
   async queue(batch: MessageBatch<unknown>, env: Env, ctx: ExecutionContext) {
     globalThis.__env = env;
     globalThis.__ctx = ctx;
 
-    const { processExecMessage } = await import(
-      '../services/async-exec-consumer.ts'
-    );
+    let process: (body: unknown) => Promise<'ack' | 'retry'>;
+    if (batch.queue.includes('ultralight-exec')) {
+      ({ processExecMessage: process } = await import(
+        '../services/async-exec-consumer.ts'
+      ));
+    } else if (batch.queue.includes('ultralight-events')) {
+      ({ processEventMessage: process } = await import(
+        '../services/agent-events-consumer.ts'
+      ));
+    } else {
+      cronLogger.error('Message from unknown queue dropped', {
+        queue: batch.queue,
+      });
+      for (const message of batch.messages) message.ack();
+      return;
+    }
+
     for (const message of batch.messages) {
       try {
-        const outcome = await processExecMessage(message.body);
+        const outcome = await process(message.body);
         if (outcome === 'retry') {
           message.retry({
             delaySeconds: Math.min(30 * message.attempts, 300),
@@ -161,7 +177,7 @@ export default {
           message.ack();
         }
       } catch (err) {
-        // processExecMessage handles its own failures; this is a backstop.
+        // Consumers handle their own failures; this is a backstop.
         cronLogger.error('Queue message processing crashed', { error: err });
         message.ack();
       }

@@ -153,6 +153,24 @@ poison messages; sync paths byte-identical.
 Acceptance: 100-subscriber fan-out runs outside the cron tick with concurrency;
 sibling minute jobs unaffected by slow handlers; failures visible as `failed` (PR 1).
 
+**Landed decisions (review-driven, 2026-06-11):**
+- Separate `ultralight-events` queue (max_batch_size=1 for the same wall-budget
+  reason as exec; routing in `queue()` by `batch.queue` name). Lease raised
+  120s→900s — it must cover a full fan-out PASS, not one delivery.
+- Fan-out runs in 5-concurrent waves with a 40-delivery per-pass budget
+  (subrequest headroom) and a 10-min soft deadline; an incomplete pass goes
+  back to `pending` and re-enqueues (awaited — a detached send is cancelled at
+  invocation end). "Already settled" skips do NOT consume the pass budget —
+  charging them starved every fan-out >40 of its remainder (review-caught HIGH,
+  now pinned by a two-pass continuation test).
+- claimDelivery throws on HTTP failure (retryable lane) instead of returning
+  the duplicate-row null — an infra blip must not permanently skip a
+  subscriber.
+- Sweeper is enqueue-only when the queue is bound (cron can never blow its
+  wall on slow handlers) with a 2-min pending grace; dev fallback keeps the
+  exact pre-queue filter (no cross-clock created_at predicate).
+- Deferred: per-user emit rate limit (4.5 followup, unchanged).
+
 ## PR 5 — Hot-path streamlining  (size: M)
 
 From the cost audit (~10-13 serial Supabase RTs per call today):
