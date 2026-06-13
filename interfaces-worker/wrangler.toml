@@ -1,0 +1,35 @@
+# Ultralight Interfaces sandbox worker (Interfaces PR3).
+#
+# Serves developer-shipped interface HTML from the dedicated content-addressed
+# R2 prefix interfaces/{appId}/{sha256}.html — and ONLY that prefix. This
+# worker is the second origin that keeps untrusted developer HTML cross-site
+# from the launch website (workers.dev and pages.dev are both Public Suffix
+# List entries, so the two deployables are different sites to the browser).
+#
+# Security posture lives in src/serve.ts: CSP `sandbox` header suite, no
+# cookies ever, immutable content-addressed caching.
+
+name = "ultralight-interfaces"
+main = "src/index.ts"
+compatibility_date = "2026-03-01"
+
+[[r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "ultralight-apps"
+
+[vars]
+ENVIRONMENT = "production"
+# Space-separated CSP frame-ancestors source list: which pages may embed
+# interfaces. Unset/empty fails closed to 'none'.
+FRAME_ANCESTORS = "https://ultralight-launch-web.pages.dev"
+
+[env.staging]
+name = "ultralight-interfaces-staging"
+
+[[env.staging.r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "ultralight-apps"
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+FRAME_ANCESTORS = "https://staging.ultralight-launch-web.pages.dev http://localhost:5173 http://127.0.0.1:5173 http://localhost:5178 http://127.0.0.1:5178"

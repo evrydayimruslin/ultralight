@@ -1,0 +1,19 @@
+{
+  "name": "ultralight-interfaces-worker",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy --config wrangler.toml --env=\"\" --keep-vars",
+    "deploy:dry-run": "wrangler deploy --config wrangler.toml --env=\"\" --dry-run",
+    "deploy:staging": "wrangler deploy --config wrangler.toml --env staging --keep-vars",
+    "deploy:staging:dry-run": "wrangler deploy --config wrangler.toml --env staging --dry-run",
+    "typecheck": "tsc -p tsconfig.json",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241205.0",
+    "typescript": "^5.7.0",
+    "wrangler": "^4.67.0"
+  }
+}

@@ -115,8 +115,10 @@ suite, deployed to staging+prod alongside the existing workers.
   (`img-src https:` technically allows GET-beacon exfil; accepted because the only data inside
   the frame is what the developer's own functions returned — record as an adversarial-review
   checklist item, PR6.)
-- CI: new job in `.github/workflows/api-deploy.yml` (staging on `main` push, prod on `v*` tag,
-  same env-scoped `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID`). Honor I7 gotchas.
+- CI: dedicated `.github/workflows/interfaces-worker-deploy.yml` (not an api-deploy.yml job —
+  api-deploy's path filter wouldn't trigger on interfaces-worker changes). Same gating: staging
+  on `main` push, prod on `v*` tag, env-scoped `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID`;
+  verify job (typecheck + deno tests + dry-runs) also runs on PRs. Honor I7 gotchas.
 - Smoke: `scripts/smoke/interface-serve-smoke.mjs` (pattern: durable-exec-smoke.mjs) — seeds a
   test object (or uses a fixture app's interface), asserts 200 + every security header + 404 on
   a forged path + 405 on POST.
