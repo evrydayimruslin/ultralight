@@ -8,10 +8,13 @@ export interface DesktopEnvSource {
   readonly VITE_UL_API_BASE?: string;
 }
 
+// Local dev points at the direct Worker origin (not the custom domain) so
+// desktop auth/chat still work if the production custom domain is temporarily
+// misrouted at the edge while DNS/SSL for ultralightagent.com settles.
 const DEVELOPMENT_FALLBACK_API_BASE = 'https://ultralight-api.rgn4jz429m.workers.dev';
 
 const PINNED_API_BASES: Record<Exclude<DesktopEnvironment, 'development'>, string> = {
-  production: 'https://ultralight-api.rgn4jz429m.workers.dev',
+  production: 'https://api.ultralightagent.com',
   staging: 'https://ultralight-api-staging.rgn4jz429m.workers.dev',
 };
 

@@ -38,10 +38,10 @@ if (!["staging", "production"].includes(target)) {
 }
 
 const defaultPagesUrl = target === "production"
-  ? "https://ultralight-launch-web.pages.dev"
+  ? "https://ultralightagent.com"
   : "https://staging.ultralight-launch-web.pages.dev";
 const defaultApiUrl = target === "production"
-  ? "https://ultralight-api.rgn4jz429m.workers.dev"
+  ? "https://api.ultralightagent.com"
   : "https://ultralight-api-staging.rgn4jz429m.workers.dev";
 
 const pagesBase = normalizeBaseUrl(

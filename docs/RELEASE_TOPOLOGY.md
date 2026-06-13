@@ -97,17 +97,17 @@ flowchart LR
 
 | Surface | Staging | Production | Notes |
 | --- | --- | --- | --- |
-| Public API hostname | `https://ultralight-api-staging.rgn4jz429m.workers.dev` | `https://ultralight-api.rgn4jz429m.workers.dev` | configured in [api/wrangler.toml](../api/wrangler.toml); replace with an owned custom domain only after DNS/control-plane ownership is confirmed |
-| Launch website hostname | `https://staging.ultralight-launch-web.pages.dev` | `https://ultralight-launch-web.pages.dev` | configured in [apps/launch-web/wrangler.toml](../apps/launch-web/wrangler.toml) and the Cloudflare Pages project; replace with owned custom domains only after DNS/control-plane ownership is confirmed |
-| Launch website API base | `https://ultralight-api-staging.rgn4jz429m.workers.dev` | `https://ultralight-api.rgn4jz429m.workers.dev` | build-time `VITE_LAUNCH_API_BASE_URL` from [apps/launch-web/.env.staging](../apps/launch-web/.env.staging) and [apps/launch-web/.env.production](../apps/launch-web/.env.production) |
+| Public API hostname | `https://ultralight-api-staging.rgn4jz429m.workers.dev` | `https://api.ultralightagent.com` | configured in [api/wrangler.toml](../api/wrangler.toml); replace with an owned custom domain only after DNS/control-plane ownership is confirmed |
+| Launch website hostname | `https://staging.ultralight-launch-web.pages.dev` | `https://ultralightagent.com` | configured in [apps/launch-web/wrangler.toml](../apps/launch-web/wrangler.toml) and the Cloudflare Pages project; replace with owned custom domains only after DNS/control-plane ownership is confirmed |
+| Launch website API base | `https://ultralight-api-staging.rgn4jz429m.workers.dev` | `https://api.ultralightagent.com` | build-time `VITE_LAUNCH_API_BASE_URL` from [apps/launch-web/.env.staging](../apps/launch-web/.env.staging) and [apps/launch-web/.env.production](../apps/launch-web/.env.production) |
 | Main API Worker script | `ultralight-api-staging` | `ultralight-api` | staging uses Wrangler `env.staging`; production uses top-level config |
 | Main API entrypoint | [api/src/worker-entry.ts](../api/src/worker-entry.ts) | [api/src/worker-entry.ts](../api/src/worker-entry.ts) | same code path, different deployment target |
 | Supabase project | GitHub secret `SUPABASE_STAGING_PROJECT_ID` | GitHub secret `SUPABASE_PRODUCTION_PROJECT_ID` | schema deploys are split correctly by workflow |
 | Schema source | [supabase/migrations](../supabase/migrations) | [supabase/migrations](../supabase/migrations) | canonical migration source for both envs |
 | Desktop channel | `staging` | `production` | set by `ULTRALIGHT_DESKTOP_BUILD_CHANNEL` in desktop workflows |
-| Desktop pinned API base | `https://ultralight-api-staging.rgn4jz429m.workers.dev` | `https://ultralight-api.rgn4jz429m.workers.dev` | enforced in [desktop/src/lib/environment.ts](../desktop/src/lib/environment.ts) |
+| Desktop pinned API base | `https://ultralight-api-staging.rgn4jz429m.workers.dev` | `https://api.ultralightagent.com` | enforced in [desktop/src/lib/environment.ts](../desktop/src/lib/environment.ts) |
 | Desktop updater endpoint | none in standard staging builds | [latest.json](https://github.com/evrydayimruslin/ultralight/releases/latest/download/latest.json) | updater is production-only in the tag workflow |
-| Web product origin | `https://staging.ultralight-launch-web.pages.dev` | `https://ultralight-launch-web.pages.dev` | direct browser calls are allowed by `CORS_ALLOWED_ORIGINS` in [api/wrangler.toml](../api/wrangler.toml); launch auth uses a bearer access token plus an HttpOnly `SameSite=None` refresh cookie rotated via `POST /auth/launch/refresh` (Phase 0 pivot) |
+| Web product origin | `https://staging.ultralight-launch-web.pages.dev` | `https://ultralightagent.com` | direct browser calls are allowed by `CORS_ALLOWED_ORIGINS` in [api/wrangler.toml](../api/wrangler.toml); launch auth uses a bearer access token plus an HttpOnly `SameSite=None` refresh cookie rotated via `POST /auth/launch/refresh` (Phase 0 pivot) |
 
 ## Supporting And Non-Standard Surfaces
 

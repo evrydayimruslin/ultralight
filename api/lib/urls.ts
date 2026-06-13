@@ -7,7 +7,7 @@
 // When a vanity domain lands, change CANONICAL_BASE and every consumer
 // updates in lockstep — no scattering of hardcoded URLs across handlers.
 
-export const CANONICAL_BASE = 'https://ultralight-api.rgn4jz429m.workers.dev';
+export const CANONICAL_BASE = 'https://api.ultralightagent.com';
 
 /** Canonical public store page URL for an app (by id or slug). */
 export function appStoreUrl(idOrSlug: string): string {

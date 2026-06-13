@@ -20,10 +20,11 @@ export interface Config {
   };
 }
 
-const DEFAULT_API_URL = 'https://ultralight-api.rgn4jz429m.workers.dev';
+const DEFAULT_API_URL = 'https://api.ultralightagent.com';
 const LEGACY_API_URLS = new Set([
   'https://api.ultralight.dev',
   'https://ultralight-api-iikqz.ondigitalocean.app',
+  'https://ultralight-api.rgn4jz429m.workers.dev',
 ]);
 
 const DEFAULT_CONFIG: Config = {

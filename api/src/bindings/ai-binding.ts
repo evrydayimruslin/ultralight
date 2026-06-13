@@ -157,7 +157,7 @@ export class AIBinding extends WorkerEntrypoint<unknown, AIBindingProps> {
         headers: {
           'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://ultralight-api.rgn4jz429m.workers.dev',
+          'HTTP-Referer': 'https://api.ultralightagent.com',
           'X-Title': 'Ultralight',
         },
         body: JSON.stringify({

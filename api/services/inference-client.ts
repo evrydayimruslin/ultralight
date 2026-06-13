@@ -2,7 +2,7 @@ import type { ResolvedInferenceRoute } from "./inference-route.ts";
 import { BYOK_PROVIDERS, isActiveBYOKProvider } from "../../shared/types/index.ts";
 import { resolvePlatformInferenceModel } from "./platform-inference-models.ts";
 
-const DEFAULT_REFERER = "https://ultralight-api.rgn4jz429m.workers.dev";
+const DEFAULT_REFERER = "https://api.ultralightagent.com";
 const INTERNAL_WEB_SEARCH_FLAG = "web_search_enabled";
 const OPENAI_CHAT_WEB_SEARCH_MODEL = "gpt-5-search-api";
 

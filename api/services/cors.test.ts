@@ -11,59 +11,59 @@ import {
 
 Deno.test("cors: allows configured production origins", () => {
   const request = new Request(
-    "https://ultralight-api.rgn4jz429m.workers.dev/http/test",
+    "https://api.ultralightagent.com/http/test",
     {
-      headers: { Origin: "https://ultralight-api.rgn4jz429m.workers.dev" },
+      headers: { Origin: "https://api.ultralightagent.com" },
     },
   );
 
   const headers = buildCorsHeaders(request, {
-    baseUrl: "https://ultralight-api.rgn4jz429m.workers.dev",
+    baseUrl: "https://api.ultralightagent.com",
     environment: "production",
-    allowedOrigins: "https://ultralight-api.rgn4jz429m.workers.dev",
+    allowedOrigins: "https://api.ultralightagent.com",
   });
 
   assertEquals(
     headers["Access-Control-Allow-Origin"],
-    "https://ultralight-api.rgn4jz429m.workers.dev",
+    "https://api.ultralightagent.com",
   );
   assertEquals(headers["Access-Control-Allow-Credentials"], "true");
 });
 
 Deno.test("cors: allows production launch-web Pages origin", () => {
   const request = new Request(
-    "https://ultralight-api.rgn4jz429m.workers.dev/api/launch/status",
+    "https://api.ultralightagent.com/api/launch/status",
     {
-      headers: { Origin: "https://ultralight-launch-web.pages.dev" },
+      headers: { Origin: "https://ultralightagent.com" },
     },
   );
 
   const headers = buildCorsHeaders(request, {
-    baseUrl: "https://ultralight-api.rgn4jz429m.workers.dev",
+    baseUrl: "https://api.ultralightagent.com",
     environment: "production",
     allowedOrigins:
-      "https://ultralight-api.rgn4jz429m.workers.dev,https://ultralight-launch-web.pages.dev",
+      "https://api.ultralightagent.com,https://ultralightagent.com",
   });
 
   assertEquals(
     headers["Access-Control-Allow-Origin"],
-    "https://ultralight-launch-web.pages.dev",
+    "https://ultralightagent.com",
   );
   assertEquals(headers["Access-Control-Allow-Credentials"], "true");
 });
 
 Deno.test("cors: blocks disallowed production browser origins", () => {
   const request = new Request(
-    "https://ultralight-api.rgn4jz429m.workers.dev/http/test",
+    "https://api.ultralightagent.com/http/test",
     {
       headers: { Origin: "https://evil.example" },
     },
   );
 
   const headers = buildCorsHeaders(request, {
-    baseUrl: "https://ultralight-api.rgn4jz429m.workers.dev",
+    baseUrl: "https://api.ultralightagent.com",
     environment: "production",
-    allowedOrigins: "https://ultralight-api.rgn4jz429m.workers.dev",
+    allowedOrigins: "https://api.ultralightagent.com",
   });
 
   assertEquals(headers["Access-Control-Allow-Origin"], undefined);
@@ -72,12 +72,12 @@ Deno.test("cors: blocks disallowed production browser origins", () => {
 
 Deno.test("cors: never includes scrapped desktop tauri origins", () => {
   const origins = resolveAllowedCorsOrigins({
-    baseUrl: "https://ultralight-api.rgn4jz429m.workers.dev",
+    baseUrl: "https://api.ultralightagent.com",
     environment: "production",
   });
 
   assertEquals(
-    origins.includes("https://ultralight-api.rgn4jz429m.workers.dev"),
+    origins.includes("https://api.ultralightagent.com"),
     true,
   );
   assertEquals(origins.includes("tauri://localhost"), false);
@@ -102,7 +102,7 @@ Deno.test("cors: keeps localhost origins available outside production", () => {
 
 Deno.test("cors: preflight rejects disallowed origins", async () => {
   const request = new Request(
-    "https://ultralight-api.rgn4jz429m.workers.dev/http/test",
+    "https://api.ultralightagent.com/http/test",
     {
       method: "OPTIONS",
       headers: { Origin: "https://evil.example" },
@@ -110,9 +110,9 @@ Deno.test("cors: preflight rejects disallowed origins", async () => {
   );
 
   const response = buildCorsPreflightResponse(request, {
-    baseUrl: "https://ultralight-api.rgn4jz429m.workers.dev",
+    baseUrl: "https://api.ultralightagent.com",
     environment: "production",
-    allowedOrigins: "https://ultralight-api.rgn4jz429m.workers.dev",
+    allowedOrigins: "https://api.ultralightagent.com",
   });
 
   assertEquals(response.status, 403);

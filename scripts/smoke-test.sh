@@ -13,7 +13,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-API_URL="${ULTRALIGHT_API_URL:-https://ultralight-api.rgn4jz429m.workers.dev}"
+API_URL="${ULTRALIGHT_API_URL:-https://api.ultralightagent.com}"
 FALLBACK_URL="${ULTRALIGHT_FALLBACK_URL:-}"
 TOKEN="${ULTRALIGHT_TOKEN:-}"
 CHAT_MODEL="${ULTRALIGHT_CHAT_MODEL:-ultralight/deepseek-v4-flash}"
@@ -31,7 +31,7 @@ while [[ $# -gt 0 ]]; do
 Usage: ./scripts/smoke-test.sh [options]
 
 Options:
-  --url URL            API base URL to test (default: https://ultralight-api.rgn4jz429m.workers.dev)
+  --url URL            API base URL to test (default: https://api.ultralightagent.com)
   --fallback-url URL   Optional direct worker URL to compare when the public URL fails
   --token TOKEN        Bearer token for authenticated checks
   --model MODEL        Chat model to use for --exercise-chat
@@ -48,7 +48,7 @@ EOF
 done
 
 if [[ -z "$FALLBACK_URL" ]] && [[ "$API_URL" == "https://api.ultralight.dev" ]]; then
-  FALLBACK_URL="https://ultralight-api.rgn4jz429m.workers.dev"
+  FALLBACK_URL="https://api.ultralightagent.com"
 fi
 
 require_command() {

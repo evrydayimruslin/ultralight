@@ -2,9 +2,17 @@
 #
 # Serves developer-shipped interface HTML from the dedicated content-addressed
 # R2 prefix interfaces/{appId}/{sha256}.html — and ONLY that prefix. This
-# worker is the second origin that keeps untrusted developer HTML cross-site
-# from the launch website (workers.dev and pages.dev are both Public Suffix
-# List entries, so the two deployables are different sites to the browser).
+# worker is a distinct origin from the launch website (production:
+# interfaces.ultralightagent.com vs ultralightagent.com).
+#
+# NOTE: under the ultralightagent.com layout these two are SAME-SITE (shared
+# registrable domain) rather than cross-site as they were on workers.dev/
+# pages.dev. The actual isolation does NOT rely on the site boundary: every
+# response carries CSP `sandbox` WITHOUT allow-same-origin (src/serve.ts), so
+# the developer HTML runs in an opaque origin with no access to any origin's
+# cookies/storage, this worker sets no cookies ever, and platform auth is
+# bearer-token only. The separate origin + frame-ancestors remain defense in
+# depth.
 #
 # Security posture lives in src/serve.ts: CSP `sandbox` header suite, no
 # cookies ever, immutable content-addressed caching.
@@ -21,7 +29,7 @@ bucket_name = "ultralight-apps"
 ENVIRONMENT = "production"
 # Space-separated CSP frame-ancestors source list: which pages may embed
 # interfaces. Unset/empty fails closed to 'none'.
-FRAME_ANCESTORS = "https://ultralight-launch-web.pages.dev"
+FRAME_ANCESTORS = "https://ultralightagent.com"
 
 [env.staging]
 name = "ultralight-interfaces-staging"

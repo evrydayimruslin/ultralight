@@ -91,7 +91,7 @@ New tiny Worker, e.g. `ultralight-interfaces.<account>.workers.dev`:
 
 Why this is sound (researched, sources in §9):
 - `pages.dev` and `workers.dev` are both **on the Public Suffix List** → the sandbox worker is a
-  **different site** from `ultralight-launch-web.pages.dev` → separate renderer process, no
+  **different site** from `ultralightagent.com` → separate renderer process, no
   cookie/SameSite adjacency to the SPA (fixes flaw #2). It shares eTLD+1 with the API worker
   (`<account>.workers.dev`), which is acceptable: the API origin keeps no browser-readable
   credentials (`__Host-` refresh cookie is host-only/HttpOnly; browsers hitting `/` get 302'd

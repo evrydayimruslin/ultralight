@@ -2317,7 +2317,7 @@ async function callFlash(
       },
       {
         title: "Ultralight Flash Broker",
-        referer: "https://ultralight-api.rgn4jz429m.workers.dev",
+        referer: "https://api.ultralightagent.com",
         signal: options?.signal,
       },
     );
@@ -2497,7 +2497,7 @@ export async function callFlashText(
       },
       {
         title: "Ultralight Flash Broker",
-        referer: "https://ultralight-api.rgn4jz429m.workers.dev",
+        referer: "https://api.ultralightagent.com",
         signal: options?.signal,
       },
     );

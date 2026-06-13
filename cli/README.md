@@ -21,7 +21,7 @@ Prefer manual configuration? Add the remote MCP server yourself:
 {
   "mcpServers": {
     "ultralight": {
-      "url": "https://ultralight-api.rgn4jz429m.workers.dev/mcp/platform",
+      "url": "https://api.ultralightagent.com/mcp/platform",
       "headers": { "Authorization": "Bearer ul_your_api_key" }
     }
   }

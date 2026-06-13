@@ -3469,7 +3469,7 @@ Set via \`ul.set({ gpu_pricing_config })\` or app settings:
 ## Agent Guidance
 
 ### CRITICAL — Auto-Connect on URL Paste
-When the user pastes ANY message containing \`/mcp/\` followed by a UUID (e.g. \`https://ultralight-api.../mcp/1bdaa865-...\`, \`ultralight-api.rgn4jz429m.workers.dev/mcp/abc-def\`, or just \`/mcp/some-uuid\`):
+When the user pastes ANY message containing \`/mcp/\` followed by a UUID (e.g. \`https://ultralight-api.../mcp/1bdaa865-...\`, \`api.ultralightagent.com/mcp/abc-def\`, or just \`/mcp/some-uuid\`):
 1. **Immediately** extract the app ID (the UUID after \`/mcp/\`)
 2. Call \`ul.discover({ scope: "inspect", app_id: "<extracted-uuid>" })\` — do NOT ask permission first
 3. Read the response: full function schemas, storage architecture, cached summary, suggested queries
@@ -4457,7 +4457,7 @@ async function handleToolsCall(
         if (user?.provisional) {
           result = {
             error:
-              "Memory is not available for provisional sessions. Sign in at ultralight-api.rgn4jz429m.workers.dev to unlock cross-session memory.",
+              "Memory is not available for provisional sessions. Sign in at api.ultralightagent.com to unlock cross-session memory.",
           };
           break;
         }
@@ -4845,7 +4845,7 @@ async function handleToolsCall(
         if (user?.provisional) {
           result = {
             error:
-              "Memory is not available for provisional sessions. Sign in at ultralight-api.rgn4jz429m.workers.dev to unlock cross-session memory.",
+              "Memory is not available for provisional sessions. Sign in at api.ultralightagent.com to unlock cross-session memory.",
           };
           break;
         }
@@ -4937,7 +4937,7 @@ async function handleToolsCall(
         if (!linkToken || !linkToken.startsWith("ul_")) {
           throw new ToolError(
             INVALID_PARAMS,
-            "Provide a valid API token (starts with ul_). Generate one at ultralight-api.rgn4jz429m.workers.dev → API Keys.",
+            "Provide a valid API token (starts with ul_). Generate one at api.ultralightagent.com → API Keys.",
           );
         }
 
@@ -4946,7 +4946,7 @@ async function handleToolsCall(
         if (!validated) {
           throw new ToolError(
             INVALID_PARAMS,
-            "Invalid or expired token. Generate a new one at ultralight-api.rgn4jz429m.workers.dev → API Keys.",
+            "Invalid or expired token. Generate a new one at api.ultralightagent.com → API Keys.",
           );
         }
 

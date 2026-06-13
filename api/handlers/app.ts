@@ -5705,7 +5705,7 @@ function renderMarkdownPage(
 <article>
 ${metaHeader}
 ${html}
-<div class="footer">Published with <a href="https://ultralight-api.rgn4jz429m.workers.dev">Ultralight</a></div>
+<div class="footer">Published with <a href="https://api.ultralightagent.com">Ultralight</a></div>
 </article>
 </body>
 </html>`;

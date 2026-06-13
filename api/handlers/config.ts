@@ -56,8 +56,8 @@ export async function handleMcpConfig(request: Request, appId: string): Promise<
     const url = new URL(request.url);
     const client = url.searchParams.get('client') || 'claude';
     const serverName = `ultralight-${app.slug || app.id}`;
-    const mcpUrl = `${getEnv('BASE_URL') || 'https://ultralight-api.rgn4jz429m.workers.dev'}/mcp/${app.id}`;
-    const httpUrl = `${getEnv('BASE_URL') || 'https://ultralight-api.rgn4jz429m.workers.dev'}/http/${app.id}`;
+    const mcpUrl = `${getEnv('BASE_URL') || 'https://api.ultralightagent.com'}/mcp/${app.id}`;
+    const httpUrl = `${getEnv('BASE_URL') || 'https://api.ultralightagent.com'}/http/${app.id}`;
 
     switch (client) {
       case 'cursor': {
@@ -75,7 +75,7 @@ export async function handleMcpConfig(request: Request, appId: string): Promise<
             app_id: app.id,
             description: app.description,
             generated_at: new Date().toISOString(),
-            docs: `${getEnv('BASE_URL') || 'https://ultralight-api.rgn4jz429m.workers.dev'}/api/discover/openapi.json`,
+            docs: `${getEnv('BASE_URL') || 'https://api.ultralightagent.com'}/api/discover/openapi.json`,
           },
         });
       }
@@ -89,8 +89,8 @@ export async function handleMcpConfig(request: Request, appId: string): Promise<
           url: mcpUrl,
           http_url: httpUrl,
           transport: 'http-post',
-          oauth: `${getEnv('BASE_URL') || 'https://ultralight-api.rgn4jz429m.workers.dev'}/.well-known/oauth-authorization-server`,
-          well_known: `${getEnv('BASE_URL') || 'https://ultralight-api.rgn4jz429m.workers.dev'}/a/${app.id}/.well-known/mcp.json`,
+          oauth: `${getEnv('BASE_URL') || 'https://api.ultralightagent.com'}/.well-known/oauth-authorization-server`,
+          well_known: `${getEnv('BASE_URL') || 'https://api.ultralightagent.com'}/a/${app.id}/.well-known/mcp.json`,
           generated_at: new Date().toISOString(),
         });
       }
@@ -109,7 +109,7 @@ export async function handleMcpConfig(request: Request, appId: string): Promise<
             app_id: app.id,
             description: app.description,
             generated_at: new Date().toISOString(),
-            docs: `${getEnv('BASE_URL') || 'https://ultralight-api.rgn4jz429m.workers.dev'}/api/discover/openapi.json`,
+            docs: `${getEnv('BASE_URL') || 'https://api.ultralightagent.com'}/api/discover/openapi.json`,
           },
         });
       }

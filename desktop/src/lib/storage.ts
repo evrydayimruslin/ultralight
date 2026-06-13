@@ -32,7 +32,10 @@ const SECURE_STORAGE_COMMANDS = {
   clear: 'secure_clear_auth_token',
 } as const;
 const API_BASE_FAILOVERS: Record<string, string[]> = {
-  'https://api.ultralight.dev': ['https://ultralight-api.rgn4jz429m.workers.dev'],
+  // New custom domain falls back to the direct Worker origin (still live) if
+  // ultralightagent.com is temporarily misrouted while DNS/SSL settles.
+  'https://api.ultralightagent.com': ['https://ultralight-api.rgn4jz429m.workers.dev'],
+  'https://api.ultralight.dev': ['https://api.ultralightagent.com', 'https://ultralight-api.rgn4jz429m.workers.dev'],
 };
 const API_HEALTHCHECK_TIMEOUT_MS = 2500;
 

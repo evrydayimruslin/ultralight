@@ -102,7 +102,7 @@ function translateContentParts(parts: AIContentPart[]): Array<Record<string, unk
 const formatOpenAICompatibleHeaders = (apiKey: string): Record<string, string> => ({
   'Authorization': `Bearer ${apiKey}`,
   'Content-Type': 'application/json',
-  'HTTP-Referer': 'https://ultralight-api.rgn4jz429m.workers.dev',
+  'HTTP-Referer': 'https://api.ultralightagent.com',
   'X-Title': 'Ultralight',
 });
 
@@ -173,7 +173,7 @@ const OPENROUTER_CONFIG: ProviderConfig = {
   formatHeaders: (apiKey: string) => ({
     'Authorization': `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
-    'HTTP-Referer': 'https://ultralight-api.rgn4jz429m.workers.dev',
+    'HTTP-Referer': 'https://api.ultralightagent.com',
     'X-Title': 'Ultralight',
   }),
 };

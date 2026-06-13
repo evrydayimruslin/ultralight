@@ -929,7 +929,7 @@ export async function runRoutineExecutorCycle(
     60 * 60 * 1000,
   );
   const baseUrl = options.baseUrl || getEnv("BASE_URL") ||
-    "https://ultralight-api.rgn4jz429m.workers.dev";
+    "https://api.ultralightagent.com";
   const fetchFn = options.fetchFn || fetch;
   const clock = options.clock || (() => new Date());
 

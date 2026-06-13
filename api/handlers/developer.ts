@@ -1,6 +1,6 @@
 // Developer Portal
 // Serves the OAuth app management UI and CRUD API endpoints.
-// Accessed via dev.ultralight-api.rgn4jz429m.workers.dev subdomain
+// Accessed via dev.api.ultralightagent.com subdomain
 // or /developer path on main domain.
 
 import { json, error } from './response.ts';

@@ -409,7 +409,7 @@ Workers analytics). Developer docs: ultralight-spec/conventions/interfaces.md.
    source ~/.nvm/nvm.sh && nvm use
    ULTRALIGHT_TOKEN=... node scripts/smoke/run-release-smoke.mjs \
      --target production \
-     --url https://ultralight-api.rgn4jz429m.workers.dev \
+     --url https://api.ultralightagent.com \
      --supabase-url https://uavjzycsltdnwblwutmb.supabase.co \
      --exercise-chat
    ```
@@ -419,8 +419,8 @@ Workers analytics). Developer docs: ultralight-spec/conventions/interfaces.md.
    ULTRALIGHT_TOKEN=... \
    node scripts/smoke/launch-web-pages-smoke.mjs \
      --target production \
-     --pages-url https://ultralight-launch-web.pages.dev \
-     --api-url https://ultralight-api.rgn4jz429m.workers.dev \
+     --pages-url https://ultralightagent.com \
+     --api-url https://api.ultralightagent.com \
      --tool-slug <known-public-tool-slug> \
      --admin-tool-id <owned-production-tool-id> \
      --output-dir "$UL_LAUNCH_EVIDENCE_DIR"
@@ -428,7 +428,7 @@ Workers analytics). Developer docs: ultralight-spec/conventions/interfaces.md.
 
    The Pages probes should return the SPA shell, the API probes should return
    valid launch JSON, and the API CORS probe should allow
-   `https://ultralight-launch-web.pages.dev`.
+   `https://ultralightagent.com`.
    The production gate summary should reference the same candidate SHA that
    already passed `Staging Launch Gate`, plus the required production workflow
    run links for the release tag. Record those URLs and the resulting smoke

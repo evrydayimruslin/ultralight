@@ -320,7 +320,7 @@ API off the existing Worker. Launch web now has:
 
 The API Worker CORS allowlist now includes
 `https://staging.ultralight-launch-web.pages.dev` for staging and
-`https://ultralight-launch-web.pages.dev` for production. Release topology,
+`https://ultralightagent.com` for production. Release topology,
 environment isolation, evidence, runbook, and launch-gate scripts now treat the
 Pages site as a release-critical surface.
 
@@ -328,7 +328,7 @@ Pages site as a release-critical surface.
 
 - Initial Pages domains are `*.pages.dev`:
   `https://staging.ultralight-launch-web.pages.dev` and
-  `https://ultralight-launch-web.pages.dev`. Owned custom domains remain a
+  `https://ultralightagent.com`. Owned custom domains remain a
   follow-up after DNS/control-plane ownership is confirmed.
 - Shared parent-domain auth cookies are deferred. Launch web uses bearer-token
   API calls with explicit CORS allowlists for this phase.

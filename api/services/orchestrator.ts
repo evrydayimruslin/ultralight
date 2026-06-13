@@ -1035,7 +1035,7 @@ async function callHeavyModel(
     requestBody,
     {
       title: "Ultralight Chat",
-      referer: "https://ultralight-api.rgn4jz429m.workers.dev",
+      referer: "https://api.ultralightagent.com",
       signal,
     },
   );

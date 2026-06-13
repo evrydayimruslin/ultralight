@@ -40,7 +40,7 @@ if (!['staging', 'production'].includes(target)) {
 
 const defaultApiBase =
   target === 'production'
-    ? 'https://ultralight-api.rgn4jz429m.workers.dev'
+    ? 'https://api.ultralightagent.com'
     : 'https://ultralight-api-staging.rgn4jz429m.workers.dev';
 // Both workers share the prod Supabase project for launch (the dedicated
 // staging Supabase project is paused/unused — see wrangler.toml).

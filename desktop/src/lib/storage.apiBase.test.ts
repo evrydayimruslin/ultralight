@@ -7,7 +7,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 
 vi.mock('./environment', () => ({
-  DESKTOP_API_BASE: 'https://ultralight-api.rgn4jz429m.workers.dev',
+  DESKTOP_API_BASE: 'https://api.ultralightagent.com',
 }));
 
 function createLocalStorageMock(): Storage {
@@ -49,11 +49,11 @@ describe('desktop api base failover', () => {
     const storage = await import('./storage');
     const base = await storage.ensureApiBaseAvailable();
 
-    expect(base).toBe('https://ultralight-api.rgn4jz429m.workers.dev');
-    expect(storage.getApiBase()).toBe('https://ultralight-api.rgn4jz429m.workers.dev');
+    expect(base).toBe('https://api.ultralightagent.com');
+    expect(storage.getApiBase()).toBe('https://api.ultralightagent.com');
     expect(localStorage.getItem('ul_runtime_api_base')).toBeNull();
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://ultralight-api.rgn4jz429m.workers.dev/health',
+      'https://api.ultralightagent.com/health',
       expect.objectContaining({ cache: 'no-store' }),
     );
   });
@@ -77,10 +77,10 @@ describe('desktop api base failover', () => {
 
     expect(response.ok).toBe(true);
     expect(await response.json()).toEqual({ ok: true });
-    expect(storage.getApiBase()).toBe('https://ultralight-api.rgn4jz429m.workers.dev');
+    expect(storage.getApiBase()).toBe('https://api.ultralightagent.com');
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
-      'https://ultralight-api.rgn4jz429m.workers.dev/chat/models',
+      'https://api.ultralightagent.com/chat/models',
       expect.objectContaining({ headers: { Accept: 'application/json' } }),
     );
   });

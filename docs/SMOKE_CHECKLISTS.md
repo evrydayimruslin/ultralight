@@ -228,7 +228,7 @@ mkdir -p "$UL_LAUNCH_EVIDENCE_DIR"/{audits,smoke,manual}
 source ~/.nvm/nvm.sh && nvm use
 ULTRALIGHT_TOKEN=... node scripts/smoke/run-release-smoke.mjs \
   --target production \
-  --url https://ultralight-api.rgn4jz429m.workers.dev \
+  --url https://api.ultralightagent.com \
   --supabase-url https://uavjzycsltdnwblwutmb.supabase.co \
   --exercise-chat
 ```
@@ -239,7 +239,7 @@ Run the auth redirect smoke:
 
 ```bash
 ./scripts/smoke/auth-redirect-smoke.sh \
-  --url https://ultralight-api.rgn4jz429m.workers.dev \
+  --url https://api.ultralightagent.com \
   --supabase-url https://uavjzycsltdnwblwutmb.supabase.co
 ```
 
@@ -247,7 +247,7 @@ Run the broader API smoke with a production bearer token:
 
 ```bash
 ULTRALIGHT_TOKEN=... ./scripts/smoke-test.sh \
-  --url https://ultralight-api.rgn4jz429m.workers.dev \
+  --url https://api.ultralightagent.com \
   --exercise-chat
 ```
 
@@ -271,11 +271,11 @@ Workers.dev origin before promoting it as canonical.
 Run the same CORS sanity check against production before announcing the release:
 
 ```bash
-curl -i -X OPTIONS https://ultralight-api.rgn4jz429m.workers.dev/http/test/ping \
-  -H 'Origin: https://ultralight-api.rgn4jz429m.workers.dev' \
+curl -i -X OPTIONS https://api.ultralightagent.com/http/test/ping \
+  -H 'Origin: https://api.ultralightagent.com' \
   -H 'Access-Control-Request-Method: POST'
 
-curl -i -X OPTIONS https://ultralight-api.rgn4jz429m.workers.dev/http/test/ping \
+curl -i -X OPTIONS https://api.ultralightagent.com/http/test/ping \
   -H 'Origin: https://evil.example' \
   -H 'Access-Control-Request-Method: POST'
 ```
@@ -286,8 +286,8 @@ Run the launch website Pages smoke after `Launch Web Deploy` succeeds:
 ULTRALIGHT_TOKEN=... \
 node scripts/smoke/launch-web-pages-smoke.mjs \
   --target production \
-  --pages-url https://ultralight-launch-web.pages.dev \
-  --api-url https://ultralight-api.rgn4jz429m.workers.dev \
+  --pages-url https://ultralightagent.com \
+  --api-url https://api.ultralightagent.com \
   --tool-slug <known-public-tool-slug> \
   --admin-tool-id <owned-production-tool-id> \
   --output-dir "$UL_LAUNCH_EVIDENCE_DIR"
@@ -297,7 +297,7 @@ This writes `smoke/launch-web-pages.json` and
 `smoke/launch-web-pages.md`. The Pages route probes should return the launch
 SPA shell, the API probes should return the expected launch JSON shapes, and
 the CORS probes should show
-`Access-Control-Allow-Origin: https://ultralight-launch-web.pages.dev`.
+`Access-Control-Allow-Origin: https://ultralightagent.com`.
 
 ### Manual desktop checks
 
