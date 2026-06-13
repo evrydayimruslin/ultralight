@@ -95,7 +95,7 @@ jobs:
       - name: Provision queues (idempotent)
         run: |
           for q in ultralight-exec-staging ultralight-exec-staging-dlq ultralight-events-staging ultralight-events-staging-dlq; do
-            npx wrangler queues list | grep -q "\b$q\b" || npx wrangler queues create "$q"
+            npx wrangler queues list | grep -qE "(^|[^-])$q([^-]|$)" || npx wrangler queues create "$q"
           done
 
       - name: Deploy staging worker
@@ -132,7 +132,7 @@ jobs:
       - name: Provision queues (idempotent)
         run: |
           for q in ultralight-exec ultralight-exec-dlq ultralight-events ultralight-events-dlq; do
-            npx wrangler queues list | grep -q "\b$q\b" || npx wrangler queues create "$q"
+            npx wrangler queues list | grep -qE "(^|[^-])$q([^-]|$)" || npx wrangler queues create "$q"
           done
 
       - name: Deploy production worker
