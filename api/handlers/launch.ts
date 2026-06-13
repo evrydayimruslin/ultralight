@@ -71,6 +71,7 @@ import {
   type LaunchAgentOwnerSummary,
   type LaunchAgentRelationship,
   type LaunchAgentSummary,
+  type LaunchInterfaceSummary,
   type LaunchAgentVisibility,
   type LaunchTrustCard,
   type LaunchWalletDetailKind,
@@ -357,6 +358,9 @@ interface ToolMapOptions {
   owners: Map<string, LaunchAgentOwnerSummary>;
   viewerId?: string | null;
   installedIds?: Set<string>;
+  // Set on the agent DETAIL response only — store/browse rows stay lean and
+  // the FE gates the Interface tab on the detail payload.
+  includeInterfaces?: boolean;
 }
 
 interface PrimitiveMetadata {
@@ -1522,7 +1526,11 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
               content: jsonContent({
                 type: "object",
                 properties: {
-                  tool: { $ref: "#/components/schemas/ToolSummary" },
+                  agent: { $ref: "#/components/schemas/ToolSummary" },
+                  tool: {
+                    $ref: "#/components/schemas/ToolSummary",
+                    description: "Deprecated alias of agent",
+                  },
                   trustCard: { $ref: "#/components/schemas/TrustCard" },
                 },
               }),
@@ -2540,6 +2548,33 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
             adminUrl: { type: ["string", "null"] },
             installUrl: { type: ["string", "null"] },
             relevance: { $ref: "#/components/schemas/Relevance" },
+            interfaces: {
+              type: "array",
+              description:
+                "Sandboxed HTML interfaces (agent detail responses only; present when the agent ships renderable interfaces)",
+              items: { $ref: "#/components/schemas/InterfaceSummary" },
+            },
+          },
+        },
+        InterfaceSummary: {
+          type: "object",
+          required: ["id", "label", "url", "functions"],
+          properties: {
+            id: { type: "string" },
+            label: { type: "string" },
+            description: { type: ["string", "null"] },
+            url: {
+              type: "string",
+              description:
+                "Immutable content-addressed URL on the interfaces sandbox origin",
+            },
+            functions: {
+              type: "array",
+              items: { type: "string" },
+              description:
+                "Bridge allowlist, intersected with the agent's manifest functions",
+            },
+            minHeight: { type: ["number", "null"] },
           },
         },
         TrustCard: {
@@ -3648,6 +3683,7 @@ async function handleLaunchTool(
     owners,
     viewerId: viewer?.id,
     installedIds,
+    includeInterfaces: true,
   });
 
   return json({
@@ -5313,6 +5349,9 @@ function toLaunchAgentSummary(
   const slug = row.slug || row.id;
   const installed = options.installedIds?.has(row.id) || false;
   const relationship = relationshipFor(row, options.viewerId, installed);
+  const interfaces = options.includeInterfaces
+    ? interfaceSummaries(row)
+    : undefined;
   return {
     id: row.id,
     slug,
@@ -5331,7 +5370,63 @@ function toLaunchAgentSummary(
     pricing: pricingSummary(row),
     tags: row.tags || [],
     updatedAt: row.updated_at || row.created_at || null,
+    ...(interfaces ? { interfaces } : {}),
   };
+}
+
+const INTERFACE_ARTIFACT_HASH_RE = /^[0-9a-f]{64}$/;
+
+// Maps manifest interfaces[] to renderable summaries. Only entries with a
+// server-stamped artifact hash (PR2) are exposed — unstamped declarations
+// (GPU uploads, pre-PR2 manifests) have nothing the sandbox worker can
+// serve. The bridge allowlist is intersected with the agent's REAL manifest
+// functions so the FE never offers a call the runtime would refuse. URLs are
+// built from explicit config, never the request Host (Phase-3 lesson); a
+// missing INTERFACE_SANDBOX_BASE_URL fails closed to "no interfaces".
+function interfaceSummaries(
+  row: LaunchAppRow,
+): LaunchInterfaceSummary[] | undefined {
+  const manifest = parseManifest(row.manifest);
+  const declarations = manifest?.interfaces;
+  if (!Array.isArray(declarations) || declarations.length === 0) {
+    return undefined;
+  }
+  const sandboxBaseUrl = (getEnv("INTERFACE_SANDBOX_BASE_URL") || "")
+    .replace(/\/+$/, "");
+  if (!sandboxBaseUrl) return undefined;
+
+  const manifestFunctions = new Set(Object.keys(manifest?.functions || {}));
+  const summaries: LaunchInterfaceSummary[] = [];
+  for (const declaration of declarations) {
+    if (!declaration || typeof declaration !== "object") continue;
+    if (typeof declaration.id !== "string" || !declaration.id) continue;
+    if (typeof declaration.label !== "string" || !declaration.label) continue;
+    if (
+      typeof declaration.hash !== "string" ||
+      !INTERFACE_ARTIFACT_HASH_RE.test(declaration.hash)
+    ) {
+      continue;
+    }
+    const functions = Array.isArray(declaration.functions)
+      ? declaration.functions.filter((fn): fn is string =>
+        typeof fn === "string" && manifestFunctions.has(fn)
+      )
+      : [];
+    summaries.push({
+      id: declaration.id,
+      label: declaration.label,
+      description: typeof declaration.description === "string"
+        ? declaration.description
+        : null,
+      url: `${sandboxBaseUrl}/i/${encodeURIComponent(row.id)}/${declaration.hash}`,
+      functions,
+      minHeight: typeof declaration.min_height === "number" &&
+          Number.isFinite(declaration.min_height)
+        ? declaration.min_height
+        : null,
+    });
+  }
+  return summaries.length > 0 ? summaries : undefined;
 }
 
 function pricingSummary(row: LaunchAppRow): LaunchPricingSummary {

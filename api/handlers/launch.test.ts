@@ -718,6 +718,117 @@ Deno.test('launch facade: public slug lookups avoid uuid id comparisons', async 
   );
 });
 
+function interfaceTestApp(): Record<string, unknown> {
+  const app = launchPermissionTestApp();
+  const manifest = app.manifest as Record<string, unknown>;
+  manifest.interfaces = [
+    {
+      id: 'dashboard',
+      label: 'Dashboard',
+      description: 'Live overview',
+      entry: 'interfaces/dashboard.html',
+      // ghostFunction is not a manifest function — must be pruned from the
+      // exposed bridge allowlist.
+      functions: ['deploy', 'ghostFunction'],
+      min_height: 320,
+      hash: 'a'.repeat(64),
+    },
+    {
+      id: 'unstamped',
+      label: 'Unstamped',
+      entry: 'interfaces/unstamped.html',
+      functions: ['deploy'],
+      // No server-stamped hash (pre-PR2 manifest / GPU upload): nothing the
+      // sandbox worker can serve, so it must not be exposed.
+    },
+  ];
+  return app;
+}
+
+function interfaceTestFetchMock(
+  app: Record<string, unknown>,
+): typeof fetch {
+  return ((input: Request | URL | string) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.startsWith('https://supabase.test/rest/v1/apps?')) {
+      return Promise.resolve(jsonResponse([app]));
+    }
+    if (url.startsWith('https://supabase.test/rest/v1/users?')) {
+      return Promise.resolve(jsonResponse([
+        { id: 'owner-1', display_name: 'Ada', profile_slug: 'ada', avatar_url: null },
+      ]));
+    }
+    return Promise.resolve(jsonResponse([]));
+  }) as typeof fetch;
+}
+
+Deno.test('launch facade: agent detail exposes hash-stamped interfaces with pruned allowlists', async () => {
+  await withLaunchEnv(
+    async () => {
+      const response = await handleLaunch(
+        new Request('https://ultralight.test/api/launch/agents/deploy-helper'),
+      );
+      const body = await response.json() as {
+        agent?: { interfaces?: unknown[] };
+        tool?: { interfaces?: unknown[] };
+        error?: string;
+      };
+
+      assertEquals(response.status, 200, body.error || '');
+      assertEquals(body.agent?.interfaces, [
+        {
+          id: 'dashboard',
+          label: 'Dashboard',
+          description: 'Live overview',
+          url: `https://interfaces.test/i/app-1/${'a'.repeat(64)}`,
+          functions: ['deploy'],
+          minHeight: 320,
+        },
+      ]);
+      // Deprecated alias carries the same payload.
+      assertEquals(body.tool?.interfaces, body.agent?.interfaces);
+    },
+    interfaceTestFetchMock(interfaceTestApp()),
+    { INTERFACE_SANDBOX_BASE_URL: 'https://interfaces.test/' },
+  );
+});
+
+Deno.test('launch facade: interfaces fail closed without a sandbox base URL', async () => {
+  await withLaunchEnv(
+    async () => {
+      const response = await handleLaunch(
+        new Request('https://ultralight.test/api/launch/agents/deploy-helper'),
+      );
+      const body = await response.json() as {
+        agent?: { interfaces?: unknown };
+      };
+
+      assertEquals(response.status, 200);
+      assertEquals(body.agent?.interfaces, undefined);
+    },
+    interfaceTestFetchMock(interfaceTestApp()),
+    { INTERFACE_SANDBOX_BASE_URL: undefined },
+  );
+});
+
+Deno.test('launch facade: agents without interfaces omit the field', async () => {
+  await withLaunchEnv(
+    async () => {
+      const response = await handleLaunch(
+        new Request('https://ultralight.test/api/launch/agents/deploy-helper'),
+      );
+      const body = await response.json() as {
+        agent?: { interfaces?: unknown };
+      };
+
+      assertEquals(response.status, 200);
+      assertEquals(body.agent?.interfaces, undefined);
+    },
+    interfaceTestFetchMock(launchPermissionTestApp()),
+    { INTERFACE_SANDBOX_BASE_URL: 'https://interfaces.test' },
+  );
+});
+
 Deno.test('launch facade: owners can preview private tools', async () => {
   await withLaunchEnv(
     async () => {

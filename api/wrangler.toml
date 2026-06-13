@@ -79,6 +79,9 @@ dead_letter_queue = "ultralight-events-dlq"
 [vars]
 BASE_URL = "https://ultralight-api.rgn4jz429m.workers.dev"
 LAUNCH_WEB_BASE_URL = "https://ultralight-launch-web.pages.dev"
+# Interfaces sandbox worker origin (interfaces-worker/) — explicit config,
+# never derived from the request Host. Unset disables interface exposure.
+INTERFACE_SANDBOX_BASE_URL = "https://ultralight-interfaces.rgn4jz429m.workers.dev"
 ENVIRONMENT = "production"
 CORS_ALLOWED_ORIGINS = "https://ultralight-api.rgn4jz429m.workers.dev,https://ultralight-launch-web.pages.dev"
 GPU_SUPPORT_ENABLED = "false"
@@ -146,6 +149,7 @@ dead_letter_queue = "ultralight-events-staging-dlq"
 [env.staging.vars]
 BASE_URL = "https://ultralight-api-staging.rgn4jz429m.workers.dev"
 LAUNCH_WEB_BASE_URL = "https://staging.ultralight-launch-web.pages.dev"
+INTERFACE_SANDBOX_BASE_URL = "https://ultralight-interfaces-staging.rgn4jz429m.workers.dev"
 ENVIRONMENT = "staging"
 CORS_ALLOWED_ORIGINS = "https://ultralight-api-staging.rgn4jz429m.workers.dev,https://staging.ultralight-launch-web.pages.dev,http://localhost:5173,http://127.0.0.1:5173,http://localhost:5178,http://127.0.0.1:5178"
 GPU_SUPPORT_ENABLED = "false"

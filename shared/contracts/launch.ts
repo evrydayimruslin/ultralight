@@ -587,6 +587,21 @@ export interface LaunchAgentOwnerSummary {
   avatarUrl?: string | null;
 }
 
+// A developer-shipped static HTML UI rendered in a sandboxed iframe on the
+// Agent's public page (manifest `interfaces[]`, hash-stamped at upload).
+export interface LaunchInterfaceSummary {
+  id: string;
+  label: string;
+  description?: string | null;
+  // Absolute URL on the interfaces sandbox origin. Content-addressed and
+  // immutable — changes only when the interface HTML changes.
+  url: string;
+  // Bridge allowlist, already intersected with the agent's real manifest
+  // functions; the host page must refuse calls outside this list.
+  functions: string[];
+  minHeight?: number | null;
+}
+
 export interface LaunchAgentSummary {
   id: string;
   slug: string;
@@ -604,6 +619,9 @@ export interface LaunchAgentSummary {
   tags?: string[];
   updatedAt?: string | null;
   relevance?: LaunchRelevanceSummary;
+  // Present only on the agent detail response, and only for interfaces with
+  // a server-stamped artifact hash (renderable by the sandbox worker).
+  interfaces?: LaunchInterfaceSummary[];
 }
 
 export interface LaunchAgentAdminSummary {
