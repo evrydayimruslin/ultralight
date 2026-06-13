@@ -3513,6 +3513,38 @@ button {
   border-top: 0;
 }
 
+.wallet-ledger-row {
+  font-variant-numeric: tabular-nums;
+}
+
+.wallet-ledger-row.expandable {
+  cursor: pointer;
+}
+
+.wallet-ledger-row.expandable:hover {
+  background: var(--ul-hover);
+}
+
+.ledger-chevron {
+  display: inline-block;
+  margin-right: 7px;
+  color: var(--ul-muted);
+  transition: transform 0.15s ease;
+}
+
+.ledger-chevron.open {
+  transform: rotate(90deg);
+}
+
+.wallet-ledger-detail {
+  padding: 8px 4px 14px 40px;
+  background: var(--ul-raised);
+}
+
+.wallet-ledger-detail .quote-line:first-child {
+  border-top: 0;
+}
+
 .wallet-ledger-row > span:nth-child(2) {
   overflow: hidden;
   color: var(--ul-text);

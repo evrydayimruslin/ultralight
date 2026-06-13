@@ -431,14 +431,34 @@ interface LedgerRow {
   when: string;
 }
 
-interface ReceiptRowFixture {
-  fn: string;
-  latency: number | null;
-  light: number;
-  status: "error" | "ok";
-  tool: string;
-  when: string;
-}
+// Unified row for the merged balance ledger (transactions + receipts in one
+// time-sorted list). Transaction rows are static; receipt rows expand to their
+// own cost breakdown — the receipt IS the drill-down "depth".
+type WalletRow =
+  | {
+    source: "transaction";
+    id: string;
+    createdAt: string | null;
+    when: string;
+    amount: number;
+    detail: string;
+    kind: LedgerRow["kind"];
+  }
+  | {
+    source: "receipt";
+    id: string;
+    createdAt: string | null;
+    when: string;
+    amount: number;
+    detail: string;
+    fn: string;
+    status: "error" | "ok";
+    total: number;
+    appCharge: number;
+    infraCharge: number;
+    platformFee: number;
+    developerNet: number;
+  };
 
 interface ApiKeyFixture {
   created: string;
@@ -658,16 +678,50 @@ function liveWalletTotals(wallet?: LaunchWalletSummary): typeof walletSummary {
   };
 }
 
-function liveLedgerRows(transactions?: LaunchWalletTransaction[]): LedgerRow[] {
-  if (!transactions || transactions.length === 0) return [];
-  return transactions.map((entry) => ({
+// Merge the two disjoint streams — billing transactions (hosting/chat/top-up
+// charges) and agent-call receipts — into one list, newest first. They share
+// no key, so we keep each row's provenance distinct rather than fuzzy-joining.
+function mergeWalletRows(
+  transactions?: LaunchWalletTransaction[],
+  receipts?: LaunchWalletReceiptSummary[],
+): WalletRow[] {
+  const txRows: WalletRow[] = (transactions || []).map((entry) => ({
+    source: "transaction",
+    id: entry.id,
+    createdAt: entry.createdAt ?? null,
+    when: relativeTime(entry.createdAt) || "now",
     amount: creditsValue(entry.amount),
     detail: entry.appName
       ? `${entry.appName} · ${entry.description}`
       : entry.description,
     kind: ledgerKind(entry.category, entry.type),
-    when: relativeTime(entry.createdAt) || "now",
   }));
+  const receiptRows: WalletRow[] = (receipts || []).map((receipt) => {
+    const total = creditsValue(receipt.total);
+    return {
+      source: "receipt",
+      id: `receipt-${receipt.receiptId}`,
+      createdAt: receipt.createdAt ?? null,
+      when: relativeTime(receipt.createdAt) || "now",
+      // A receipt is a spend against the balance.
+      amount: -Math.abs(total),
+      detail: `${receipt.appName || receipt.appId || "agent"} · ${
+        receipt.functionName || "run"
+      }`,
+      fn: receipt.functionName || "run",
+      status: receipt.success ? "ok" : "error",
+      total,
+      appCharge: creditsValue(receipt.appCharge),
+      infraCharge: creditsValue(receipt.infraCharge),
+      platformFee: creditsValue(receipt.platformFee),
+      developerNet: creditsValue(receipt.developerNet),
+    };
+  });
+  return [...txRows, ...receiptRows].sort((a, b) => {
+    const ta = a.createdAt ? Date.parse(a.createdAt) : 0;
+    const tb = b.createdAt ? Date.parse(b.createdAt) : 0;
+    return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
+  });
 }
 
 function liveEarningRows(earnings?: LaunchWalletEarningSummary[]): LedgerRow[] {
@@ -678,21 +732,6 @@ function liveEarningRows(earnings?: LaunchWalletEarningSummary[]): LedgerRow[] {
     kind: "earning",
     tool: entry.appId || undefined,
     when: relativeTime(entry.createdAt) || "now",
-  }));
-}
-
-function liveReceiptRows(
-  receipts?: LaunchWalletReceiptSummary[],
-): ReceiptRowFixture[] {
-  if (!receipts || receipts.length === 0) return [];
-  return receipts.map((receipt) => ({
-    fn: receipt.functionName || "run",
-    // The wallet receipts endpoint doesn't report latency.
-    latency: null,
-    light: creditsValue(receipt.total),
-    status: receipt.success ? "ok" : "error",
-    tool: receipt.appName || receipt.appId || "agent",
-    when: relativeTime(receipt.createdAt) || "now",
   }));
 }
 
@@ -3897,9 +3936,6 @@ export function AccountFoundationPage(
   // Wallet (Balance tab) state. Top up now lives behind the + Add funds button,
   // and receipts are a secondary view of the balance ledger. Initial values
   // honour legacy /wallet?tab=receipts|topup deep links.
-  const [balanceView, setBalanceView] = useState<"transactions" | "receipts">(
-    () => (queryParam("tab") === "receipts" ? "receipts" : "transactions"),
-  );
   const [showTopUp, setShowTopUp] = useState(
     () => queryParam("tab") === "topup",
   );
@@ -4094,38 +4130,11 @@ export function AccountFoundationPage(
             {showTopUp
               ? <WalletTopUpPanel earnedCredits={totals.earned} live={live} />
               : (
-                <>
-                  <div
-                    className="account-subtabs"
-                    role="tablist"
-                    aria-label="Balance view"
-                  >
-                    {([
-                      ["transactions", "Transactions"],
-                      ["receipts", "Receipts"],
-                    ] as const).map(([id, label]) => (
-                      <button
-                        aria-selected={balanceView === id}
-                        className={balanceView === id ? "active" : ""}
-                        key={id}
-                        onClick={() => setBalanceView(id)}
-                        role="tab"
-                        type="button"
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                  {balanceView === "transactions"
-                    ? (
-                      <WalletBalancePanel
-                        ledger={liveLedgerRows(transactions)}
-                        publishRequirement={wallet?.publishRequirement}
-                        totals={totals}
-                      />
-                    )
-                    : <WalletReceiptsPanel receipts={liveReceiptRows(receipts)} />}
-                </>
+                <WalletBalancePanel
+                  rows={mergeWalletRows(transactions, receipts)}
+                  publishRequirement={wallet?.publishRequirement}
+                  totals={totals}
+                />
               )}
           </>
         )
@@ -4192,14 +4201,15 @@ function WalletAmount(
 }
 
 function WalletBalancePanel({
-  ledger,
+  rows,
   publishRequirement,
   totals,
 }: {
-  ledger: LedgerRow[];
+  rows: WalletRow[];
   publishRequirement?: LaunchPublisherPublishRequirement | null;
   totals: typeof walletSummary;
 }): ReactElement {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   return (
     <div className="wallet-panel">
       <div className="wallet-metric-grid">
@@ -4231,14 +4241,19 @@ function WalletBalancePanel({
       <Card className="wallet-ledger-card">
         <div className="wallet-section-head">
           <h2>Balance ledger</h2>
-          <Pill>{ledger.length} entries</Pill>
+          <Pill>{rows.length} entries</Pill>
         </div>
         <div className="wallet-ledger">
-          {ledger.length > 0
-            ? ledger.map((row, index) => (
-              <WalletLedgerRow
+          {rows.length > 0
+            ? rows.map((row, index) => (
+              <WalletMergedRow
+                expanded={expandedId === row.id}
                 first={index === 0}
-                key={`${row.detail}-${row.when}-${index}`}
+                key={row.id}
+                onToggle={() =>
+                  setExpandedId((current) =>
+                    current === row.id ? null : row.id
+                  )}
                 row={row}
               />
             ))
@@ -4854,43 +4869,6 @@ function WalletTopUpPanel(
   );
 }
 
-function WalletReceiptsPanel(
-  { receipts }: { receipts: ReceiptRowFixture[] },
-): ReactElement {
-  return (
-    <Card className="wallet-table-card">
-      <div className="wallet-section-head">
-        <h2>Receipts</h2>
-        <Pill>Agent calls</Pill>
-      </div>
-      {receipts.length > 0
-        ? (
-          <div className="wallet-receipt-table">
-            <div className="wallet-table-head">
-              <span>Agent</span>
-              <span>Credits</span>
-              <span>Latency</span>
-              <span>Status</span>
-              <span>When</span>
-            </div>
-            {receipts.map((receipt, index) => (
-              <WalletReceiptRow
-                key={`${receipt.tool}-${receipt.when}-${index}`}
-                receipt={receipt}
-              />
-            ))}
-          </div>
-        )
-        : (
-          <EmptyState icon="wallet" title="No receipts yet">
-            Every Agent call produces a receipt; they appear here as your
-            connected agents run functions.
-          </EmptyState>
-        )}
-    </Card>
-  );
-}
-
 const payoutBannerFallback = {
   action: "Withdraw earnings",
   description:
@@ -5026,27 +5004,102 @@ function WalletLedgerRow(
   );
 }
 
-function WalletReceiptRow(
-  { receipt }: { receipt: ReceiptRowFixture },
+// One row of the merged balance ledger. Transaction rows are static; receipt
+// rows are clickable and expand to their own cost breakdown.
+function WalletMergedRow(
+  { expanded, first, onToggle, row }: {
+    expanded: boolean;
+    first: boolean;
+    onToggle: () => void;
+    row: WalletRow;
+  },
 ): ReactElement {
+  const positive = row.amount > 0;
+  const glyphs: Record<LedgerRow["kind"], string> = {
+    call: "→",
+    earning: "$",
+    payout: "↑",
+    topup: "+",
+    transfer: "⇄",
+  };
+  const kind = row.source === "receipt" ? "call" : row.kind;
+  const amount = (
+    <span className={positive ? "positive" : ""}>
+      {positive ? "+" : "-"}
+      {formatCreditFromLight(Math.abs(row.amount))}
+    </span>
+  );
+
+  if (row.source !== "receipt") {
+    return (
+      <div className={first ? "wallet-ledger-row first" : "wallet-ledger-row"}>
+        <span className={`ledger-glyph ledger-glyph-${kind}`}>
+          {glyphs[kind]}
+        </span>
+        <span>{row.detail}</span>
+        <span>{row.when}</span>
+        {amount}
+      </div>
+    );
+  }
+
   return (
-    <div className="wallet-receipt-row">
-      <span className="status-cell">
-        <span className={receipt.status === "error" ? "error" : ""} />
-        <Mono>
-          {receipt.tool}
-          <em>·{receipt.fn}</em>
-        </Mono>
-      </span>
-      <Mono>{receipt.light.toFixed(3)} credits</Mono>
-      <Mono>{receipt.latency !== null ? `${receipt.latency}ms` : "—"}</Mono>
-      <span
-        className={receipt.status === "error" ? "mono error" : "mono positive"}
+    <>
+      <div
+        aria-expanded={expanded}
+        className={`wallet-ledger-row expandable${first ? " first" : ""}`}
+        onClick={onToggle}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onToggle();
+          }
+        }}
+        role="button"
+        tabIndex={0}
       >
-        {receipt.status}
-      </span>
-      <Mono>{receipt.when}</Mono>
-    </div>
+        <span className={`ledger-glyph ledger-glyph-${kind}`}>
+          {glyphs[kind]}
+        </span>
+        <span>
+          <span className={expanded ? "ledger-chevron open" : "ledger-chevron"}>
+            ▸
+          </span>
+          {row.detail}
+        </span>
+        <span>{row.when}</span>
+        {amount}
+      </div>
+      {expanded
+        ? (
+          <div className="wallet-ledger-detail">
+            <QuoteLine
+              label="App charge"
+              value={formatCreditFromLight(row.appCharge)}
+            />
+            <QuoteLine
+              label="Infrastructure"
+              value={formatCreditFromLight(row.infraCharge)}
+            />
+            <QuoteLine
+              label="Platform fee"
+              value={formatCreditFromLight(row.platformFee)}
+            />
+            <QuoteLine
+              label="Developer earns"
+              value={formatCreditFromLight(row.developerNet)}
+            />
+            <div className="quote-total">
+              <span>
+                Total · {row.fn}
+                {row.status === "error" ? " · failed" : ""}
+              </span>
+              <strong>{formatCreditFromLight(row.total)}</strong>
+            </div>
+          </div>
+        )
+        : null}
+    </>
   );
 }
 
