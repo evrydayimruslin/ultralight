@@ -3013,8 +3013,8 @@ export function getLayoutHTML(options: {
       <footer style="max-width:820px;margin:0 auto;padding:var(--space-8) var(--space-6);border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--text-muted);">
         <span>&copy; 2026 Ultralight</span>
         <div style="display:flex;gap:var(--space-4);">
-          <a href="https://www.npmjs.com/package/ultralightpro" target="_blank" style="color:var(--text-muted);transition:color 0.15s;" onmouseover="this.style.color='var(--text-secondary)'" onmouseout="this.style.color='var(--text-muted)'">SDK Reference</a>
-          <a href="https://www.npmjs.com/package/ultralightpro" target="_blank" style="color:var(--text-muted);transition:color 0.15s;" onmouseover="this.style.color='var(--text-secondary)'" onmouseout="this.style.color='var(--text-muted)'">CLI Tool</a>
+          <a href="https://www.npmjs.com/package/ultralightpro-sdk" target="_blank" style="color:var(--text-muted);transition:color 0.15s;" onmouseover="this.style.color='var(--text-secondary)'" onmouseout="this.style.color='var(--text-muted)'">SDK Reference</a>
+          <a href="https://www.npmjs.com/package/ultralightagent" target="_blank" style="color:var(--text-muted);transition:color 0.15s;" onmouseover="this.style.color='var(--text-secondary)'" onmouseout="this.style.color='var(--text-muted)'">CLI Tool</a>
           <a href="/api" style="color:var(--text-muted);transition:color 0.15s;" onmouseover="this.style.color='var(--text-secondary)'" onmouseout="this.style.color='var(--text-muted)'">API / MCP</a>
         </div>
       </footer>
@@ -5746,7 +5746,7 @@ export function getLayoutHTML(options: {
         ]);
 
         // Use dynamic template, fall back to minimal hardcoded string
-        var template = "I'd like you to set up Ultralight, the instant MCP app platform.\\nRun: npx ultralightpro setup --token {TOKEN}";
+        var template = "I'd like you to set up Ultralight, the instant MCP app platform.\\nRun: npx ultralightagent setup --token {TOKEN}";
         if (templateRes.ok) {
           try {
             var templateData = await templateRes.json();
@@ -5788,7 +5788,7 @@ export function getLayoutHTML(options: {
       ]);
 
       // Use dynamic template, fall back to minimal hardcoded string
-      var template = "I'd like you to set up Ultralight, the instant MCP app platform.\\nRun: npx ultralightpro setup --token {TOKEN}";
+      var template = "I'd like you to set up Ultralight, the instant MCP app platform.\\nRun: npx ultralightagent setup --token {TOKEN}";
       if (templateRes.ok) {
         try {
           var templateData = await templateRes.json();

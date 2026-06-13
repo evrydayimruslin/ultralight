@@ -4516,7 +4516,7 @@ function buildInstallInstructions(
     "1. Install the MCP server (pick whichever works in your environment):",
     `   - Claude Code: ${claudeCodeAddCommand}`,
     `   - Any MCP config file: ${JSON.stringify(genericConfig)}`,
-    "   - Automated installer: npx ultralightpro setup --token $ULTRALIGHT_API_KEY",
+    "   - Automated installer: npx ultralightagent setup --token $ULTRALIGHT_API_KEY",
     "",
     "2. Connect, then learn the platform: the server's initialize response carries the full platform guide. The same docs live at the ultralight://platform/skills.md MCP resource" +
     ` and ${baseUrl}/api/skills.`,
@@ -4616,12 +4616,12 @@ function buildInstallInstructions(
       description:
         "Use the existing Ultralight CLI to login, upload, test, and run deployed Agents.",
       steps: [
-        "Install the ultralightpro package or use the local CLI during development.",
+        "Install the ultralightagent package or use the local CLI during development.",
         "Run ultralight login --token <your-token>.",
         "Run ultralight upload . from a deployable Agent directory.",
       ],
       configText:
-        "npm install -g ultralightpro\nultralight login --token <your-token>\nultralight upload .",
+        "npm install -g ultralightagent\nultralight login --token <your-token>\nultralight upload .",
       requiresApiKey: true,
     },
     {

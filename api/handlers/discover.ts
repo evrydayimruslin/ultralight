@@ -2044,7 +2044,7 @@ function getOnboardingTemplate(): {
 ### Option A: Desktop / CLI agents (Claude Code, Cursor, terminals)
 
 Run this command:
-npx ultralightpro setup --token {TOKEN}
+npx ultralightagent setup --token {TOKEN}
 {SESSION_NOTE}
 This installs MCP config, registers Skills + slash commands, and outputs an agent bridge for immediate use. MCP tools activate natively on next session restart.
 

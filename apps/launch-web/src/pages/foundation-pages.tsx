@@ -177,7 +177,7 @@ function buildConnectPrompt(key: string): string {
     "1. Install the MCP server (pick whichever works in your environment):",
     `   - Claude Code: ${claudeCodeAdd}`,
     `   - Any MCP config file: ${genericConfig}`,
-    `   - Automated installer: npx ultralightpro setup --token ${key}`,
+    `   - Automated installer: npx ultralightagent setup --token ${key}`,
     "",
     "2. Connect, then learn the platform: the server's initialize response carries the full platform guide. The same docs live at the ultralight://platform/skills.md MCP resource" +
     ` and ${apiOrigin}/api/skills.`,
@@ -360,14 +360,14 @@ const installTargets: InstallTarget[] = [
   },
   {
     config: (key) =>
-      `npm install -g ultralightpro\nultralight login --token ${key}\nultralight upload .`,
+      `npm install -g ultralightagent\nultralight login --token ${key}\nultralight upload .`,
     description:
       "Use the Ultralight CLI to login, upload, test, and run deployed Agents.",
     group: "Direct",
     label: "CLI",
     requiresApiKey: true,
     steps: [
-      "Install the ultralightpro package.",
+      "Install the ultralightagent package.",
       "Run ultralight login --token <your-token>.",
       "Run ultralight upload . from a deployable Agent directory.",
     ],
