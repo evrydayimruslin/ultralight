@@ -4116,13 +4116,42 @@ export function AccountFoundationPage(
               </div>
             </div>
 
+            <WalletBalancePanel
+              rows={mergeWalletRows(transactions, receipts)}
+            />
             {showTopUp
-              ? <WalletTopUpPanel earnedCredits={totals.earned} live={live} />
-              : (
-                <WalletBalancePanel
-                  rows={mergeWalletRows(transactions, receipts)}
-                />
-              )}
+              ? (
+                <div
+                  className="topup-modal-backdrop"
+                  onClick={(event) => {
+                    if (event.target === event.currentTarget) {
+                      setShowTopUp(false);
+                    }
+                  }}
+                  role="presentation"
+                >
+                  <div
+                    aria-label="Add funds"
+                    aria-modal="true"
+                    className="topup-modal"
+                    role="dialog"
+                  >
+                    <button
+                      aria-label="Close"
+                      className="topup-modal-close"
+                      onClick={() => setShowTopUp(false)}
+                      type="button"
+                    >
+                      ✕
+                    </button>
+                    <WalletTopUpPanel
+                      earnedCredits={totals.earned}
+                      live={live}
+                    />
+                  </div>
+                </div>
+              )
+              : null}
           </>
         )
         : null}
@@ -4327,6 +4356,30 @@ function WalletTopUpPanel(
 ): ReactElement {
   const [method, setMethod] = useState<PaymentMethod>("card");
   const [creditsAmount, setCreditsAmount] = useState(10000);
+  // Editable dollar amount. amountText is the free-typing buffer; while focused
+  // we don't reformat it (avoids cursor jumps), and we keep it in sync when a
+  // preset or method change moves creditsAmount.
+  const [amountText, setAmountText] = useState(() => dollarsText(creditsAmount));
+  const amountFocused = useRef(false);
+  useEffect(() => {
+    if (!amountFocused.current) setAmountText(dollarsText(creditsAmount));
+  }, [creditsAmount]);
+  const onAmountInput = (raw: string) => {
+    const cleaned = raw.replace(/[^0-9.]/g, "").replace(/(\..*?)\..*/g, "$1");
+    setAmountText(cleaned);
+    const dollars = parseFloat(cleaned);
+    if (Number.isFinite(dollars)) {
+      setCreditsAmount(Math.min(500000, Math.round(dollars * 100)));
+    }
+  };
+  const onAmountBlur = () => {
+    amountFocused.current = false;
+    const dollars = parseFloat(amountText);
+    const light = Number.isFinite(dollars) ? Math.round(dollars * 100) : 1000;
+    const clamped = Math.min(500000, Math.max(1000, light));
+    setCreditsAmount(clamped);
+    setAmountText(dollarsText(clamped));
+  };
   const [phase, setPhase] = useState<TopUpPhase>("idle");
   const [message, setMessage] = useState("");
   const [messageIsError, setMessageIsError] = useState(false);
@@ -4685,7 +4738,19 @@ function WalletTopUpPanel(
       <Card className="wallet-topup-card">
         <p className="section-label">Amount</p>
         <div className="light-input-shell">
-          <strong>{formatCreditFromLight(creditsAmount)}</strong>
+          <span className="amount-currency">$</span>
+          <input
+            aria-label="Top-up amount in dollars"
+            className="amount-field"
+            disabled={inputsLocked}
+            inputMode="decimal"
+            onBlur={onAmountBlur}
+            onChange={(event) => onAmountInput(event.target.value)}
+            onFocus={() => {
+              amountFocused.current = true;
+            }}
+            value={amountText}
+          />
         </div>
         <div className="amount-presets">
           {presets.map((amount) => (
@@ -6124,6 +6189,14 @@ function formatNumber(value: number): string {
 
 // Dollar-rendered credit amount (1 credit = 1 cent) — the wallet design
 // displays currency-styled values.
+// Plain dollar string from Light (100 = $1): 10000 -> "100", 12550 -> "125.5".
+function dollarsText(light: number): string {
+  const dollars = light / 100;
+  return Number.isInteger(dollars)
+    ? String(dollars)
+    : String(Number(dollars.toFixed(2)));
+}
+
 function formatCreditFromLight(amountCents: number): string {
   const dollars = amountCents / 100;
   if (!Number.isFinite(dollars)) return "$0.00";

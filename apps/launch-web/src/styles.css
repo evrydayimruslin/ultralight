@@ -3794,6 +3794,75 @@ button {
   gap: 8px;
 }
 
+/* Editable top-up amount field (custom amounts, not just presets). */
+.light-input-shell .amount-currency {
+  font-family: var(--ul-font);
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.light-input-shell .amount-field {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ul-text);
+  font-family: var(--ul-font);
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  outline: none;
+}
+
+/* Add-funds checkout, shown as a modal over the ledger. */
+.topup-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: start center;
+  padding: 56px 20px;
+  overflow-y: auto;
+  background: rgba(10, 10, 10, 0.28);
+  backdrop-filter: blur(6px);
+  animation: signin-fade 0.15s ease-out;
+}
+
+.topup-modal {
+  position: relative;
+  width: min(900px, 100%);
+  padding: 28px;
+  border: 1px solid var(--ul-border);
+  border-radius: 18px;
+  background: var(--ul-bg);
+  box-shadow: var(--ul-shadow);
+  animation: signin-rise 0.18s ease-out;
+}
+
+.topup-modal-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ul-muted);
+  font-size: 16px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.topup-modal-close:hover {
+  background: var(--ul-hover);
+  color: var(--ul-text);
+}
+
 .topup-payment-element {
   margin: 4px 0;
   /* Reserve space while Stripe's iframe loads so the card doesn't jump. */
