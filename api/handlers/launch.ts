@@ -4104,13 +4104,33 @@ async function handleLaunchWalletTopUpIntent(
       user.id,
       stripeSecretKey,
     );
-    const billingProfile = await ensureBillingAddressForFunding({
-      userId: user.id,
-      billingAddress: createRequest.billingAddress,
-      source: "wallet_funding",
-      stripeSecretKey,
-      stripeCustomerId,
-    });
+    // Billing address is OPTIONAL for card/Link wallet funding. Stripe collects
+    // it at payment time (full address via Link, AVS for card) and it lands on
+    // the resulting charge's billing_details — available for downstream sales-tax
+    // use — so a missing on-file address must not block the intent. If one is
+    // provided or already on file we still use and sync it. (Wire funding, which
+    // calls ensureBillingAddressForFunding elsewhere, keeps requiring it.)
+    let billingProfile:
+      | Awaited<ReturnType<typeof ensureBillingAddressForFunding>>
+      | null = null;
+    try {
+      billingProfile = await ensureBillingAddressForFunding({
+        userId: user.id,
+        billingAddress: createRequest.billingAddress,
+        source: "wallet_funding",
+        stripeSecretKey,
+        stripeCustomerId,
+      });
+    } catch (billingErr) {
+      if (
+        billingErr instanceof RequestValidationError &&
+        billingErr.message === "billing_address is required before adding Light"
+      ) {
+        billingProfile = null;
+      } else {
+        throw billingErr;
+      }
+    }
     const intent = await createLaunchWalletPaymentIntent({
       userId: user.id,
       stripeCustomerId,
@@ -4118,8 +4138,8 @@ async function handleLaunchWalletTopUpIntent(
       amountLight: createRequest.amountCredits,
       method: createRequest.method,
       termsAccepted: true,
-      billingAddressId: billingProfile.id,
-      billingAddressVersion: billingProfile.version,
+      billingAddressId: billingProfile?.id,
+      billingAddressVersion: billingProfile?.version,
     });
 
     return json({
@@ -4129,7 +4149,9 @@ async function handleLaunchWalletTopUpIntent(
       clientSecret: intent.clientSecret,
       stripeCustomerId: intent.stripeCustomerId,
       quote: withLaunchFundingCreditsAliases(intent.quote),
-      billingAddress: publicBillingAddress(billingProfile),
+      billingAddress: billingProfile
+        ? publicBillingAddress(billingProfile)
+        : null,
       generatedAt: new Date().toISOString(),
     });
   } catch (err) {
