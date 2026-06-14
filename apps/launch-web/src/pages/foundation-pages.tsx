@@ -4303,6 +4303,22 @@ function writePendingTopUpResult(value: string | null): void {
   }
 }
 
+// Stripe Link mark — green rounded square with the Link chevron.
+function LinkMark(): ReactElement {
+  return (
+    <svg aria-hidden="true" fill="none" height="18" viewBox="0 0 28 18" width="28">
+      <rect fill="#00D66F" height="18" rx="5" width="28" />
+      <path
+        d="M11 5.5l3.2 3.5-3.2 3.5"
+        stroke="#0E2A47"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2.2"
+      />
+    </svg>
+  );
+}
+
 function WalletTopUpPanel(
   { earnedCredits, live }: {
     earnedCredits: number;
@@ -4693,8 +4709,10 @@ function WalletTopUpPanel(
             onClick={() => selectMethod("card")}
             type="button"
           >
-            <strong>Pay with Link</strong>
-            <span>Card or bank · 2.9% + $0.30</span>
+            <strong className="method-link">
+              <LinkMark />
+              Pay with Link
+            </strong>
           </button>
           <button
             className={method === "earnings" ? "active" : ""}
@@ -4708,6 +4726,7 @@ function WalletTopUpPanel(
         </div>
       </Card>
 
+      <div className="wallet-quote-col">
       <Card className="wallet-quote-card">
         <p className="section-label">
           {method === "earnings" ? "Transfer summary" : "Order summary"}
@@ -4784,7 +4803,7 @@ function WalletTopUpPanel(
               {phase === "creating"
                 ? "Preparing checkout…"
                 : method === "earnings"
-                ? `Transfer ${creditsAmount.toLocaleString()} credits`
+                ? `Transfer ${formatCreditFromLight(creditsAmount)}`
                 : "Continue to payment"}
             </Button>
           )}
@@ -4812,6 +4831,7 @@ function WalletTopUpPanel(
             </a>
           )
           : null}
+      </Card>
         <div className="secure-note">
           <Icon name="shield" size={12} />
           <span>
@@ -4820,7 +4840,7 @@ function WalletTopUpPanel(
               : "Secure checkout · Stripe"}
           </span>
         </div>
-      </Card>
+      </div>
     </div>
   );
 }

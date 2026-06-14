@@ -3775,6 +3775,25 @@ button {
   font-size: 12px;
 }
 
+/* Order-summary column: the card with the "Secure checkout" / "Instant
+   internal transfer" note sitting directly below the tile. */
+.wallet-quote-col {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.wallet-quote-col .secure-note {
+  padding: 0 2px;
+}
+
+/* "Pay with Link" option label — Link mark inline with the text, no subtext. */
+.payment-methods .method-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .topup-payment-element {
   margin: 4px 0;
   /* Reserve space while Stripe's iframe loads so the card doesn't jump. */
