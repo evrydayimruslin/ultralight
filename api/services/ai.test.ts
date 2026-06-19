@@ -86,6 +86,8 @@ Deno.test("AI service provider helpers use the active BYOK registry", () => {
     "nvidia",
     "google",
     "xai",
+    "moonshot",
+    "zai",
   ]);
   assertEquals(getDefaultModel("nvidia"), "deepseek-ai/deepseek-v4-flash");
   assertEquals(getDefaultModel("anthropic"), "deepseek/deepseek-v4-flash");

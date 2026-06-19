@@ -21,9 +21,11 @@ export const ACTIVE_BYOK_PROVIDER_IDS = [
   "nvidia",
   "google",
   "xai",
+  "moonshot",
+  "zai",
 ] as const;
 
-export const LEGACY_BYOK_PROVIDER_IDS = ["anthropic", "moonshot"] as const;
+export const LEGACY_BYOK_PROVIDER_IDS = ["anthropic"] as const;
 
 export type ActiveBYOKProvider = typeof ACTIVE_BYOK_PROVIDER_IDS[number];
 export type LegacyBYOKProvider = typeof LEGACY_BYOK_PROVIDER_IDS[number];
@@ -1962,6 +1964,43 @@ export const BYOK_PROVIDERS: Record<ActiveBYOKProvider, BYOKProviderInfo> = {
     apiKeyPrefix: "xai-",
     docsUrl: "https://docs.x.ai",
     apiKeyUrl: "https://console.x.ai",
+  },
+  moonshot: {
+    id: "moonshot",
+    name: "Moonshot Kimi",
+    description: "Use Kimi (Moonshot) models with your own Moonshot key",
+    protocol: "openai-compatible",
+    baseUrl: "https://api.moonshot.ai/v1",
+    defaultModel: "kimi-k2-0711-preview",
+    models: [
+      { id: "kimi-k2-0711-preview", name: "Kimi K2", contextWindow: 131072 },
+      {
+        id: "moonshot-v1-128k",
+        name: "Moonshot v1 128k",
+        contextWindow: 131072,
+      },
+      { id: "moonshot-v1-32k", name: "Moonshot v1 32k", contextWindow: 32768 },
+    ],
+    capabilities: OPENAI_COMPAT_TEXT_CAPABILITIES,
+    apiKeyPrefix: "sk-",
+    docsUrl: "https://platform.moonshot.ai/docs",
+    apiKeyUrl: "https://platform.moonshot.ai/console/api-keys",
+  },
+  zai: {
+    id: "zai",
+    name: "Z.ai GLM",
+    description: "Use GLM (Z.ai / Zhipu) models with your own Z.ai key",
+    protocol: "openai-compatible",
+    baseUrl: "https://api.z.ai/api/paas/v4",
+    defaultModel: "glm-4.6",
+    models: [
+      { id: "glm-4.6", name: "GLM-4.6", contextWindow: 200000 },
+      { id: "glm-4.5", name: "GLM-4.5", contextWindow: 131072 },
+      { id: "glm-4.5-air", name: "GLM-4.5 Air", contextWindow: 131072 },
+    ],
+    capabilities: OPENAI_COMPAT_TEXT_CAPABILITIES,
+    docsUrl: "https://docs.z.ai",
+    apiKeyUrl: "https://z.ai/manage-apikey/apikey-list",
   },
 };
 

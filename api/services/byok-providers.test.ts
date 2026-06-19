@@ -41,11 +41,16 @@ Deno.test('BYOK provider registry marks OpenRouter and OpenAI as web-search capa
   }
 });
 
+Deno.test('BYOK provider registry exposes Moonshot Kimi and Z.ai as first-tier', () => {
+  assert('moonshot' in BYOK_PROVIDERS);
+  assert('zai' in BYOK_PROVIDERS);
+  assert(isActiveBYOKProvider('moonshot'));
+  assert(isActiveBYOKProvider('zai'));
+});
+
 Deno.test('BYOK provider registry excludes legacy direct providers', () => {
   assert(!('anthropic' in BYOK_PROVIDERS));
-  assert(!('moonshot' in BYOK_PROVIDERS));
   assert(isLegacyBYOKProvider('anthropic'));
-  assert(isLegacyBYOKProvider('moonshot'));
 });
 
 Deno.test('BYOK active provider guard accepts only current first-tier providers', () => {
@@ -54,6 +59,5 @@ Deno.test('BYOK active provider guard accepts only current first-tier providers'
   }
 
   assert(!isActiveBYOKProvider('anthropic'));
-  assert(!isActiveBYOKProvider('moonshot'));
   assert(!isActiveBYOKProvider('_platform_openrouter'));
 });

@@ -394,7 +394,6 @@ Deno.test("User service: BYOK writes surface persistence failures", async () => 
 Deno.test("User service: legacy BYOK providers are ignored without breaking hydration", async () => {
   await runSerial(async () => {
     let anthropicKey = "";
-    let moonshotKey = "";
 
     await withMockedEnvAndFetch(async () =>
       jsonResponse([{
@@ -414,15 +413,9 @@ Deno.test("User service: legacy BYOK providers are ignored without breaking hydr
             model: "claude-3-5-sonnet-latest",
             added_at: "2026-04-10T00:00:00Z",
           },
-          moonshot: {
-            encrypted_key: moonshotKey,
-            model: "kimi-k2",
-            added_at: "2026-04-11T00:00:00Z",
-          },
         },
       }]), async () => {
       anthropicKey = await encryptApiKey("anthropic-legacy-key");
-      moonshotKey = await encryptApiKey("moonshot-legacy-key");
       const user = await createUserService().getUser("user-1");
       assert(user !== null);
       assertEquals(user.byok_enabled, false);

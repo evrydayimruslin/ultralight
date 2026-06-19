@@ -97,15 +97,16 @@ button {
 /* Top-bar "Add to agent" is a quiet ghost action — highlight by colour only,
    no lift. */
 /* The top-bar "Add to agent" reads like a nav item: same font, size and
-   colour, highlighting by colour on hover. */
-.top-actions .launch-button {
+   colour, highlighting by colour on hover. Direct child only — the button's
+   own modal renders inside .top-actions and must keep its real button styles. */
+.top-actions > .launch-button {
   color: #333;
   font-size: 15.5px;
   font-weight: 500;
   transition: color 160ms ease;
 }
 
-.top-actions .launch-button:hover {
+.top-actions > .launch-button:hover {
   background: transparent;
   color: var(--ul-text);
 }
@@ -4079,8 +4080,8 @@ button {
 .settings-card-toggle {
   display: flex;
   align-items: flex-start;
-  gap: 9px;
   min-width: 0;
+  flex: 1;
   padding: 0;
   border: 0;
   background: transparent;
@@ -4089,17 +4090,12 @@ button {
   cursor: pointer;
 }
 
-.settings-card-chevron {
-  flex-shrink: 0;
-  margin-top: 2px;
-  color: var(--ul-muted);
-  font-size: 11px;
-  line-height: 1.4;
-  transition: transform 0.15s ease;
-}
-
-.settings-card-chevron.open {
-  transform: rotate(90deg);
+/* No chevron — the header itself is the toggle. Hint interactivity with a
+   subtle underline on the title when hovered. */
+.settings-card-toggle:hover h2 {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
 }
 
 .settings-card-head-actions {
@@ -4223,16 +4219,18 @@ button {
   flex: 1;
 }
 
-.preference-row strong,
-.preference-row span {
+/* Scope label typography to the row's first cell so it can't leak into button
+   labels / pills that live as later children of the same .preference-row. */
+.preference-row > div:first-child strong,
+.preference-row > div:first-child span {
   display: block;
 }
 
-.preference-row strong {
+.preference-row > div:first-child strong {
   font-size: 13px;
 }
 
-.preference-row span {
+.preference-row > div:first-child span {
   margin-top: 2px;
   color: var(--ul-secondary);
   font-size: 11.5px;
@@ -4480,6 +4478,26 @@ button {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 16px;
+}
+
+/* BYOK key modal: "Remove key" sits left, Cancel/Save stay right. */
+.byok-modal-actions {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modal-actions-right {
+  display: flex;
+  gap: 8px;
+}
+
+.byok-remove-btn,
+.byok-remove-btn span {
+  color: var(--ul-red);
+}
+
+.byok-remove-btn:hover {
+  background: rgba(220, 38, 38, 0.08);
 }
 
 .auth-callback-page {

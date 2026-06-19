@@ -879,7 +879,13 @@ function ConnectPromptModal({
   }, []);
 
   return (
-    <div className="settings-modal-backdrop">
+    <div
+      className="settings-modal-backdrop"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+      role="presentation"
+    >
       <Card className="new-key-modal connect-modal">
         <div className="modal-title-row">
           <span className="target-icon">
@@ -4128,7 +4134,7 @@ export function AccountFoundationPage(
               summary={visibleKeys.length > 0
                 ? <Pill>{visibleKeys.length} keys</Pill>
                 : null}
-              title="API keys"
+              title="Ultralight Auth Keys"
             >
               <p className="settings-help">
                 {canManageKeys
@@ -4156,6 +4162,7 @@ export function AccountFoundationPage(
             <ByokSettingsCard live={live} navigate={navigate} />
 
             <SettingsCard
+              collapsible
               subtitle="Launch-safe defaults for how your connected agent may call Agent functions."
               title="Preferences"
             >
@@ -4183,6 +4190,7 @@ export function AccountFoundationPage(
             </SettingsCard>
 
             <SettingsCard
+              collapsible
               subtitle="Build on Ultralight — the full platform guide, tool reference, and SDK globals."
               title="Developer"
             >
@@ -4205,9 +4213,6 @@ export function AccountFoundationPage(
             </SettingsCard>
 
             <div className="connect-agent-callout">
-              <span className="target-icon">
-                <Icon name="copy" />
-              </span>
               <div>
                 <strong>Connecting an agent?</strong>
                 <p>
@@ -5332,14 +5337,6 @@ function SettingsCard({
               onClick={() => setExpanded((open) => !open)}
               type="button"
             >
-              <span
-                className={expanded
-                  ? "settings-card-chevron open"
-                  : "settings-card-chevron"}
-                aria-hidden="true"
-              >
-                ▸
-              </span>
               {heading}
             </button>
           )
@@ -5556,8 +5553,9 @@ function ByokSettingsCard({
 
   return (
     <SettingsCard
+      collapsible
       subtitle="Bring your own inference key, or let platform runs bill credits. Stored keys are encrypted and never shown again."
-      title="Model keys (BYOK)"
+      title="BYOK Settings"
     >
       <ByokBillingBanner
         inference={live.data.inferenceOptions}
@@ -5576,11 +5574,6 @@ function ByokSettingsCard({
                   setFormMessage("");
                   setModalProvider(option);
                 }}
-                onRemove={() =>
-                  runProviderAction(
-                    option.id,
-                    () => launchApi.deleteByokProvider(option.id),
-                  )}
                 onSetPrimary={() =>
                   runProviderAction(
                     option.id,
@@ -5612,6 +5605,12 @@ function ByokSettingsCard({
         ? (
           <ByokKeyModal
             onClose={() => setModalProvider(null)}
+            onRemoved={(message) => {
+              setModalProvider(null);
+              setFormState("idle");
+              setFormMessage(message);
+              live.reload();
+            }}
             onSaved={(message) => {
               setModalProvider(null);
               setFormState("idle");
@@ -5630,10 +5629,12 @@ function ByokSettingsCard({
 // opened it, so there's no provider picker here — just the key + optional model.
 function ByokKeyModal({
   onClose,
+  onRemoved,
   onSaved,
   provider,
 }: {
   onClose: () => void;
+  onRemoved: (message: string) => void;
   onSaved: (message: string) => void;
   provider: LaunchByokProviderOption;
 }): ReactElement {
@@ -5641,10 +5642,12 @@ function ByokKeyModal({
   const [modelDraft, setModelDraft] = useState(provider.model || "");
   const [validateOnSave, setValidateOnSave] = useState(true);
   const [state, setState] = useState<"idle" | "saving" | "error">("idle");
+  const [removing, setRemoving] = useState(false);
   const [message, setMessage] = useState("");
+  const busy = state === "saving" || removing;
 
   const save = async () => {
-    if (state === "saving") return;
+    if (busy) return;
     if (!apiKeyDraft.trim()) {
       setState("error");
       setMessage("Paste an API key first.");
@@ -5660,6 +5663,21 @@ function ByokKeyModal({
       });
       onSaved(response.message);
     } catch (err) {
+      setState("error");
+      setMessage(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const remove = async () => {
+    if (busy) return;
+    setRemoving(true);
+    setState("idle");
+    setMessage("");
+    try {
+      const response = await launchApi.deleteByokProvider(provider.id);
+      onRemoved(response.message);
+    } catch (err) {
+      setRemoving(false);
       setState("error");
       setMessage(err instanceof Error ? err.message : String(err));
     }
@@ -5742,17 +5760,31 @@ function ByokKeyModal({
             </p>
           )
           : null}
-        <div className="modal-actions">
-          <Button onClick={onClose} size="sm" variant="secondary">
-            Cancel
-          </Button>
-          <Button onClick={() => void save()} size="sm">
-            {state === "saving"
-              ? "Saving"
-              : provider.configured
-              ? "Update key"
-              : "Add key"}
-          </Button>
+        <div className="modal-actions byok-modal-actions">
+          {provider.configured
+            ? (
+              <Button
+                className="byok-remove-btn"
+                onClick={() => void remove()}
+                size="sm"
+                variant="ghost"
+              >
+                {removing ? "Removing" : "Remove key"}
+              </Button>
+            )
+            : null}
+          <div className="modal-actions-right">
+            <Button onClick={onClose} size="sm" variant="secondary">
+              Cancel
+            </Button>
+            <Button onClick={() => void save()} size="sm">
+              {state === "saving"
+                ? "Saving"
+                : provider.configured
+                ? "Update key"
+                : "Add key"}
+            </Button>
+          </div>
         </div>
       </Card>
     </div>
@@ -5762,13 +5794,11 @@ function ByokKeyModal({
 function ByokProviderRow({
   busy,
   onConfigure,
-  onRemove,
   onSetPrimary,
   option,
 }: {
   busy: boolean;
   onConfigure: () => void;
-  onRemove: () => void;
   onSetPrimary: () => void;
   option: LaunchByokProviderOption;
 }): ReactElement {
@@ -5784,9 +5814,6 @@ function ByokProviderRow({
         </span>
       </div>
       {option.primary ? <Pill tone="green">primary</Pill> : null}
-      <Pill tone={option.configured ? "green" : "default"}>
-        {option.configured ? "configured" : "not configured"}
-      </Pill>
       {option.configured && !option.primary
         ? (
           <Button onClick={onSetPrimary} size="sm" variant="secondary">
@@ -5801,13 +5828,6 @@ function ByokProviderRow({
       >
         {option.configured ? "Update key" : "Add key"}
       </Button>
-      {option.configured
-        ? (
-          <Button onClick={onRemove} size="sm" variant="ghost">
-            {busy ? "Working" : "Remove"}
-          </Button>
-        )
-        : null}
     </div>
   );
 }
@@ -5923,7 +5943,13 @@ function NewApiKeyModal({
   };
 
   return (
-    <div className="settings-modal-backdrop">
+    <div
+      className="settings-modal-backdrop"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+      role="presentation"
+    >
       <Card className="new-key-modal">
         <div className="modal-title-row">
           <span className="target-icon">

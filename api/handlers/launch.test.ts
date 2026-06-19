@@ -1894,7 +1894,7 @@ Deno.test('launch facade: byok summary lists providers without key material', as
       assertEquals(response.status, 200);
       assertEquals(body.enabled, true);
       assertEquals(body.primaryProvider, 'openrouter');
-      assertEquals(body.providers.length, 6);
+      assertEquals(body.providers.length, 8);
       const openrouter = body.providers.find((p) => p.id === 'openrouter');
       assertEquals(openrouter?.configured, true);
       assertEquals(openrouter?.primary, true);

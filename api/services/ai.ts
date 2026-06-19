@@ -187,8 +187,9 @@ const PROVIDER_CONFIGS: Record<string, ProviderConfig> = {
   nvidia: createOpenAICompatibleConfig('nvidia'),
   google: createOpenAICompatibleConfig('google'),
   xai: createOpenAICompatibleConfig('xai'),
+  moonshot: createOpenAICompatibleConfig('moonshot'),
+  zai: createOpenAICompatibleConfig('zai'),
   anthropic: OPENROUTER_CONFIG,
-  moonshot: OPENROUTER_CONFIG,
 };
 
 // ============================================
