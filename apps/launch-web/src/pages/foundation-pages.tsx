@@ -3947,7 +3947,6 @@ function ProfileStrip({ canManage }: { canManage: boolean }): ReactElement {
 
   const trimmedName = name?.trim() || "";
   const headingLabel = canManage && trimmedName ? trimmedName : "Account";
-  const avatarName = trimmedName || "@you";
 
   const startEdit = () => {
     setDraft(trimmedName);
@@ -3974,7 +3973,6 @@ function ProfileStrip({ canManage }: { canManage: boolean }): ReactElement {
 
   return (
     <div className="profile-strip">
-      <Avatar color="#0a0a0a" name={avatarName} />
       <div className="profile-identity">
         {editing
           ? (
@@ -4338,10 +4336,11 @@ function WalletAmount(
   { label, value }: { label: string; value: number | null },
 ): ReactElement {
   // null = wallet not loaded yet; never show a fabricated 0.000-credit balance.
+  // The visible subheader is intentionally dropped — `label` stays as the
+  // accessible name so the bare figure keeps its context for screen readers.
   if (value === null) {
     return (
-      <div className="wallet-amount">
-        <span>{label}</span>
+      <div aria-label={label} className="wallet-amount">
         <strong>—</strong>
       </div>
     );
@@ -4350,8 +4349,7 @@ function WalletAmount(
   // size/color — no x100, no smaller/greyer cents.
   const dollars = value / 100;
   return (
-    <div className="wallet-amount">
-      <span>{label}</span>
+    <div aria-label={label} className="wallet-amount">
       <strong>
         {`$${dollars.toLocaleString("en-US", {
           minimumFractionDigits: 2,
