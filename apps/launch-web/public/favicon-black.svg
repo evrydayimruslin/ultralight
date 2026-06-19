@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="44 56 168 144" shape-rendering="geometricPrecision">
+  <mask id="eub" maskUnits="userSpaceOnUse" x="0" y="0" width="256" height="256">
+    <rect x="0" y="0" width="256" height="256" fill="black"></rect>
+    <circle cx="128" cy="116.02" r="84" fill="white"></circle>
+    <circle cx="128" cy="98.02" r="72.24" fill="black"></circle>
+  </mask>
+  <circle cx="128" cy="116.02" r="84" fill="#0a0a0a" mask="url(#eub)"></circle>
+</svg>
