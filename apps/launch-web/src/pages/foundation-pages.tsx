@@ -4150,8 +4150,9 @@ export function AccountFoundationPage(
 
             <SettingsCard
               collapsible
+              defaultExpanded={false}
               subtitle="Launch-safe defaults for how your connected agent may call Agent functions."
-              title="Preferences"
+              title="Permissions"
             >
               <PreferenceRow
                 control={
@@ -4178,6 +4179,7 @@ export function AccountFoundationPage(
 
             <SettingsCard
               collapsible
+              defaultExpanded={false}
               subtitle="Build on Ultralight — the full platform guide, tool reference, and SDK globals."
               title="Developer"
             >
@@ -5533,6 +5535,7 @@ function ByokSettingsCard({
   return (
     <SettingsCard
       collapsible
+      defaultExpanded={false}
       subtitle="Bring your own inference key, or let platform runs bill credits. Stored keys are encrypted and never shown again."
       title="BYOK Settings"
     >

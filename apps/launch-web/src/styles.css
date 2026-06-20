@@ -3362,7 +3362,7 @@ button {
 
 .wallet-amount {
   display: grid;
-  gap: 4px;
+  gap: 9px;
 }
 
 .wallet-amount > span {
@@ -4010,14 +4010,19 @@ button {
   margin: 0;
 }
 
-/* Every profile section header reads like the "ACCOUNT" label (which renders via
-   .card p: 14px, --ul-secondary, uppercase, 600). Match it exactly. */
+/* ONE consistent treatment for EVERY profile section header — the "ACCOUNT"
+   look: serif, 14px, 600, --ul-secondary, uppercase. Including .section-label
+   here (specificity 0,2,0) also overrides the generic .card p (0,1,1), so the
+   figure labels (ACCOUNT / BALANCE REMAINING / EARNINGS AVAILABLE) match the
+   card headers exactly — font, colour and size all locked together. */
+.account-page .section-label,
 .account-page .settings-card-head h2,
 .account-page .wallet-section-head h2,
 .account-page .payout-banner h3 {
-  color: var(--ul-secondary);
+  font-family: var(--ul-font);
   font-size: 14px;
   font-weight: 600;
+  color: var(--ul-secondary);
   letter-spacing: 0;
   text-transform: uppercase;
 }
