@@ -4001,8 +4001,11 @@ button {
   margin-bottom: 16px;
 }
 
+/* Match the account-name size — no oversized hero figure. */
 .wallet-amount-card .wallet-amount strong {
-  font-size: 34px;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0;
 }
 
 /* The figure's label sits tight above the number (the grid gap handles spacing). */
