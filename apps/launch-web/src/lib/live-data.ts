@@ -63,6 +63,13 @@ interface LocationLike {
 
 type LoadResult = LaunchRouteLiveData;
 
+// Session-lived cache of the last payload fetched per route identity. Lets a
+// revisited page paint instantly (stale-while-revalidate) instead of blanking
+// to a loading state and shifting when the fresh fetch lands. Module-level so it
+// survives route changes / component remounts; a full page reload (incl. sign
+// out, which hard-navigates) clears it, so no cross-session data lingers.
+const routeCache = new Map<string, LaunchRouteLiveData>();
+
 export function useLaunchRouteLiveData(
   location: LocationLike,
   route: ResolvedLaunchRoute,
@@ -90,16 +97,24 @@ export function useLaunchRouteLiveData(
     const identity = `${routeKey}|${paramsKey}|${location.pathname}`;
     const routeChanged = identity !== identityRef.current;
     identityRef.current = identity;
+    // On a route change, paint this route's cached payload immediately if we've
+    // loaded it before (no blank/loading flash, no layout shift) and revalidate
+    // below. A first visit still shows "loading"; a same-route reload() keeps the
+    // current data on screen.
+    const cached = routeCache.get(identity);
     setState((current) =>
-      routeChanged ? { data: {}, status: "loading" } : {
-        data: current.data,
-        status: current.status === "idle" ? "loading" : current.status,
-      }
+      routeChanged
+        ? (cached ? { data: cached, status: "ready" } : { data: {}, status: "loading" })
+        : {
+          data: current.data,
+          status: current.status === "idle" ? "loading" : current.status,
+        }
     );
 
     loadRouteData(location, route)
       .then((data) => {
         if (cancelled) return;
+        routeCache.set(identity, data);
         setState({ data, status: "ready" });
       })
       .catch((err) => {

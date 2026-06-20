@@ -2083,12 +2083,6 @@ button {
   margin-bottom: 28px;
 }
 
-/* Owner handle shown after the agent name in the public header. */
-.tool-owner {
-  color: var(--ul-muted);
-  font-size: 15px;
-}
-
 .public-tool-header > .avatar {
   width: 46px;
   height: 46px;
@@ -2317,11 +2311,11 @@ button {
 
 .picker-caret {
   flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
-  border-right: 1.6px solid var(--ul-secondary);
-  border-bottom: 1.6px solid var(--ul-secondary);
-  transform: translateY(-2px) rotate(45deg);
+  width: 5.5px;
+  height: 5.5px;
+  border-right: 1.4px solid var(--ul-secondary);
+  border-bottom: 1.4px solid var(--ul-secondary);
+  transform: translateY(-1px) rotate(45deg);
   transition: transform 150ms ease;
 }
 

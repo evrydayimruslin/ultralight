@@ -1198,7 +1198,7 @@ function AgentConnectButton({
         icon="copy"
         size="lg"
       >
-        Add to your agent
+        Add direct to agent
       </Button>
     );
   }
@@ -1209,7 +1209,7 @@ function AgentConnectButton({
   return (
     <>
       <Button icon="copy" onClick={() => setOpen(true)} size="lg">
-        Add to your agent
+        Add direct to agent
       </Button>
       {open
         ? (
@@ -1349,17 +1349,6 @@ function AgentDetailSurface({
   return (
     <div className="launch-page-narrow tool-page">
       <ApiNotice live={live} noun="Agent details" />
-      <button
-        className="back-link"
-        onClick={() =>
-          navigate(
-            tool.relationship === "owner" ? "/agents?view=owned" : "/browse",
-          )}
-        type="button"
-      >
-        {tool.relationship === "owner" ? "Agents" : "Browse"} /{" "}
-        {tool.title}
-      </button>
 
       {tool.visibility === "unlisted"
         ? (
@@ -1375,7 +1364,6 @@ function AgentDetailSurface({
         <div>
           <div className="tool-title-row">
             <h1>{tool.title}</h1>
-            <span className="tool-owner">{tool.author}</span>
           </div>
           <p>{tool.summary}</p>
           <div className="tool-meta-row">
