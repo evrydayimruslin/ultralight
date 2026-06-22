@@ -99,6 +99,7 @@ import {
   upsertCurrentBillingAddress,
   type UserBillingAddressProfile,
 } from "../services/billing-addresses.ts";
+import { captureFundingBillingAddressFromCharge } from "../services/stripe-customers.ts";
 import { isGpuSupportEnabled } from "../services/gpu/feature-flag.ts";
 
 const stripeLogger = createServerLogger("STRIPE");
@@ -527,6 +528,36 @@ export async function handleUser(request: Request): Promise<Response> {
             status: result.status,
             already_finalized: result.alreadyFinalized || false,
           });
+
+          // C2 — capture the buyer's billing address from the funding charge
+          // (Stripe Link autofills it into the PaymentElement). Top-up is the
+          // universal capture point for the address consumption-time sales tax
+          // is computed against. Best-effort: never let it fail the deposit.
+          const stripeSecretKey = getEnv("STRIPE_SECRET_KEY");
+          if (stripeSecretKey && finalDeposit.stripeChargeId) {
+            try {
+              const captured = await captureFundingBillingAddressFromCharge({
+                userId: finalDeposit.userId,
+                stripeChargeId: finalDeposit.stripeChargeId,
+                stripeCustomerId: finalDeposit.stripeCustomerId,
+                stripeSecretKey,
+              });
+              if (captured) {
+                stripeLogger.info("Captured funding billing address", {
+                  event_id: event.id,
+                  user_id: finalDeposit.userId,
+                  source: captured.source,
+                  country: captured.country,
+                });
+              }
+            } catch (err) {
+              stripeLogger.warn("Funding billing address capture failed", {
+                event_id: event.id,
+                user_id: finalDeposit.userId,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          }
         }
 
         const failedDeposit = buildStripeDepositFailure(event);

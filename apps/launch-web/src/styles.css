@@ -3884,6 +3884,10 @@ button {
   min-height: 80px;
 }
 
+.topup-address-element {
+  margin: 4px 0 0;
+}
+
 .topup-terms {
   display: flex;
   align-items: flex-start;

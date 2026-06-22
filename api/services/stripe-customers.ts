@@ -84,6 +84,112 @@ export async function getOrCreateStripeCustomerForUser(
   return { stripeCustomerId, email };
 }
 
+interface StripeChargeBillingDetails {
+  name?: string | null;
+  address?: {
+    line1?: string | null;
+    line2?: string | null;
+    city?: string | null;
+    state?: string | null;
+    postal_code?: string | null;
+    country?: string | null;
+  } | null;
+}
+
+function billingDetailsToInput(
+  details: StripeChargeBillingDetails | null | undefined,
+): BillingAddressInput | null {
+  const a = details?.address;
+  if (!a) return null;
+  // Stripe Link / card billing can come back partial. We need at least a
+  // line1 + country to be useful for consumption-time tax; city + postal
+  // round it out. Anything short of that is treated as "no address".
+  if (!a.line1 || !a.country || !a.city || !a.postal_code) return null;
+  return {
+    name: details?.name || undefined,
+    line1: a.line1,
+    line2: a.line2 || undefined,
+    city: a.city,
+    state: a.state || undefined,
+    postalCode: a.postal_code,
+    country: a.country,
+  };
+}
+
+function sameBillingAddress(
+  a: BillingAddressInput,
+  b: UserBillingAddressProfile | null,
+): boolean {
+  if (!b) return false;
+  return (a.line1 || "") === (b.line1 || "") &&
+    (a.line2 || "") === (b.line2 || "") &&
+    (a.city || "") === (b.city || "") &&
+    (a.state || "") === (b.state || "") &&
+    (a.postalCode || "") === (b.postalCode || "") &&
+    (a.country || "").toUpperCase() === (b.country || "").toUpperCase();
+}
+
+/**
+ * Capture the buyer's billing address from a completed funding charge.
+ *
+ * Stripe Link autofills the buyer's address into the PaymentElement, so the
+ * resulting charge carries `billing_details.address`. We retrieve the charge
+ * (the webhook PaymentIntent only references `latest_charge` by id) and store
+ * the address as the user's current billing address (source "wallet_funding").
+ * Because every funded account passes through top-up, this is the universal
+ * capture point for the address consumption-time sales tax is computed against.
+ *
+ * Best-effort: it never throws. A missing/partial address or a transient
+ * Stripe error must not fail an already-finalized deposit. Idempotent: a charge
+ * whose address matches the stored current address is skipped (no version
+ * churn on repeat top-ups from the same place).
+ */
+export async function captureFundingBillingAddressFromCharge(input: {
+  userId: string;
+  stripeChargeId: string;
+  stripeCustomerId?: string | null;
+  stripeSecretKey: string;
+}): Promise<UserBillingAddressProfile | null> {
+  try {
+    const res = await fetch(
+      `https://api.stripe.com/v1/charges/${
+        encodeURIComponent(input.stripeChargeId)
+      }`,
+      { headers: { "Authorization": `Bearer ${input.stripeSecretKey}` } },
+    );
+    if (!res.ok) {
+      console.error(
+        "[STRIPE] Charge retrieve for billing capture failed:",
+        res.status,
+        await res.text().catch(() => ""),
+      );
+      return null;
+    }
+    const charge = await res.json() as {
+      billing_details?: StripeChargeBillingDetails;
+      customer?: string | null;
+    };
+    const address = billingDetailsToInput(charge.billing_details);
+    if (!address) return null;
+
+    const existing = await getCurrentBillingAddress(input.userId).catch(
+      () => null,
+    );
+    if (sameBillingAddress(address, existing)) return existing;
+
+    return await upsertCurrentBillingAddress({
+      userId: input.userId,
+      address,
+      source: "wallet_funding",
+      stripeCustomerId: input.stripeCustomerId ??
+        (typeof charge.customer === "string" ? charge.customer : null),
+    });
+  } catch (err) {
+    console.error("[STRIPE] Billing address capture from charge failed:", err);
+    return null;
+  }
+}
+
 export async function ensureBillingAddressForFunding(input: {
   userId: string;
   billingAddress?: BillingAddressInput;

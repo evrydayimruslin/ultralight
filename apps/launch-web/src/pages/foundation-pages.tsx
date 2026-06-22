@@ -4599,6 +4599,7 @@ function WalletTopUpPanel(
   };
 
   const paymentElementRef = useRef<HTMLDivElement | null>(null);
+  const addressElementRef = useRef<HTMLDivElement | null>(null);
   const stripeRef = useRef<Stripe | null>(null);
   const elementsRef = useRef<StripeElements | null>(null);
   const reloadTimersRef = useRef<number[]>([]);
@@ -4690,6 +4691,22 @@ function WalletTopUpPanel(
           );
         });
         paymentElement.mount(paymentElementRef.current);
+
+        // C2 — collect the buyer's billing address so consumption-time sales
+        // tax can be computed against it. In billing mode within the same
+        // Elements group, Stripe attaches this address to the payment method's
+        // billing_details on confirm (which the deposit webhook then captures).
+        // Stripe Link autofills it for returning buyers; new card buyers fill
+        // it once. phone is suppressed — we only need the postal address.
+        if (addressElementRef.current) {
+          const addressElement = elements.create("address", {
+            mode: "billing",
+            autocomplete: { mode: "automatic" },
+            fields: { phone: "never" },
+          });
+          addressElement.mount(addressElementRef.current);
+        }
+
         stripeRef.current = stripe;
         elementsRef.current = elements;
       } catch (err) {
@@ -4983,7 +5000,15 @@ function WalletTopUpPanel(
           <strong>{formatCreditFromLight(creditsAmount)}</strong>
         </div>
         {checkout
-          ? <div className="topup-payment-element" ref={paymentElementRef} />
+          ? (
+            <>
+              <div className="topup-payment-element" ref={paymentElementRef} />
+              <div
+                className="topup-address-element"
+                ref={addressElementRef}
+              />
+            </>
+          )
           : null}
         {method !== "earnings" && phase !== "succeeded" &&
             phase !== "processing"
