@@ -10,6 +10,7 @@ import {
   settleAppCall,
   settleCallerAppCharge,
 } from "./execution-settlement.ts";
+import { __setSalesTaxRateTableForTest } from "./sales-tax.ts";
 
 const TEST_ENV = {
   SUPABASE_URL: "https://supabase.test",
@@ -148,6 +149,116 @@ Deno.test("settleAppCall preserves waived fee fields from transfer RPC", async (
     assertEquals(result.waiverSource, "referral_grant");
     assertEquals(result.waiverEventId, "waiver-event-1");
     assertEquals(result.metadata.fee_waived_light, 1.5);
+  });
+});
+
+Deno.test("settleAppCall charges per-transaction sales tax on the app charge", async () => {
+  await withMockedEnv(async () => {
+    __setSalesTaxRateTableForTest({ US: { states: { CA: 1000 } } }); // 10%
+    try {
+      let taxDebit: Record<string, unknown> | null = null;
+      const result = await settleAppCall({
+        app: createTestApp({ default_price_light: 10 }),
+        userId: "user_tax",
+        functionName: "search",
+        inputArgs: { query: "taxed" },
+        successful: true,
+        receiptId: "receipt-tax-1",
+      }, {
+        resolveBuyerTaxLocationFn: () =>
+          Promise.resolve({
+            location: { country: "US", state: "CA" },
+            addressId: "addr_ca",
+            version: 4,
+          }),
+        fetchFn: async (input, init) => {
+          const url = String(input);
+          if (url.includes("/rpc/transfer_light")) {
+            return new Response(
+              JSON.stringify([{
+                from_new_balance: 90,
+                to_new_balance: 10,
+                platform_fee: 2,
+                transfer_id: "transfer-tax-1",
+              }]),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            );
+          }
+          if (url.includes("/rpc/debit_light")) {
+            taxDebit = JSON.parse(String(init?.body));
+            return new Response(
+              JSON.stringify([{ amount_debited: 1, new_balance: 89 }]),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            );
+          }
+          throw new Error(`Unexpected fetch: ${url}`);
+        },
+      });
+
+      assertEquals(result.taxStatus, "collected");
+      assertEquals(result.taxableAmountLight, 10);
+      assertEquals(result.taxAmountLight, 1);
+      assertEquals(result.buyerBillingAddressId, "addr_ca");
+      assertEquals(result.buyerBillingAddressVersion, 4);
+      assert(taxDebit, "debit_light should have been called");
+      assertEquals((taxDebit as Record<string, unknown>).p_amount_light, 1);
+      assertEquals((taxDebit as Record<string, unknown>).p_reason, "sales_tax");
+    } finally {
+      __setSalesTaxRateTableForTest();
+    }
+  });
+});
+
+Deno.test("settleAppCall does not tax a buyer in an unconfigured location", async () => {
+  await withMockedEnv(async () => {
+    __setSalesTaxRateTableForTest({ US: { states: { CA: 1000 } } });
+    try {
+      let debitCalled = false;
+      const result = await settleAppCall({
+        app: createTestApp({ default_price_light: 10 }),
+        userId: "user_untaxed",
+        functionName: "search",
+        inputArgs: { query: "untaxed" },
+        successful: true,
+        receiptId: "receipt-tax-2",
+      }, {
+        // Buyer is in TX (not in the table) — rate resolves to 0.
+        resolveBuyerTaxLocationFn: () =>
+          Promise.resolve({
+            location: { country: "US", state: "TX" },
+            addressId: "addr_tx",
+            version: 1,
+          }),
+        fetchFn: async (input) => {
+          const url = String(input);
+          if (url.includes("/rpc/transfer_light")) {
+            return new Response(
+              JSON.stringify([{
+                from_new_balance: 90,
+                to_new_balance: 10,
+                platform_fee: 2,
+                transfer_id: "transfer-tax-2",
+              }]),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            );
+          }
+          if (url.includes("/rpc/debit_light")) {
+            debitCalled = true;
+            return new Response(JSON.stringify([{ amount_debited: 0 }]), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          throw new Error(`Unexpected fetch: ${url}`);
+        },
+      });
+
+      assertEquals(result.taxStatus, "not_collecting");
+      assertEquals(result.taxAmountLight, 0);
+      assertEquals(debitCalled, false);
+    } finally {
+      __setSalesTaxRateTableForTest();
+    }
   });
 });
 

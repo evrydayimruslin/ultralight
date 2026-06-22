@@ -16,7 +16,7 @@ redesign for going live.
 | **A. Interface deploy pipeline** | core **fixed & verified end-to-end**; CI wiring + CLI republish remain |
 | **B. Interface tab-bar UX** | ✅ **shipped & verified live** (`711b3f1`, on `app-exbg0f`) |
 | **C. Buyer billing foundation** | ✅ **shipped** — C1 label (`711b3f1`) + C2 address capture (`4729d66`, API+web) |
-| **D. Per-transaction sales tax** | C2 dep satisfied; live rate 🔒 on a tax-registration decision |
+| **D. Per-transaction sales tax** | ✅ **shipped** (manual rate table; D0–D3). Inert until the business adds its real nexus rates to `SALES_TAX_RATE_TABLE` |
 | **E. Seller Connect publish gate** | decided, not started |
 
 Three real bugs were found and fixed this session by actually trying to ship an
@@ -148,25 +148,31 @@ Shipped (commit `4729d66`; API + launch-web).
 
 ---
 
-## Track D — Per-transaction sales tax (consumption-time)
+## Track D — Per-transaction sales tax (consumption-time) ✅ SHIPPED
 
-### D0 🔒 Tax registration / rate source (business decision)
-Decide nexus + Stripe Tax registrations vs. manual rate table. Gates the *live*
-rate only — D1–D3 plumbing is buildable now with the rate stubbed/off.
+### D0 ✅ Rate source = manual rate table (business decision)
+Decided: **manual rate table**, not Stripe Tax. Lives in `api/services/sales-tax.ts`
+(`SALES_TAX_RATE_TABLE`, basis points, per-country with optional per-subdivision
+overrides). **Ships empty → 0 everywhere → `not_collecting`**, so deploying is
+inert: `isSalesTaxConfigured()` is false, the settlement hot path never reads the
+buyer's address or debits anything, and no behavior changes. Adding one non-zero
+entry (e.g. `US: { states: { CA: 825 } }`) is the single switch that turns on
+collection for that jurisdiction — **the business must fill in its real nexus +
+rates before any tax is collected.**
 
-### D1 ⬜ Replace the accrual model with per-receipt tax
-- **Files:** `api/services/sales-tax.ts` — remove `decideSalesTaxCharge` / `SalesTaxAccrualState` / the 20%-balance trigger; compute `taxAmountLight = taxableMonetizedLight × rate` per receipt. Resolve `taxRateBps` from the buyer's stored tax-location (cached per location/period — **not** a Stripe API call per agent-call). Write `tax_amount_light` / `tax_status` on the receipt (`api/services/call-receipts.ts`, `api/services/call-logger.ts` — columns already exist).
-- **Acceptance:** each monetized agent-call receipt carries its own tax; no balance-trigger lumps.
-- **Deps:** C2 (buyer location), D0 (live rate).
+### D1 ✅ Per-receipt tax (replaced the dead accrual model)
+- `sales-tax.ts` rewritten: removed `decideSalesTaxCharge` / `SalesTaxAccrualState` / the 20%-balance trigger (was only ever referenced by its own test). New pure API: `resolveSalesTaxRateBps(location)`, `computeSalesTaxLight(taxable, bps)`, `isSalesTaxConfigured()`.
+- Buyer location resolved (and cached, 10-min TTL) from the C2 billing address in `sales-tax-location.ts` — **not** a Stripe call per agent-call.
+- Wired into `settleAppCall` (`execution-settlement.ts`): after the app charge transfers, tax = `appChargeLight × rate` is debited from the buyer via the proven `debit_light` RPC (reason `sales_tax`, idempotent, best-effort — never fails an already-paid call). Threaded onto the settlement → log entry → receipt (`tax_status` / `taxable_amount_light` / `tax_amount_light` / `buyer_billing_address_*`).
+- **Tested:** unit tests for the math/gate + two settlement tests exercising the actual debit (collected vs. unconfigured-location). All 14 settlement tests green.
 
-### D2 ⬜ Expose tax on the launch receipt summary
-- **Files:** `shared/contracts/launch.ts` (`LaunchWalletReceiptSummary`), `api/handlers/launch.ts` (receipt mapping) — add the tax amount.
-- **Acceptance:** the facade returns `tax` on each receipt.
+### D2 ✅ Tax on the launch receipt summary
+- Added `tax: LaunchMoneyAmount` to `LaunchWalletReceiptSummary` (`shared/contracts/launch.ts`), the handler mapping, and the OpenAPI schema (`api/handlers/launch.ts`). `CallReceipt` already folded tax into `total_light`.
 
-### D3 ⬜ Show "Sales tax" in the receipt detail
-- **Files:** `apps/launch-web/src/pages/foundation-pages.tsx` (`WalletMergedRow` expanded `.wallet-ledger-detail`) — add a `QuoteLine` "Sales tax" alongside App charge / Infrastructure / Platform fee / Developer earns, folded into Total.
-- **Acceptance:** clicking a transaction in the Balance Ledger shows the per-transaction tax line.
-- **Deps:** D2.
+### D3 ✅ "Sales tax" line in the receipt detail
+- `WalletMergedRow` detail (`foundation-pages.tsx`) renders a "Sales tax" `QuoteLine` (between Platform fee and Developer earns) **when `tax > 0`** — so it stays hidden until a rate is configured.
+
+**Status:** mechanism fully live; collects nothing until the manual rate table is populated with the business's registered jurisdictions.
 
 ---
 

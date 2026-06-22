@@ -458,6 +458,7 @@ type WalletRow =
     infraCharge: number;
     platformFee: number;
     developerNet: number;
+    tax: number;
   };
 
 interface ApiKeyFixture {
@@ -723,6 +724,7 @@ function mergeWalletRows(
       infraCharge: creditsValue(receipt.infraCharge),
       platformFee: creditsValue(receipt.platformFee),
       developerNet: creditsValue(receipt.developerNet),
+      tax: creditsValue(receipt.tax),
     };
   });
   return [...txRows, ...receiptRows].sort((a, b) => {
@@ -5320,6 +5322,14 @@ function WalletMergedRow(
               label="Platform fee"
               value={formatCreditFromLight(row.platformFee)}
             />
+            {row.tax > 0
+              ? (
+                <QuoteLine
+                  label="Sales tax"
+                  value={formatCreditFromLight(row.tax)}
+                />
+              )
+              : null}
             <QuoteLine
               label="Developer earns"
               value={formatCreditFromLight(row.developerNet)}

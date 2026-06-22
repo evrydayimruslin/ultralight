@@ -837,6 +837,8 @@ export interface LaunchWalletReceiptSummary {
   infraCharge: LaunchMoneyAmount;
   platformFee: LaunchMoneyAmount;
   developerNet: LaunchMoneyAmount;
+  /** Per-transaction sales tax collected from the buyer (0 when not collecting). */
+  tax: LaunchMoneyAmount;
   billingConfigVersion?: number | null;
   billingConfigVersions?: number[];
   createdAt?: string | null;

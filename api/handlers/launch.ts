@@ -2724,6 +2724,7 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
             infraCharge: { $ref: "#/components/schemas/MoneyAmount" },
             platformFee: { $ref: "#/components/schemas/MoneyAmount" },
             developerNet: { $ref: "#/components/schemas/MoneyAmount" },
+            tax: { $ref: "#/components/schemas/MoneyAmount" },
             billingConfigVersion: { type: ["integer", "null"], minimum: 1 },
             billingConfigVersions: {
               type: "array",
@@ -4450,6 +4451,7 @@ function toLaunchWalletReceipt(
     infraCharge: money(numeric(row.receipt.infra_light)),
     platformFee: money(numeric(row.receipt.platform_fee_light)),
     developerNet: money(numeric(row.receipt.developer_net_light)),
+    tax: money(numeric(row.receipt.tax_amount_light)),
     billingConfigVersion: row.receipt.billing_config_version ?? null,
     billingConfigVersions: row.receipt.billing_config_versions ?? [],
     createdAt: row.created_at || null,

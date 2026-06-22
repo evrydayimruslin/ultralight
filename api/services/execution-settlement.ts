@@ -41,6 +41,12 @@ import {
 } from "./access-policy.ts";
 import { createRuntimeAccessPolicyExecutor } from "./access-policy-runtime.ts";
 import { buildEconomicIdempotencyKey } from "./economic-idempotency.ts";
+import {
+  computeSalesTaxLight,
+  isSalesTaxConfigured,
+  resolveSalesTaxRateBps,
+} from "./sales-tax.ts";
+import { resolveBuyerTaxLocation } from "./sales-tax-location.ts";
 
 export interface ExecutionTelemetry {
   responseSizeBytes: number;
@@ -103,6 +109,12 @@ export interface AppCallSettlementResult {
   cloudUsageHoldId?: string;
   cloudUnits?: number;
   billingConfigVersion?: number | null;
+  // Per-transaction sales tax on the monetized app charge (consumption-time).
+  taxStatus: string;
+  taxableAmountLight: number;
+  taxAmountLight: number;
+  buyerBillingAddressId: string | null;
+  buyerBillingAddressVersion: number | null;
   insufficientBalance: boolean;
   insufficientBalanceCode?:
     | "caller_auth_required"
@@ -233,6 +245,11 @@ export interface LogExecutionResultParams {
   billingConfigVersion?: number | null;
   cloudPayerUserId?: string;
   cloudOwnerSponsored?: boolean;
+  taxStatus?: string;
+  taxableAmountLight?: number;
+  taxAmountLight?: number;
+  buyerBillingAddressId?: string | null;
+  buyerBillingAddressVersion?: number | null;
   routineContext?: RoutineTraceContext | null;
   toolInvocationId?: string;
   widgetAction?: WidgetActionCallMetadata;
@@ -301,6 +318,7 @@ interface ExecutionSettlementDeps {
   logMcpCallFn?: typeof logMcpCall;
   settleGpuExecutionFn?: typeof settleGpuExecution;
   accessPolicyExecutor?: AccessPolicyRuntimeEvaluator;
+  resolveBuyerTaxLocationFn?: typeof resolveBuyerTaxLocation;
 }
 
 export function buildExecutionTelemetry(
@@ -724,6 +742,11 @@ export async function settleAppCall(
   let waiverEventId: string | undefined;
   let transferId: string | undefined;
   let cloudUsageEventId: string | undefined;
+  let taxStatus = "not_collecting";
+  let taxableAmountLight = 0;
+  let taxAmountLight = 0;
+  let buyerBillingAddressId: string | null = null;
+  let buyerBillingAddressVersion: number | null = null;
 
   const baseMetadata = {
     ...accessDecision.metadata,
@@ -1001,6 +1024,68 @@ export async function settleAppCall(
     }
   }
 
+  // Per-transaction sales tax on the monetized app charge (the buyer's purchase
+  // from the seller). Charged on top of the sale and collected by the platform
+  // to remit. Gated on a configured rate, so an empty rate table never reads the
+  // buyer's address or debits anything — the path is inert until a jurisdiction
+  // is turned on. Best-effort: the sale already settled, so a tax failure logs
+  // and records `not_collecting` rather than failing an otherwise-paid call.
+  if (appChargeLight > 0 && supabase && isSalesTaxConfigured()) {
+    try {
+      const resolveTaxLocation = deps?.resolveBuyerTaxLocationFn ??
+        resolveBuyerTaxLocation;
+      const buyer = await resolveTaxLocation(userId);
+      if (buyer) {
+        buyerBillingAddressId = buyer.addressId;
+        buyerBillingAddressVersion = buyer.version;
+      }
+      const rateBps = resolveSalesTaxRateBps(buyer?.location ?? null);
+      const computedTax = computeSalesTaxLight(appChargeLight, rateBps);
+      if (computedTax > 0) {
+        const taxRes = await supabase.rpc("debit_light", {
+          p_user_id: userId,
+          p_amount_light: computedTax,
+          p_reason: "sales_tax",
+          p_update_billed_at: false,
+          p_allow_partial: true,
+          p_idempotency_key: receiptId
+            ? buildEconomicIdempotencyKey("sales_tax", [
+              receiptId,
+              userId,
+              app.id,
+              functionName,
+            ])
+            : null,
+          p_metadata: {
+            ...baseMetadata,
+            taxable_amount_light: appChargeLight,
+            tax_rate_bps: rateBps,
+            buyer_billing_address_id: buyerBillingAddressId,
+            buyer_billing_address_version: buyerBillingAddressVersion,
+          },
+        });
+        if (taxRes.ok) {
+          const rows = await taxRes.json() as Array<
+            { amount_debited?: number }
+          >;
+          const debited = typeof rows?.[0]?.amount_debited === "number"
+            ? rows[0].amount_debited
+            : computedTax;
+          taxableAmountLight = appChargeLight;
+          taxAmountLight = debited;
+          taxStatus = "collected";
+        } else {
+          console.error(
+            "[SALES-TAX] debit_light failed:",
+            await taxRes.text().catch(() => ""),
+          );
+        }
+      }
+    } catch (taxErr) {
+      console.error("[SALES-TAX] Tax settlement error:", taxErr);
+    }
+  }
+
   return buildBaseSettlement(params, {
     appPriceLight,
     appChargeLight,
@@ -1022,6 +1107,11 @@ export async function settleAppCall(
     cloudUsageHoldId,
     cloudUnits,
     billingConfigVersion,
+    taxStatus,
+    taxableAmountLight,
+    taxAmountLight,
+    buyerBillingAddressId,
+    buyerBillingAddressVersion,
   });
 }
 
@@ -1074,6 +1164,11 @@ export function logExecutionResult(
     billingConfigVersion: params.billingConfigVersion,
     cloudPayerUserId: params.cloudPayerUserId,
     cloudOwnerSponsored: params.cloudOwnerSponsored,
+    taxStatus: params.taxStatus,
+    taxableAmountLight: params.taxableAmountLight,
+    taxAmountLight: params.taxAmountLight,
+    buyerBillingAddressId: params.buyerBillingAddressId ?? undefined,
+    buyerBillingAddressVersion: params.buyerBillingAddressVersion ?? undefined,
     routineId: params.routineContext?.routineId,
     routineRunId: params.routineContext?.routineRunId,
     traceId: params.routineContext?.traceId,
@@ -1204,6 +1299,11 @@ export async function settleAndLogAppExecution(
     billingConfigVersion: settlement.billingConfigVersion,
     cloudPayerUserId: settlement.infraPayerUserId || undefined,
     cloudOwnerSponsored: settlement.ownerSponsoredInfra,
+    taxStatus: settlement.taxStatus,
+    taxableAmountLight: settlement.taxableAmountLight,
+    taxAmountLight: settlement.taxAmountLight,
+    buyerBillingAddressId: settlement.buyerBillingAddressId,
+    buyerBillingAddressVersion: settlement.buyerBillingAddressVersion,
     routineContext: params.routineContext,
     widgetAction: params.widgetAction,
     agenticSurfaceAction: params.agenticSurfaceAction,
@@ -1365,6 +1465,11 @@ function buildBaseSettlement(
     cloudUsageHoldId?: string;
     cloudUnits?: number;
     billingConfigVersion?: number | null;
+    taxStatus?: string;
+    taxableAmountLight?: number;
+    taxAmountLight?: number;
+    buyerBillingAddressId?: string | null;
+    buyerBillingAddressVersion?: number | null;
   },
 ): AppCallSettlementResult {
   const accessDecision = evaluateStaticAccessPolicy({
@@ -1404,6 +1509,11 @@ function buildBaseSettlement(
     cloudUsageHoldId: values.cloudUsageHoldId,
     cloudUnits: values.cloudUnits,
     billingConfigVersion: values.billingConfigVersion ?? null,
+    taxStatus: values.taxStatus ?? "not_collecting",
+    taxableAmountLight: values.taxableAmountLight ?? 0,
+    taxAmountLight: values.taxAmountLight ?? 0,
+    buyerBillingAddressId: values.buyerBillingAddressId ?? null,
+    buyerBillingAddressVersion: values.buyerBillingAddressVersion ?? null,
     insufficientBalance: false,
     receiptId: params.receiptId,
     metadata: {
@@ -1430,6 +1540,9 @@ function buildBaseSettlement(
       cloud_usage_event_id: values.cloudUsageEventId,
       cloud_units: values.cloudUnits,
       billing_config_version: values.billingConfigVersion ?? null,
+      tax_status: values.taxStatus ?? "not_collecting",
+      taxable_amount_light: values.taxableAmountLight ?? 0,
+      tax_amount_light: values.taxAmountLight ?? 0,
       receipt_id: params.receiptId,
     },
   };
