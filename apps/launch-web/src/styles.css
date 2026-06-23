@@ -2410,22 +2410,24 @@ button {
 
 /* Per-function wiring under the permission control: inbound | outbound. */
 /* Standalone card now (own section), so no in-card top divider. */
-.function-wiring {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 18px;
-}
-
 .function-wiring-col {
   display: grid;
   gap: 8px;
   align-content: start;
 }
 
-@media (max-width: 720px) {
-  .function-wiring {
-    grid-template-columns: minmax(0, 1fr);
-  }
+/* Unified section header for the function panel — the "Connected agent
+   permission" treatment (13px bold, primary text, sentence case), reused for
+   the function name and the wiring section titles instead of the uppercase
+   muted .section-label. */
+.fn-section-head {
+  display: block;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ul-text);
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .function-list,

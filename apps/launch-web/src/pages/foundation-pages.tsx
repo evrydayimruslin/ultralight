@@ -1940,7 +1940,7 @@ function FunctionSandboxCard({
     <Card className="function-sandbox-card">
       <div className="function-sandbox-head">
         <div>
-          <Mono>{fn.name}</Mono>
+          <strong className="fn-section-head">{fn.name}</strong>
           <p>{fn.description}</p>
         </div>
         <Pill>{formatAgentPrice(fn.price)}/call</Pill>
@@ -2090,9 +2090,12 @@ function FunctionWiring(
   };
 
   return (
-    <Card className="function-wiring">
-      <div className="function-wiring-col">
-        <p className="section-label">Agents that can call this function</p>
+    <>
+      <Card className="function-wiring-card">
+        <div className="function-wiring-col">
+          <strong className="fn-section-head">
+            Agents that can call this function
+          </strong>
         {inboundPending.length === 0 && inboundActive.length === 0
           ? (
             <p className="muted-note">
@@ -2143,9 +2146,13 @@ function FunctionWiring(
               ))}
             </div>
           )}
-      </div>
-      <div className="function-wiring-col">
-        <p className="section-label">Functions called when this runs</p>
+        </div>
+      </Card>
+      <Card className="function-wiring-card">
+        <div className="function-wiring-col">
+          <strong className="fn-section-head">
+            Functions called when this runs
+          </strong>
         {outbound.length === 0
           ? (
             <p className="muted-note">
@@ -2169,8 +2176,9 @@ function FunctionWiring(
           callerFunction={fn.name}
           live={live}
         />
-      </div>
-    </Card>
+        </div>
+      </Card>
+    </>
   );
 }
 
