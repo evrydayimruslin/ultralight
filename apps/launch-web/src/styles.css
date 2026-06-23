@@ -2364,6 +2364,11 @@ button {
 
 .tab-select-check {
   display: inline-flex;
+  /* Reserve the column even when empty so every label left-aligns in its own
+     column regardless of which row is selected (the row is flex-laid-out, so an
+     unsized empty check span would collapse and shift the label left). */
+  flex: 0 0 15px;
+  width: 15px;
   justify-content: center;
   color: var(--ul-text);
 }
@@ -2404,13 +2409,11 @@ button {
 }
 
 /* Per-function wiring under the permission control: inbound | outbound. */
+/* Standalone card now (own section), so no in-card top divider. */
 .function-wiring {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 18px;
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid var(--ul-border);
 }
 
 .function-wiring-col {
@@ -2538,11 +2541,10 @@ button {
   white-space: pre-wrap;
 }
 
+/* Standalone card now (own section), so no in-card top divider. */
 .permission-control {
   justify-content: space-between;
   gap: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--ul-border);
 }
 
 .spend-cap-control {

@@ -1583,6 +1583,8 @@ function AgentFunctionsPanel({
   return (
     <div className="functions-panel">
       <FunctionSandboxCard fn={selectedFunction} live={live} tool={tool} />
+      <PermissionControl fn={selectedFunction} live={live} tool={tool} />
+      <FunctionWiring fn={selectedFunction} live={live} />
     </div>
   );
 }
@@ -1978,8 +1980,6 @@ function FunctionSandboxCard({
           </div>
         )
         : null}
-      <PermissionControl fn={fn} live={live} tool={tool} />
-      <FunctionWiring fn={fn} live={live} />
     </Card>
   );
 }
@@ -2006,7 +2006,7 @@ function PermissionControl({
   ] as const;
 
   return (
-    <div className="permission-control">
+    <Card className="permission-control">
       <div>
         <strong>Connected agent permission</strong>
         <span>Default is ask. Manual website runs are separate.</span>
@@ -2051,7 +2051,7 @@ function PermissionControl({
             : "Saved"}
         </Button>
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -2090,7 +2090,7 @@ function FunctionWiring(
   };
 
   return (
-    <div className="function-wiring">
+    <Card className="function-wiring">
       <div className="function-wiring-col">
         <p className="section-label">Agents that can call this function</p>
         {inboundPending.length === 0 && inboundActive.length === 0
@@ -2170,7 +2170,7 @@ function FunctionWiring(
           live={live}
         />
       </div>
-    </div>
+    </Card>
   );
 }
 
