@@ -1,6 +1,6 @@
-# Ultralight GPU Base Worker
+# Galactic GPU Base Worker
 
-Shared base image for all Ultralight GPU apps. Developer code is downloaded
+Shared base image for all Galactic GPU apps. Developer code is downloaded
 at container startup from R2 via the platform code proxy.
 
 ## What's inside

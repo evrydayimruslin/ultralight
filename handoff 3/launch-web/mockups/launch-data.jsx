@@ -1,5 +1,5 @@
 // launch-data.jsx — shared data + palette + helpers for the Launch web mockups.
-// Monochrome Ultralight system (colors_and_type.css). All money in Light (✦).
+// Monochrome Galactic system (colors_and_type.css). All money in Light (✦).
 // Data shapes mirror shared/contracts/launch.ts so the mockups represent real
 // backend fields: LaunchToolSummary, LaunchWidgetSummary, LaunchInstallInstruction,
 // LaunchLeaderboardEntry, LaunchPlatformPrimitiveSuggestion, LaunchWalletSummary.
@@ -93,7 +93,7 @@ const DISCOVER_TOOLS = [
 
 // ── Platform primitives (LaunchPlatformPrimitiveSuggestion[]) ─────────────────
 const PRIMITIVES = [
-  { primitive: 'install', label: 'Install Ultralight', description: 'Connect the MCP/API layer to an existing agent.', route: '/install' },
+  { primitive: 'install', label: 'Install Galactic', description: 'Connect the MCP/API layer to an existing agent.', route: '/install' },
   { primitive: 'discover', label: 'Discover tools', description: 'Find public agent-native tools and widgets.', route: '/discover' },
   { primitive: 'wallet', label: 'Light wallet', description: 'Spendable Light for installs, calls, hosting.', route: '/wallet' },
   { primitive: 'widgets', label: 'Widgets', description: 'Open public UI surfaces attached to tools.', route: '/tools/:slug' },
@@ -130,31 +130,31 @@ function genericMcpConfig(key) {
 
 const INSTALL_TARGETS = [
   { target: 'claude_code', label: 'Claude Code', group: 'MCP', requiresApiKey: true,
-    description: 'Add Ultralight as a remote MCP server for an existing Claude Code workspace.',
-    steps: ['Create an Ultralight API token from Settings.', 'Set ULTRALIGHT_API_KEY in your shell or Claude Code environment.', 'Add the remote MCP server with an Authorization header.'],
+    description: 'Add Galactic as a remote MCP server for an existing Claude Code workspace.',
+    steps: ['Create an Galactic API token from Settings.', 'Set ULTRALIGHT_API_KEY in your shell or Claude Code environment.', 'Add the remote MCP server with an Authorization header.'],
     config: (k) => genericMcpConfig(k) },
   { target: 'cursor', label: 'Cursor', group: 'MCP', requiresApiKey: true,
-    description: "Install the Ultralight MCP server in Cursor's MCP configuration.",
-    steps: ['Open Cursor MCP settings.', 'Add the ultralight server entry below.', 'Reload Cursor so agents can discover Ultralight tools.'],
+    description: "Install the Galactic MCP server in Cursor's MCP configuration.",
+    steps: ['Open Cursor MCP settings.', 'Add the ultralight server entry below.', 'Reload Cursor so agents can discover Galactic tools.'],
     config: (k) => genericMcpConfig(k) },
   { target: 'codex', label: 'Codex', group: 'MCP', requiresApiKey: true,
     description: 'Connect Codex to the same remote MCP endpoint used by other agents.',
-    steps: ['Create an Ultralight API token.', 'Add a remote MCP server named ultralight.', 'Use the platform MCP endpoint and Authorization header below.'],
+    steps: ['Create an Galactic API token.', 'Add a remote MCP server named ultralight.', 'Use the platform MCP endpoint and Authorization header below.'],
     config: (k) => `[mcp_servers.ultralight]\nurl = "${MCP_URL}"\nheaders = { Authorization = "Bearer ${k}" }` },
   { target: 'openai_remote_mcp', label: 'OpenAI Remote MCP', group: 'MCP', requiresApiKey: true,
-    description: 'Register Ultralight as a remote MCP server for OpenAI agent runtimes that support MCP tools.',
-    steps: ['Use the platform MCP endpoint as the server URL.', 'Pass your Ultralight API token as a bearer Authorization header.', 'Allow the agent to list tools before calling specific tools.'],
+    description: 'Register Galactic as a remote MCP server for OpenAI agent runtimes that support MCP tools.',
+    steps: ['Use the platform MCP endpoint as the server URL.', 'Pass your Galactic API token as a bearer Authorization header.', 'Allow the agent to list tools before calling specific tools.'],
     config: (k) => JSON.stringify({ server_url: MCP_URL, authorization: 'Bearer ' + k }, null, 2) },
   { target: 'generic_mcp', label: 'Generic MCP', group: 'MCP', requiresApiKey: true,
     description: 'Use the standard remote MCP server declaration for any compatible agent.',
-    steps: ["Copy the server configuration into your agent's MCP config.", 'Replace the API token placeholder with an Ultralight API token.', 'Restart the agent or refresh its tool registry.'],
+    steps: ["Copy the server configuration into your agent's MCP config.", 'Replace the API token placeholder with an Galactic API token.', 'Restart the agent or refresh its tool registry.'],
     config: (k) => genericMcpConfig(k) },
   { target: 'cli', label: 'CLI', group: 'Direct', requiresApiKey: true,
-    description: 'Use the Ultralight CLI to login, upload, test, and run deployed tools.',
+    description: 'Use the Galactic CLI to login, upload, test, and run deployed tools.',
     steps: ['Install the ultralightpro package.', 'Run ultralight login --token <your-token>.', 'Run ultralight upload . from a deployable tool directory.'],
     config: (k) => `npm install -g ultralightpro\nultralight login --token ${k}\nultralight upload .` },
   { target: 'api', label: 'Direct API', group: 'Direct', requiresApiKey: true,
-    description: 'Call launch and platform endpoints directly with an Ultralight API token.',
+    description: 'Call launch and platform endpoints directly with an Galactic API token.',
     steps: ['Create an API token from Settings.', 'Send Authorization: Bearer <token> on authenticated requests.', 'Read /api/launch/status and /openapi.json before calling.'],
     config: (k) => `curl "${BASE_URL}/api/launch/status"\ncurl -H "Authorization: Bearer ${k}" \\\n  "${BASE_URL}/api/launch/library"` },
 ];

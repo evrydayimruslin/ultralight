@@ -1,6 +1,6 @@
 # Cloudflare Workers Data Layer Setup Guide
 
-This guide covers the Ultralight Worker deployment — a native R2 data layer that accelerates app storage operations by ~10x vs HTTP-signed S3 calls.
+This guide covers the Galactic Worker deployment — a native R2 data layer that accelerates app storage operations by ~10x vs HTTP-signed S3 calls.
 
 ## Architecture (Option C)
 

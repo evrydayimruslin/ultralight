@@ -158,7 +158,7 @@ async function testExecutor(): Promise<void> {
   assert(result.success === true, `success: ${result.success}`);
   assert(result.exitCode === "success", `exitCode: ${result.exitCode}`);
   assert(
-    result.result === "Hello Pipeline from Ultralight GPU!",
+    result.result === "Hello Pipeline from Galactic GPU!",
     `result: ${result.result}`,
   );
   assert(result.gpuType === "A40", `gpuType: ${result.gpuType}`);

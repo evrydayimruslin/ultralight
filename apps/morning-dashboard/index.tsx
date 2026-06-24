@@ -85,7 +85,7 @@ function App() {
       return await ultralight.call(name, args);
     }
     // Fallback for older runtimes (shouldn't happen)
-    throw new Error('Ultralight runtime not available');
+    throw new Error('Galactic runtime not available');
   }
 
   return (

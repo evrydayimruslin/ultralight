@@ -130,7 +130,7 @@ async function testHello(): Promise<void> {
     body: JSON.stringify({
       input: {
         function: 'hello',
-        args: { name: 'Ultralight' },
+        args: { name: 'Galactic' },
         max_duration_ms: 30000,
       },
     }),
@@ -149,7 +149,7 @@ async function testHello(): Promise<void> {
     assert(data.output.success === true, `output.success: ${data.output.success}`);
     assert(data.output.exit_code === 'success', `output.exit_code: ${data.output.exit_code}`);
     assert(
-      data.output.result === 'Hello Ultralight from Ultralight GPU!',
+      data.output.result === 'Hello Galactic from Galactic GPU!',
       `output.result: ${data.output.result}`,
     );
     assert(data.output.duration_ms >= 0, `output.duration_ms: ${data.output.duration_ms}`);

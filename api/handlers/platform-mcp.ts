@@ -2694,7 +2694,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
         token: {
           type: "string",
           description:
-            "An API token (ul_xxx) from your authenticated Ultralight account.",
+            "An API token (ul_xxx) from your authenticated Galactic account.",
         },
       },
       required: ["token"],
@@ -2705,7 +2705,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
   {
     name: "ul.marketplace",
     description:
-      "Acquire and sell Ultralight apps. Place bids, set ask prices, accept offers, view history. " +
+      "Acquire and sell Galactic apps. Place bids, set ask prices, accept offers, view history. " +
       "All bids are escrowed from your credits balance. The configured platform fee is deducted on sale. " +
       'action="bid": place a bid. action="ask": set/update ask price. action="accept": accept a bid. ' +
       'action="reject": reject a bid. action="cancel": cancel your own bid. action="acquire": instant acquisition. ' +
@@ -2862,7 +2862,7 @@ const PLATFORM_TOOLS: MCPTool[] = [
         terms_accepted: {
           type: "boolean",
           description:
-            "Required true for withdraw, convert_earnings, and enabling set_auto_add_earnings after reviewing the Ultralight Terms and payout policy.",
+            "Required true for withdraw, convert_earnings, and enabling set_auto_add_earnings after reviewing the Galactic Terms and payout policy.",
         },
         period: {
           type: "string",
@@ -3012,7 +3012,7 @@ function stripGpuPlatformDocs(docs: string): string {
       "- No `app_id`: creates new app at v1.0.0 (auto-live).\n",
     )
     .replace(
-      '- **GPU functions:** Include `ultralight.gpu.yaml` + `main.py` in files. Runtime is auto-detected on upload. For new scaffolds, pass `runtime: "gpu"`. Do not include a Dockerfile; Ultralight generates it, installs `requirements.txt` at GHCR build time, then points RunPod at the baked image. Build is async; `gpu_status` starts at `building` and settles to `live`, `build_failed`, `benchmark_failed`, or `build_config_invalid`.\n',
+      '- **GPU functions:** Include `ultralight.gpu.yaml` + `main.py` in files. Runtime is auto-detected on upload. For new scaffolds, pass `runtime: "gpu"`. Do not include a Dockerfile; Galactic generates it, installs `requirements.txt` at GHCR build time, then points RunPod at the baked image. Build is async; `gpu_status` starts at `building` and settles to `live`, `build_failed`, `benchmark_failed`, or `build_config_invalid`.\n',
       "",
     )
     .replace(
@@ -3365,7 +3365,7 @@ Deploy TypeScript/Python app or publish markdown page.
 - No \`app_id\`: creates new app at v1.0.0 (auto-live for Deno; GPU apps start building).
 - With \`app_id\`: adds new version (NOT live — use \`gx.set\` to activate).
 - \`files\`: array of \`{ path: string, content: string, encoding?: "text" | "base64" }\`.
-- **GPU functions:** Include \`ultralight.gpu.yaml\` + \`main.py\` in files. Runtime is auto-detected on upload. For new scaffolds, pass \`runtime: "gpu"\`. Do not include a Dockerfile; Ultralight generates it, installs \`requirements.txt\` at GHCR build time, then points RunPod at the baked image. Build is async; \`gpu_status\` starts at \`building\` and settles to \`live\`, \`build_failed\`, \`benchmark_failed\`, or \`build_config_invalid\`.
+- **GPU functions:** Include \`ultralight.gpu.yaml\` + \`main.py\` in files. Runtime is auto-detected on upload. For new scaffolds, pass \`runtime: "gpu"\`. Do not include a Dockerfile; Galactic generates it, installs \`requirements.txt\` at GHCR build time, then points RunPod at the baked image. Build is async; \`gpu_status\` starts at \`building\` and settles to \`live\`, \`build_failed\`, \`benchmark_failed\`, or \`build_config_invalid\`.
 
 ### gx.download({ app_id?, name?, description?, version?, runtime?, gpu_type?, base? })
 - With \`app_id\`: download app source code (respects download_access setting).
@@ -6475,7 +6475,7 @@ async function executeUpload(
       ) {
         throw new ToolError(
           VALIDATION_ERROR,
-          "GPU functions cannot include a Dockerfile in v1. Ultralight generates the Dockerfile and base image.",
+          "GPU functions cannot include a Dockerfile in v1. Galactic generates the Dockerfile and base image.",
         );
       }
 
@@ -7231,7 +7231,7 @@ async function executeUpload(
       ) {
         throw new ToolError(
           VALIDATION_ERROR,
-          "GPU functions cannot include a Dockerfile in v1. Ultralight generates the Dockerfile and base image.",
+          "GPU functions cannot include a Dockerfile in v1. Galactic generates the Dockerfile and base image.",
         );
       }
 
@@ -8128,7 +8128,7 @@ async function executeGpuTestValidation(
     normalizedFiles.some((file) => file.basename.toLowerCase() === "dockerfile")
   ) {
     errors.push(
-      "GPU apps cannot upload a Dockerfile in v1. Ultralight generates the Dockerfile and base image.",
+      "GPU apps cannot upload a Dockerfile in v1. Galactic generates the Dockerfile and base image.",
     );
   }
 
@@ -8209,7 +8209,7 @@ async function executeGpuTestValidation(
   }
   if (!fixtureFile) {
     warnings.push(
-      "Add test_fixture.json so Ultralight can infer GPU function exports and benchmark inputs.",
+      "Add test_fixture.json so Galactic can infer GPU function exports and benchmark inputs.",
     );
   }
 
@@ -8656,7 +8656,7 @@ function executeLint(args: Record<string, unknown>): unknown {
       severity: "error",
       rule: "no-exports",
       message:
-        "No exported functions found. Ultralight apps need at least one exported function.",
+        "No exported functions found. Galactic apps need at least one exported function.",
     });
   } else if (exportedFunctions.length > 7) {
     issues.push({
@@ -8699,7 +8699,7 @@ function executeLint(args: Record<string, unknown>): unknown {
             severity: "error",
             rule: "single-args-object",
             message:
-              `Function "${funcName}" uses positional parameters. Ultralight sandbox passes a single args object. Use: export function ${funcName}(args: { ... }) instead.`,
+              `Function "${funcName}" uses positional parameters. Galactic sandbox passes a single args object. Use: export function ${funcName}(args: { ... }) instead.`,
             suggestion:
               `Refactor to accept a single destructured object: export async function ${funcName}(args: { param1: type; param2?: type })`,
           });
@@ -9059,7 +9059,7 @@ export function executeScaffold(args: Record<string, unknown>): unknown {
   globalsLines.push("const ultralight = globalThis.ultralight;");
 
   const indexLines: string[] = [];
-  indexLines.push(`// ${name} — Ultralight MCP Server`);
+  indexLines.push(`// ${name} — Galactic MCP Server`);
   indexLines.push("//");
   indexLines.push(`// ${description}`);
   indexLines.push("//");
@@ -9373,7 +9373,7 @@ function executeGpuScaffold(input: {
   ].join("\n");
 
   const mainLines: string[] = [
-    `"""${input.name} - Ultralight GPU functions.`,
+    `"""${input.name} - Galactic GPU functions.`,
     "",
     input.description.replace(/"""/g, '\\"\\"\\"'),
     '"""',
@@ -9442,7 +9442,7 @@ function executeGpuScaffold(input: {
       `Deploy with gx.upload({ files: [...], name: "${input.name}" }) when validation passes.`,
     ],
     tip:
-      "Do not add a Dockerfile. Ultralight generates it, installs requirements during the GHCR build, and points RunPod at the baked image.",
+      "Do not add a Dockerfile. Galactic generates it, installs requirements during the GHCR build, and points RunPod at the baked image.",
   };
 }
 
@@ -15135,7 +15135,7 @@ async function executePages(userId: string): Promise<unknown> {
 /**
  * GET /api/skills — Serve platform Skills.md as plain text over HTTP.
  * No auth required. Any agent (web, CLI, custom) can fetch this to get
- * the full Ultralight platform documentation including building conventions,
+ * the full Galactic platform documentation including building conventions,
  * tool reference, resource URIs, and agent guidance.
  *
  * Cached for 1 hour. Returns text/markdown.

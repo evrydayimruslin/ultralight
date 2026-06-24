@@ -88,15 +88,15 @@ export const LIGHT_ECONOMY_POLICY_COPY = {
   payoutTerms:
     "By requesting a payout, you confirm that the amount is creator earnings and that payout timing, fees, and eligibility are governed by the Terms.",
   feeWaivers:
-    "Ultralight may waive its internal platform fee on eligible creator revenue through publisher referral grants or publisher fee-waiver credit.",
+    "Galactic may waive its internal platform fee on eligible creator revenue through publisher referral grants or publisher fee-waiver credit.",
   feeWaiverEndUserImpact:
-    "Platform fee waivers affect only Ultralight's internal platform fee and publisher revenue. They do not change the gross credits amount paid by the end user.",
+    "Platform fee waivers affect only Galactic's internal platform fee and publisher revenue. They do not change the gross credits amount paid by the end user.",
   feeWaiverCredit:
-    "Publisher fee-waiver credit is platform scrip that can be used only to cover Ultralight internal platform fees on eligible creator revenue and has no cash value.",
+    "Publisher fee-waiver credit is platform scrip that can be used only to cover Galactic internal platform fees on eligible creator revenue and has no cash value.",
   cloudUsage:
-    "Cloud usage is metered in cloud units and charged as exact fractional credits at Ultralight's configured internal cloud-unit rates. The billing config version on receipts is the authoritative rate snapshot.",
+    "Cloud usage is metered in cloud units and charged as exact fractional credits at Galactic's configured internal cloud-unit rates. The billing config version on receipts is the authoritative rate snapshot.",
   storagePolicy:
-    "The first 100MB of combined storage is included. Storage above that is charged at Ultralight's configured internal GB-month rate.",
+    "The first 100MB of combined storage is included. Storage above that is charged at Galactic's configured internal GB-month rate.",
   freeCallSponsorship:
     "Free calls use app-owner sponsorship for infrastructure when available. If the owner has no credits balance, the caller needs credits balance to cover infrastructure and continue.",
   termsUrl: "/terms",

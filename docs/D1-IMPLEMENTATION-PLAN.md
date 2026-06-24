@@ -1,9 +1,9 @@
-# D1 Implementation Plan: Relational Data Layer for Ultralight
+# D1 Implementation Plan: Relational Data Layer for Galactic
 
 > **Status:** Implemented
 > **Author:** Architecture Review
 > **Date:** 2026-03-20
-> **Scope:** Add Cloudflare D1 (SQLite) as the structured data layer for all Ultralight MCP apps. R2 remains for code/assets. SQL-only API from day one.
+> **Scope:** Add Cloudflare D1 (SQLite) as the structured data layer for all Galactic MCP apps. R2 remains for code/assets. SQL-only API from day one.
 
 ---
 
@@ -483,7 +483,7 @@ function validateUserIdInQuery(sql: string, context: string): void {
   if (/^\s*(insert|replace)\s/i.test(normalized)) {
     if (!normalized.includes('user_id')) {
       throw new Error(
-        `[Ultralight] All INSERT statements must include user_id. ` +
+        `[Galactic] All INSERT statements must include user_id. ` +
         `Add user_id to your column list and use the value from ultralight.user.id`
       );
     }
@@ -493,7 +493,7 @@ function validateUserIdInQuery(sql: string, context: string): void {
   if (/^\s*(select|update|delete)\s/i.test(normalized)) {
     if (!normalized.includes('user_id')) {
       throw new Error(
-        `[Ultralight] All queries must filter by user_id. ` +
+        `[Galactic] All queries must filter by user_id. ` +
         `Add WHERE user_id = ? to your query.`
       );
     }
@@ -552,7 +552,7 @@ await ultralight.db.run(
 
 ### 5.3 What About Developer-as-User?
 
-When a developer tests their own app, they're just another user. Their `user_id` is their Ultralight account ID. Their data goes into the same D1 as everyone else's, filtered by their `user_id`. Their usage counts toward their own metering bucket (Phase 5).
+When a developer tests their own app, they're just another user. Their `user_id` is their Galactic account ID. Their data goes into the same D1 as everyone else's, filtered by their `user_id`. Their usage counts toward their own metering bucket (Phase 5).
 
 ### Files Modified
 
@@ -940,11 +940,11 @@ Execute multiple statements atomically.
 
 ### 10.3 How Agents Consume the Spec
 
-The `ultralight-spec/` directory lives at the root of the Ultralight repo. When agents build apps:
+The `ultralight-spec/` directory lives at the root of the Galactic repo. When agents build apps:
 
-1. **Ultralight Desktop Agent:** The system prompt includes instructions to read `ultralight-spec/conventions/` before generating any app code. The agent has filesystem access to grep these files.
+1. **Galactic Desktop Agent:** The system prompt includes instructions to read `ultralight-spec/conventions/` before generating any app code. The agent has filesystem access to grep these files.
 
-2. **External Agents (Claude, Cursor, etc.):** When building Ultralight apps, the CLI's `ul scaffold` command generates a starter project that includes a `CONVENTIONS.md` file (symlinked or copied from the spec) that the agent reads.
+2. **External Agents (Claude, Cursor, etc.):** When building Galactic apps, the CLI's `ul scaffold` command generates a starter project that includes a `CONVENTIONS.md` file (symlinked or copied from the spec) that the agent reads.
 
 3. **Platform MCP (`ul.download` scaffold mode):** The scaffold tool path in `platform-mcp.ts` generates projects with the spec conventions baked in.
 
@@ -964,12 +964,12 @@ The `ultralight-spec/` directory lives at the root of the Ultralight repo. When 
 
 ### 11.1 System Prompt Enhancement
 
-In the Ultralight Desktop agent's system prompt (or CLAUDE.md equivalent):
+In the Galactic Desktop agent's system prompt (or CLAUDE.md equivalent):
 
 ```markdown
-## Ultralight Platform Context
+## Galactic Platform Context
 
-You are an AI agent running inside Ultralight Desktop. When building or modifying Ultralight apps:
+You are an AI agent running inside Galactic Desktop. When building or modifying Galactic apps:
 
 1. **Always read `ultralight-spec/conventions/`** before generating app code.
 2. All app data uses Cloudflare D1 (SQLite). Use `ultralight.db.run/all/first/batch`.
@@ -1279,8 +1279,8 @@ Sprint 5 (Polish):         Phase 10 + Phase 13 (in parallel)
 
 ## Conclusion
 
-This plan transforms Ultralight's data layer from a KV-over-object-store to a proper relational database, giving developers SQL's full power (joins, aggregations, indexes, transactions) while maintaining the platform's core properties: per-app isolation, automatic marketplace transfer, per-user billing, and agent-native development.
+This plan transforms Galactic's data layer from a KV-over-object-store to a proper relational database, giving developers SQL's full power (joins, aggregations, indexes, transactions) while maintaining the platform's core properties: per-app isolation, automatic marketplace transfer, per-user billing, and agent-native development.
 
-The architecture is clean because it maps 1:1 — one app, one database, one transfer unit. The agent spec ensures every app built through Ultralight Desktop follows the exact same patterns, eliminating the "works on my machine" problem before it exists.
+The architecture is clean because it maps 1:1 — one app, one database, one transfer unit. The agent spec ensures every app built through Galactic Desktop follows the exact same patterns, eliminating the "works on my machine" problem before it exists.
 
 R2 stays for what it's good at (blobs, code, assets). D1 handles what R2 was struggling with (structured queries, relationships, aggregations). Supabase continues to be the platform's own database. Three storage layers, each doing what it does best.

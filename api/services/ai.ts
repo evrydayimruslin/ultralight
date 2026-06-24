@@ -43,7 +43,7 @@ function getMimeFromDataUrl(data: string): string {
 }
 
 /**
- * Translate Ultralight AIContentPart[] to OpenAI/OpenRouter-compatible content array.
+ * Translate Galactic AIContentPart[] to OpenAI/OpenRouter-compatible content array.
  * - type:'text' → { type:'text', text }
  * - type:'file' + image → { type:'image_url', image_url: { url: dataUrl } }
  * - type:'file' + text file → { type:'text', text: decoded content }
@@ -103,7 +103,7 @@ const formatOpenAICompatibleHeaders = (apiKey: string): Record<string, string> =
   'Authorization': `Bearer ${apiKey}`,
   'Content-Type': 'application/json',
   'HTTP-Referer': 'https://api.ultralightagent.com',
-  'X-Title': 'Ultralight',
+  'X-Title': 'Galactic',
 });
 
 const formatOpenAICompatibleRequest = (request: AIRequest, model: string): unknown => ({
@@ -174,7 +174,7 @@ const OPENROUTER_CONFIG: ProviderConfig = {
     'Authorization': `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
     'HTTP-Referer': 'https://api.ultralightagent.com',
-    'X-Title': 'Ultralight',
+    'X-Title': 'Galactic',
   }),
 };
 

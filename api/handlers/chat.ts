@@ -1,6 +1,6 @@
 // Chat Stream Handler
 // Authenticated streaming proxy to OpenAI-compatible providers.
-// Light mode uses Ultralight platform keys; BYOK mode uses the user's provider key.
+// Light mode uses Galactic platform keys; BYOK mode uses the user's provider key.
 //
 // Architecture: Client-side tool dispatch — the Tauri app
 // handles the tool-use loop. This endpoint is a billing/auth proxy that
@@ -344,7 +344,7 @@ export async function handleChatStream(request: Request): Promise<Response> {
   let providerRes: Response;
   try {
     providerRes = await fetchInferenceChatCompletion(route, providerBody, {
-      title: "Ultralight Chat",
+      title: "Galactic Chat",
     });
     chatLogger.info("AI provider responded to chat request", {
       user_id: user.id,

@@ -2,7 +2,7 @@
 
 Last reviewed: `2026-06-08`
 
-This document is the canonical map of how Ultralight moves from source control
+This document is the canonical map of how Galactic moves from source control
 to staging and then to production across the API, launch website, database,
 and desktop surfaces.
 
@@ -16,7 +16,7 @@ exception register now live in
 
 ## Canonical Statement
 
-Ultralight promotes release candidates through this chain:
+Galactic promotes release candidates through this chain:
 
 1. Pull requests verify code and packaging inputs.
 2. Pushes to `main` produce the staging candidate:

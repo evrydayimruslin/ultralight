@@ -116,7 +116,7 @@ export default function BYOKEditor() {
       </div>
       <p className="text-caption text-ul-text-secondary leading-relaxed mb-5">
         Route inference through your own provider account when available. Keys are validated by
-        Ultralight, encrypted on the server, and never shown again after save.
+        Galactic, encrypted on the server, and never shown again after save.
       </p>
 
       {error && (

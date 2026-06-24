@@ -137,7 +137,7 @@ export default function AuthGate({ onAuthenticated }: AuthGateProps) {
               <E3Mark size={36} color="#0a0a0a" />
             </span>
             <span className="font-bold leading-none tracking-[-0.03em] text-ul-text" style={{ fontSize: 30 }}>
-              Ultralight
+              Galactic
             </span>
           </div>
           <p className="text-small text-ul-text-muted">

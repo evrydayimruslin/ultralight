@@ -109,7 +109,7 @@ export function buildWireTransferPaymentIntentParams(
     "payment_method_options[customer_balance][bank_transfer][type]":
       WIRE_TRANSFER_BANK_TRANSFER_TYPE,
     confirm: "true",
-    description: `Ultralight wire funding (${formatLight(lightAmount)})`,
+    description: `Galactic wire funding (${formatLight(lightAmount)})`,
     "metadata[user_id]": input.userId,
     "metadata[amount_cents]": String(input.amountCents),
     "metadata[light_amount]": String(lightAmount),

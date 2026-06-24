@@ -25,8 +25,8 @@ deno task cli:install  # Install globally as 'ultralight'
 
 **SDK Usage:**
 ```typescript
-import { Ultralight } from 'https://ultralight.dev/sdk/mod.ts';
-const ul = new Ultralight({ token: 'your-token' });
+import { Galactic } from 'https://ultralight.dev/sdk/mod.ts';
+const ul = new Galactic({ token: 'your-token' });
 const apps = await ul.apps.list();
 ```
 
@@ -34,7 +34,7 @@ const apps = await ul.apps.list();
 
 ## Executive Summary
 
-This document outlines the architectural decisions and implementation plan for adding platform-level MCP server capabilities and a CLI tool to Ultralight. These additions will make Ultralight significantly more robust for agentic use by enabling:
+This document outlines the architectural decisions and implementation plan for adding platform-level MCP server capabilities and a CLI tool to Galactic. These additions will make Galactic significantly more robust for agentic use by enabling:
 
 1. **Platform MCP Server** - Centralized MCP endpoint for managing all apps, not just individual app tools
 2. **CLI Tool** - Command-line interface for programmatic app management
@@ -475,7 +475,7 @@ GET /.well-known/mcp.json
 Returns:
 ```json
 {
-  "name": "Ultralight Platform",
+  "name": "Galactic Platform",
   "version": "1.0.0",
   "description": "Serverless app platform with AI integration",
   "capabilities": {
@@ -597,9 +597,9 @@ Project-level `.ultralightrc.json`:
 `npm install @ultralight/sdk` or import from `https://ultralight.dev/sdk/mod.ts`
 
 ```typescript
-import { Ultralight } from '@ultralight/sdk';
+import { Galactic } from '@ultralight/sdk';
 
-const ul = new Ultralight({
+const ul = new Galactic({
   token: process.env.ULTRALIGHT_TOKEN,
   // or: apiKey: process.env.ULTRALIGHT_API_KEY
 });
@@ -873,7 +873,7 @@ Agent: "I need to create a weather app"
 
 ## Conclusion
 
-Adding platform-level MCP and CLI will transform Ultralight from a primarily UI-driven platform to a fully programmable one. This enables:
+Adding platform-level MCP and CLI will transform Galactic from a primarily UI-driven platform to a fully programmable one. This enables:
 
 - **CI/CD Integration**: Automated deployments
 - **Agent Workflows**: AI agents can manage the full app lifecycle

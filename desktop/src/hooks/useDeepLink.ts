@@ -10,7 +10,7 @@
 //   ultralight://agent/:id              → focus an agent
 //
 // Pending queue: deep links can fire BEFORE the auth gate has resolved
-// (cold-start from a browser click while Ultralight wasn't running). We
+// (cold-start from a browser click while Galactic wasn't running). We
 // queue them until `ready === true`, then drain in arrival order.
 
 import { useEffect, useRef } from 'react';

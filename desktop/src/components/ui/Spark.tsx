@@ -1,4 +1,4 @@
-// Spark — the Ultralight brand glyph (8-sided star).
+// Spark — the Galactic brand glyph (8-sided star).
 // Custom-drawn; lucide-react does not ship an equivalent.
 // Ported from handoff/mockups/primitives.jsx.
 

@@ -487,7 +487,7 @@ export function generateDockerfile(
   const pythonVersion = config.python || "3.11";
 
   const lines = [
-    "# Ultralight GPU Container - auto-generated reference",
+    "# Galactic GPU Container - auto-generated reference",
     `# GPU: ${config.gpu_type} | Python: ${pythonVersion}`,
     `# Generated: ${new Date().toISOString()}`,
     "",

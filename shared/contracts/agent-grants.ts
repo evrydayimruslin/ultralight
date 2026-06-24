@@ -207,7 +207,7 @@ export interface AgentCallerContextClaims {
   jti: string;
 }
 
-export const AGENT_CALLER_CONTEXT_HEADER = "X-Ultralight-Caller";
+export const AGENT_CALLER_CONTEXT_HEADER = "X-Galactic-Caller";
 
 // Max events a single emit fans out to (subscriber count) — bounds amplification.
 export const MAX_EVENT_FANOUT = 100;

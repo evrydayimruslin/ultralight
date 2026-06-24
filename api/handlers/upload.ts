@@ -357,7 +357,7 @@ export async function handleUpload(request: Request): Promise<Response> {
             );
           }
 
-          // Validate each migration for Ultralight conventions (user_id, no DROP, etc.)
+          // Validate each migration for Galactic conventions (user_id, no DROP, etc.)
           for (const migration of parsedMigrations) {
             const validation = validateMigrationSchema(migration.sql);
             if (!validation.valid) {
@@ -429,7 +429,7 @@ export async function handleUpload(request: Request): Promise<Response> {
             )
           ) {
             return error(
-              "GPU functions cannot include a Dockerfile in v1. Ultralight generates the Dockerfile and base image.",
+              "GPU functions cannot include a Dockerfile in v1. Galactic generates the Dockerfile and base image.",
               400,
             );
           }

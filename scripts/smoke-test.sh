@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Ultralight post-deploy smoke test.
+# Galactic post-deploy smoke test.
 # Verifies the deployed API surface and, optionally, a real authenticated chat.
 #
 # Examples:
@@ -131,7 +131,7 @@ fetch_json() {
 }
 
 echo "╔══════════════════════════════════════════════╗"
-echo "║        Ultralight Post-Deploy Smoke         ║"
+echo "║        Galactic Post-Deploy Smoke         ║"
 echo "╚══════════════════════════════════════════════╝"
 echo ""
 echo "API:   $API_URL"

@@ -1,6 +1,6 @@
-// Reading List — Ultralight MCP App
+// Reading List — Galactic MCP App
 // Track books, articles, tweets, and papers. Save highlights, notes, and search semantically.
-// Storage: Ultralight D1 | Permissions: ai:call, net:fetch
+// Storage: Galactic D1 | Permissions: ai:call, net:fetch
 
 const ultralight = (globalThis as any).ultralight;
 
@@ -24,7 +24,7 @@ export async function save(args: {
   if (url) {
     try {
       const response = await fetch(url, {
-        headers: { 'User-Agent': 'Ultralight-ReadingList/1.0' },
+        headers: { 'User-Agent': 'Galactic-ReadingList/1.0' },
       });
       const html = await response.text();
 

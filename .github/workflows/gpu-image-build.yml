@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       build_id:
-        description: Ultralight GPU build id.
+        description: Galactic GPU build id.
         required: true
         type: string
       app_id:
-        description: Ultralight app id.
+        description: Galactic app id.
         required: true
         type: string
       version:
@@ -119,7 +119,7 @@ jobs:
           echo "IMAGE_DIGEST=$DIGEST" >> "$GITHUB_ENV"
           echo "IMAGE_SIZE_BYTES=$SIZE_BYTES" >> "$GITHUB_ENV"
 
-      - name: Notify Ultralight
+      - name: Notify Galactic
         if: always()
         shell: bash
         run: |

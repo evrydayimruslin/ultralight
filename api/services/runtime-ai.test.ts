@@ -124,7 +124,7 @@ Deno.test("runtime AI: Light route debits usage after provider response", async 
   }
 });
 
-Deno.test("runtime AI: Ultralight direct DeepSeek disables thinking and debits cache-aware usage", async () => {
+Deno.test("runtime AI: Galactic direct DeepSeek disables thinking and debits cache-aware usage", async () => {
   const previousFetch = globalThis.fetch;
   const globalWithEnv = globalThis as typeof globalThis & {
     __env?: Record<string, unknown>;

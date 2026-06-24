@@ -198,7 +198,7 @@ async function callFlashBroker(
         response_format: { type: 'json_object' },
       },
       {
-        title: 'Ultralight Context Broker',
+        title: 'Galactic Context Broker',
         referer: 'https://api.ultralightagent.com',
       },
     );

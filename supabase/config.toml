@@ -1,4 +1,4 @@
-# Canonical Supabase CLI project config for Ultralight.
+# Canonical Supabase CLI project config for Galactic.
 # This directory is now the home for platform database migrations.
 project_id = "ultralight"
 
@@ -16,7 +16,7 @@ major_version = 17
 
 [db.migrations]
 enabled = true
-# Ultralight uses ordered SQL migrations under supabase/migrations.
+# Galactic uses ordered SQL migrations under supabase/migrations.
 schema_paths = []
 
 [db.seed]

@@ -3,7 +3,7 @@
 // Ingests tweets into the content store.
 // Handles tweet parsing (URLs, threads, batch), and provides tweet-specific queries.
 //
-// Storage: Ultralight D1
+// Storage: Galactic D1
 // AI: ultralight.ai() with text-embedding-3-small for embeddings
 // Permissions: ai:call (embeddings), net:fetch (tweet scraping)
 

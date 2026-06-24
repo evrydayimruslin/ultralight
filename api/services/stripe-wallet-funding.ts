@@ -68,7 +68,7 @@ export function buildWalletExpressPaymentIntentParams(
     amount: String(input.amountCents),
     currency: "usd",
     customer: input.stripeCustomerId,
-    description: `Ultralight Light funding (${formatLight(lightAmount)})`,
+    description: `Galactic Light funding (${formatLight(lightAmount)})`,
     "payment_method_types[0]": "card",
     "payment_method_options[card][request_three_d_secure]": "automatic",
     "metadata[user_id]": input.userId,

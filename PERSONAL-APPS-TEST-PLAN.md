@@ -1,6 +1,6 @@
-# Ultralight Personal Apps Test Plan
+# Galactic Personal Apps Test Plan
 
-**Goal:** Get all 3 personal apps running in Ultralight with Corin (agent) able to operate them via Telegram through MCP/CLI.
+**Goal:** Get all 3 personal apps running in Galactic with Corin (agent) able to operate them via Telegram through MCP/CLI.
 
 ---
 
@@ -70,7 +70,7 @@
 
 1. Create Supabase project: `russell-personal-metrics`
 2. Run `apps/morning-dashboard/supabase-migration.sql`
-3. Configure BYOS in Ultralight (URL + anon key + service key)
+3. Configure BYOS in Galactic (URL + anon key + service key)
 4. Upload app: `ultralight upload ./apps/morning-dashboard`
 5. Run: `ultralight run <app-id> healthCheck`
 
@@ -78,7 +78,7 @@
 
 ## App 2: Ultravision
 
-**Purpose:** Ultralight business hub - roadmap, goals, decisions, risks
+**Purpose:** Galactic business hub - roadmap, goals, decisions, risks
 
 ### Storage: R2 + OpenRouter Embeddings
 
@@ -164,7 +164,7 @@
 1. Create Supabase project: `russell-x-research`
 2. Enable `vector` extension in Supabase
 3. Run `apps/x-scrape/supabase-migration.sql`
-4. Configure BYOS in Ultralight
+4. Configure BYOS in Galactic
 5. Upload app: `ultralight upload ./apps/x-scrape`
 6. Run: `ultralight run <app-id> healthCheck`
 
@@ -249,7 +249,7 @@
 # 1. Upload
 ultralight upload ./apps/morning-dashboard --name "morning-dashboard"
 
-# 2. Configure BYOS (via Ultralight dashboard or API)
+# 2. Configure BYOS (via Galactic dashboard or API)
 # Set: supabase_url, supabase_anon_key, supabase_service_key
 
 # 3. Test
@@ -313,7 +313,7 @@ mcp_call() {
     -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"$1\",\"arguments\":$2}}"
 }
 
-echo "=== Ultralight Personal Apps Smoke Test ==="
+echo "=== Galactic Personal Apps Smoke Test ==="
 
 # Test each app's health check
 for app in "morning-dashboard" "ultravision" "x-scrape"; do
@@ -351,7 +351,7 @@ By end of day:
    - Embeddings generated for Ultravision and X Scrape
 
 4. **Corin can operate all apps**
-   - Via Telegram → MCP → Ultralight
+   - Via Telegram → MCP → Galactic
    - Can discover, list, and run functions
    - Cross-app memory working (`daily_brief`, `ultravision_weekly_status`, etc.)
 

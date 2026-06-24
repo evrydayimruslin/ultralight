@@ -2,7 +2,7 @@
 
 ## Overview
 
-Six default agents ship with the Ultralight desktop app, turning it into a self-serve platform that can use itself most effectively. These agents cover functionality best served by agentic chat rather than by UI, API, or CLI.
+Six default agents ship with the Galactic desktop app, turning it into a self-serve platform that can use itself most effectively. These agents cover functionality best served by agentic chat rather than by UI, API, or CLI.
 
 **Design Principle:** Five defaults + infinite spawnable. The Agent Builder can create any specialized agent on demand. Default agents earn their slot by being high-frequency and solving a discovery problem (users wouldn't know to ask for them if they didn't exist).
 

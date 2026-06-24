@@ -1,4 +1,4 @@
-# Ultralight
+# Galactic
 
 The agent-accessible MCP platform. Deploy TypeScript functions, get a live MCP server. Any AI agent can discover and call your app — no human in the loop.
 
@@ -6,7 +6,7 @@ The agent-accessible MCP platform. Deploy TypeScript functions, get a live MCP s
 
 85% of enterprises will have AI agents deployed. Those agents need structured, programmatic access to tools. They don't browse marketing sites or watch demo videos. They call MCP endpoints. They read docs programmatically. If your product doesn't have an agent-accessible surface area, it's invisible.
 
-Ultralight solves this. Write a TypeScript function, upload it, and every agent in the ecosystem can find it and use it — at 3am, autonomously, with zero configuration.
+Galactic solves this. Write a TypeScript function, upload it, and every agent in the ecosystem can find it and use it — at 3am, autonomously, with zero configuration.
 
 ```typescript
 // index.ts — this becomes an MCP server
@@ -61,7 +61,7 @@ Agents that read API specs auto-discover our endpoints, parameters, and auth req
 
 ## Agent Authentication — One Token, Every App
 
-Agents authenticate **once** with Ultralight and get access to every public app in the ecosystem:
+Agents authenticate **once** with Galactic and get access to every public app in the ecosystem:
 
 1. Agent obtains a `ul_` API token (via OAuth 2.1 or user settings)
 2. Agent discovers tools via `GET /api/discover?q=<need>` or `ul.discover({ scope: "appstore", query: "<need>" })`
@@ -251,7 +251,7 @@ routes must declare methods, use owner billing, and use app-scoped data:
 
 ## CLI Commands
 
-Install from npm ([`ultralightpro`](https://www.npmjs.com/package/ultralightpro)); `setup` also writes the Ultralight MCP server into Claude Code / Claude Desktop / Cursor configs:
+Install from npm ([`ultralightpro`](https://www.npmjs.com/package/ultralightpro)); `setup` also writes the Galactic MCP server into Claude Code / Claude Desktop / Cursor configs:
 
 ```bash
 npm install -g ultralightpro          # or one-off: npx ultralightpro <command>
@@ -326,7 +326,7 @@ npm run typecheck:deno --prefix api  # Deno analyzer check with Worker types and
               +-------------+---------------+
                             |
                    +--------v--------+
-                   |   Ultralight    |
+                   |   Galactic    |
                    |   Deno Server   |
                    +--+------+---+---+
                       |      |   |

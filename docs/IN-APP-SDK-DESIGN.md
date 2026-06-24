@@ -2,14 +2,14 @@
 
 ## Overview
 
-This document explores adding an **in-app SDK** that allows Ultralight apps to call other apps and platform features programmatically. This would enable composable app ecosystems where apps can build on each other.
+This document explores adding an **in-app SDK** that allows Galactic apps to call other apps and platform features programmatically. This would enable composable app ecosystems where apps can build on each other.
 
 ## Current Architecture
 
 ### What Apps Can Access Today
 
 ```typescript
-// Inside an Ultralight app (index.ts)
+// Inside an Galactic app (index.ts)
 export default async function handler(request, ultralight) {
   // ✅ User context
   const user = ultralight.user;
@@ -31,7 +31,7 @@ export default async function handler(request, ultralight) {
   // ✅ External HTTP (with net:fetch permission)
   const res = await fetch('https://api.example.com/data');
 
-  // ❌ Cannot call other Ultralight apps
+  // ❌ Cannot call other Galactic apps
   // ❌ Cannot discover apps
   // ❌ Cannot access platform features
 }

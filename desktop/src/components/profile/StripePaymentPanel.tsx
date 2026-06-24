@@ -236,7 +236,7 @@ export default function StripePaymentPanel({
       </div>
 
       <div className="mt-3 text-nano font-mono text-ul-text-muted leading-relaxed">
-        Powered by Stripe. Your card / wallet details never touch Ultralight servers.
+        Powered by Stripe. Your card / wallet details never touch Galactic servers.
       </div>
     </div>
   );

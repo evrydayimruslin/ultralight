@@ -1,10 +1,10 @@
-# Ultralight Spec
+# Galactic Spec
 
-Ultralight is a serverless MCP app platform. Developers write functions in TypeScript, deploy them, and Ultralight handles execution, data storage (Cloudflare D1/SQLite), user authentication, billing, and metering.
+Galactic is a serverless MCP app platform. Developers write functions in TypeScript, deploy them, and Galactic handles execution, data storage (Cloudflare D1/SQLite), user authentication, billing, and metering.
 
 ## What this directory is
 
-This `ultralight-spec/` directory contains the canonical conventions for building Ultralight apps. It is the single source of truth for both human developers and coding agents.
+This `ultralight-spec/` directory contains the canonical conventions for building Galactic apps. It is the single source of truth for both human developers and coding agents.
 
 ## How to use this spec
 

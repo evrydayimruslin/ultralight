@@ -1,6 +1,6 @@
-// Smart Budget — Ultralight MCP App
+// Smart Budget — Galactic MCP App
 // Track spending, manage budgets, and get financial insights.
-// Storage: Ultralight D1 (transactions, budgets)
+// Storage: Galactic D1 (transactions, budgets)
 
 const ultralight = (globalThis as any).ultralight;
 

@@ -2269,7 +2269,7 @@ export async function handleUser(request: Request): Promise<Response> {
 
   // ============================================
   // SUPABASE MANAGEMENT API OAUTH
-  // "Connect Supabase" flow — lets users authorize Ultralight
+  // "Connect Supabase" flow — lets users authorize Galactic
   // to read their Supabase projects and auto-wire credentials
   // ============================================
 

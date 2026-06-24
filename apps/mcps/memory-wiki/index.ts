@@ -1,7 +1,7 @@
-// Memory Wiki — Ultralight MCP App
+// Memory Wiki — Galactic MCP App
 // Personal knowledge wiki with raw backlog, compiled pages, cross-references, lint.
 // 10 tools: search, query, browse, ingest, sync, lint, update_page, create_wiki, widget_wiki_browser_ui, widget_wiki_browser_data
-// Storage: Ultralight D1 | Permissions: ai:call
+// Storage: Galactic D1 | Permissions: ai:call
 
 const ultralight = globalThis.ultralight;
 

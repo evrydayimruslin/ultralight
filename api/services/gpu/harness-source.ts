@@ -1,7 +1,7 @@
 export const GPU_BAKED_HARNESS_PY = String.raw`"""
-Ultralight GPU Harness for baked GHCR images.
+Galactic GPU Harness for baked GHCR images.
 
-This harness runs inside a per-app image built by Ultralight. Dependencies are
+This harness runs inside a per-app image built by Galactic. Dependencies are
 installed at image-build time, so worker startup only imports app code and runs
 the requested function.
 """

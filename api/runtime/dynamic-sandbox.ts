@@ -1,4 +1,4 @@
-// Ultralight Dynamic Worker Sandbox
+// Galactic Dynamic Worker Sandbox
 // Uses Cloudflare Dynamic Workers (env.LOADER.load()) to execute app code
 // in isolated V8 sandboxes. Replaces AsyncFunction which is blocked in CF Workers.
 //
@@ -252,7 +252,7 @@ globalThis.ultralight = {
     // Unforgeable caller identity (minted server-side, asserts only this app).
     // The target uses it to run the cross-Agent grant check.
     var __callerCtx = ${callerContextToken};
-    if (__callerCtx) __headers['X-Ultralight-Caller'] = __callerCtx;
+    if (__callerCtx) __headers['X-Galactic-Caller'] = __callerCtx;
     var response = await fetchFn(endpoint, {
       method: 'POST',
       headers: __headers,
@@ -298,7 +298,7 @@ globalThis.ultralight = {
     var fetchFn = (e && e.SELF) ? e.SELF.fetch.bind(e.SELF) : fetch;
     var resp = await fetchFn('https://internal/api/events/emit', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Worker-Secret': ${netWorkerSecret}, 'X-Ultralight-Caller': __ctx },
+      headers: { 'Content-Type': 'application/json', 'X-Worker-Secret': ${netWorkerSecret}, 'X-Galactic-Caller': __ctx },
       body: __body
     });
     if (!resp.ok) { var t = await resp.text().catch(function() { return resp.statusText; }); throw new Error('emit failed (' + resp.status + '): ' + t); }

@@ -56,7 +56,7 @@ const METHODS: MethodOption[] = [
   {
     id: 'earnings',
     title: 'Transfer from Earnings',
-    subtitle: 'Ultralight-only · 1:1, no fees',
+    subtitle: 'Galactic-only · 1:1, no fees',
     badge: 'INSTANT',
     rate: 100,
     rateLabel: '✦100 per $1',
@@ -214,7 +214,7 @@ export default function AddLightModal({ hosting, earnings, onClose, onSuccess }:
 
   // Wallet checkout — Stripe Payment Element mounts here after the
   // PaymentIntent is created. Stays inside the same Modal chrome so
-  // the user never feels like they've left Ultralight.
+  // the user never feels like they've left Galactic.
   if (checkout) {
     return (
       <Modal onClose={onClose} surface="plain" radius="xl" maxWidth="md" maxHeight="tall">
@@ -342,7 +342,7 @@ export default function AddLightModal({ hosting, earnings, onClose, onSuccess }:
                     </div>
                     <div className="text-nano text-ul-text-secondary">
                       {m.id === 'earnings'
-                        ? `Available ✦${formatLight(earningsAvailableLight)} · Ultralight-only · 1:1, no fees`
+                        ? `Available ✦${formatLight(earningsAvailableLight)} · Galactic-only · 1:1, no fees`
                         : m.subtitle + ' · ' + m.rateLabel}
                     </div>
                   </div>

@@ -211,7 +211,7 @@ export function generateSkillsMd(
   lines.push("```");
   lines.push("");
   lines.push(
-    "Direct users to this URL when they want to view or manage their data visually. Browser access should use an Ultralight session, while agent/API access should use the MCP endpoint with an `Authorization` header.",
+    "Direct users to this URL when they want to view or manage their data visually. Browser access should use an Galactic session, while agent/API access should use the MCP endpoint with an `Authorization` header.",
   );
   lines.push("");
 

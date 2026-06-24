@@ -130,7 +130,7 @@ function InstallDesktop({ signedIn = false, target = 'claude_code', copied = fal
       <I_Scroll>
         <div style={{ maxWidth: 1080, margin: '0 auto', padding: '51px 32px 56px', fontFamily: I.font }}>
           <I_Label mb={8}>Install</I_Label>
-          <div style={{ fontSize: 32, fontWeight: 700, letterSpacing: '-0.03em', lineHeight: 1.05, marginBottom: 10 }}>Connect Ultralight to your agent.</div>
+          <div style={{ fontSize: 32, fontWeight: 700, letterSpacing: '-0.03em', lineHeight: 1.05, marginBottom: 10 }}>Connect Galactic to your agent.</div>
           <div style={{ fontSize: 16, color: I.sec, lineHeight: 1.5, marginBottom: 20, maxWidth: 640 }}>One remote MCP endpoint — or the CLI and API — lets any existing agent discover, call, and pay for tools.</div>
           <div style={{ marginBottom: 24 }}><ExternalLoop/></div>
           <div style={{ marginBottom: 22 }}><KeyBanner signedIn={signedIn}/></div>

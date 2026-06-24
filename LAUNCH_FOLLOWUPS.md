@@ -60,7 +60,7 @@ of launch-relevant follow-ups discovered during implementation.
 ## Phase 4a (2026-06-10)
 
 - **AGENT_CALLER_SECRET** must be provisioned (wrangler secret) before
-  cross-Agent calls work in production. It signs the X-Ultralight-Caller
+  cross-Agent calls work in production. It signs the X-Galactic-Caller
   identity token and MUST be a server-only secret — deliberately distinct
   from WORKER_SECRET, which is exposed inside the sandbox. Falls back to
   ROUTINE_ACTOR_TOKEN_SECRET / SUPABASE_SERVICE_ROLE_KEY if unset.
@@ -167,7 +167,7 @@ of launch-relevant follow-ups discovered during implementation.
 
 ## Deferred After PR2
 
-- Decide whether desktop logout should also clear browser-side Ultralight
+- Decide whether desktop logout should also clear browser-side Galactic
   cookies via `/auth/signout`. For launch we are keeping logout local to the
   desktop app, with explicit account switching on the sign-in screen.
 - Add component-style auth flow coverage later if we want UI-level coverage on

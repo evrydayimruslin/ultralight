@@ -25,7 +25,7 @@ export default function DesktopUpdateToast({ updater }: DesktopUpdateToastProps)
         </div>
         <div className="min-w-0 flex-1">
           <p className="text-[13px] font-semibold text-black">
-            Ultralight {updater.version} is ready
+            Galactic {updater.version} is ready
           </p>
           <p className="mt-1 text-[12px] text-black/60">
             {updater.currentVersion ? `Current ${updater.currentVersion}` : 'A new desktop release is available'}

@@ -285,7 +285,7 @@ async function testEndpointLifecycle(provider: RunPodProvider): Promise<void> {
         const execResult = await provider.execute({
           endpointId,
           functionName: "hello",
-          args: { name: "Ultralight" },
+          args: { name: "Galactic" },
           maxDurationMs: 30_000,
           gpuType: "A40",
         });

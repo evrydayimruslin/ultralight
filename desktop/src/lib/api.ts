@@ -1,5 +1,5 @@
-// API client for Ultralight chat endpoints
-// All requests route through the Ultralight server proxy (auth + billing).
+// API client for Galactic chat endpoints
+// All requests route through the Galactic server proxy (auth + billing).
 
 import type {
   ChatInferenceOptionsResponse,
@@ -270,7 +270,7 @@ export async function claimReferralToken(claimToken: string): Promise<boolean> {
 // ── Chat Stream ──
 
 /**
- * Stream a chat completion from the Ultralight proxy.
+ * Stream a chat completion from the Galactic proxy.
  * Returns an async iterator of ChatStreamEvents.
  */
 export async function* streamChat(opts: {

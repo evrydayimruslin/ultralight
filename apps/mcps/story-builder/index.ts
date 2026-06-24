@@ -1,7 +1,7 @@
-// Story Builder v3 — Ultralight MCP App
+// Story Builder v3 — Galactic MCP App
 // 7 tools: create_world, add, read, update, delete, get_context, generate
 // All lookups by name (unique per world). No UUIDs needed by the caller.
-// Storage: Ultralight D1 | Permissions: ai:call
+// Storage: Galactic D1 | Permissions: ai:call
 
 const ultralight = globalThis.ultralight;
 

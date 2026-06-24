@@ -1,4 +1,4 @@
-// Ultralight Interfaces sandbox worker — request handling (Interfaces PR3).
+// Galactic Interfaces sandbox worker — request handling (Interfaces PR3).
 //
 // SECURITY MODEL (docs/INTERFACE_RELAUNCH_INVESTIGATION.md §4.2):
 // - Serves ONLY the content-addressed prefix interfaces/{appId}/{sha256}.html.

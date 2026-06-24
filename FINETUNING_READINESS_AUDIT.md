@@ -1,9 +1,9 @@
 # FINETUNING READINESS AUDIT
 
 Audit date: 2026-05-05
-Scope: Flash and Heavy tier LLM-using components in the current Ultralight codebase. CLOB and BioASM were explicitly skipped; I found no code references matching `clob`, `CLOB`, `bioasm`, `BioASM`, `bio_asm`, or `BIOASM`.
+Scope: Flash and Heavy tier LLM-using components in the current Galactic codebase. CLOB and BioASM were explicitly skipped; I found no code references matching `clob`, `CLOB`, `bioasm`, `BioASM`, `bio_asm`, or `BIOASM`.
 
-Model availability note: I checked the official Cerebras docs while writing this report. The shared public endpoint list currently shows `llama3.1-8b` and `gpt-oss-120b` as production models, with `llama3.1-8b` scheduled for deprecation on 2026-05-27. The enterprise dedicated-endpoint docs are the better match for Ultralight's reserved-capacity plan: they explicitly support bring-your-own fine-tuned weights and list Qwen3 small/tiny variants (`0.6B`, `1.7B`, `8B`, `14B`, `32B`), Llama 3.3 70B, Llama 4 Scout/Maverick, Mistral, GPT-OSS, GLM, Kimi, DeepSeek, and other families. Sources: [Cerebras supported models](https://inference-docs.cerebras.ai/models/overview) and [Cerebras dedicated endpoints](https://inference-docs.cerebras.ai/dedicated/overview).
+Model availability note: I checked the official Cerebras docs while writing this report. The shared public endpoint list currently shows `llama3.1-8b` and `gpt-oss-120b` as production models, with `llama3.1-8b` scheduled for deprecation on 2026-05-27. The enterprise dedicated-endpoint docs are the better match for Galactic's reserved-capacity plan: they explicitly support bring-your-own fine-tuned weights and list Qwen3 small/tiny variants (`0.6B`, `1.7B`, `8B`, `14B`, `32B`), Llama 3.3 70B, Llama 4 Scout/Maverick, Mistral, GPT-OSS, GLM, Kimi, DeepSeek, and other families. Sources: [Cerebras supported models](https://inference-docs.cerebras.ai/models/overview) and [Cerebras dedicated endpoints](https://inference-docs.cerebras.ai/dedicated/overview).
 
 ## 1. ARCHITECTURE READINESS SCORECARD
 
@@ -17,7 +17,7 @@ Model availability note: I checked the official Cerebras docs while writing this
 | Eval harness | 2/5 | There are route, billing, capture, runtime, and inference tests; `scripts/smoke/chat-capture-smoke.mjs` can exercise `/chat/orchestrate` and verify Supabase capture rows. I did not find a component-level model eval harness comparing candidate outputs to a baseline with task metrics. | Good infrastructure tests, not yet output-quality evals. |
 | Tier-routing primitives | 4/5 | The server-side orchestration pipeline explicitly has Flash analysis/prompt construction and Heavy execution (`api/services/orchestrator.ts`, `api/services/flash-broker.ts`). Defaults map to DeepSeek V4 Flash/Pro. Light/BYOK routing exists in `api/services/inference-route.ts`. | Flash/Heavy routing is real and functional. It needs per-component registry, traffic splits, and frontier fallback policies to become a fine-tuning flywheel. |
 
-Overall answer: Ultralight is closer than a typical app because the Flash/Heavy pipeline, OpenAI-compatible routing, and capture substrate already exist. The missing piece is not "use an LLM client"; it is component identity. The code needs every LLM call to say "I am `flash_broker.analyze`, tier Flash, schema X, baseline model Y, eval metric Z" before production fine-tunes can be cleanly trained, served, compared, and ramped.
+Overall answer: Galactic is closer than a typical app because the Flash/Heavy pipeline, OpenAI-compatible routing, and capture substrate already exist. The missing piece is not "use an LLM client"; it is component identity. The code needs every LLM call to say "I am `flash_broker.analyze`, tier Flash, schema X, baseline model Y, eval metric Z" before production fine-tunes can be cleanly trained, served, compared, and ramped.
 
 ## 2. FLASH TIER COMPONENT INVENTORY
 

@@ -1,13 +1,13 @@
 /**
- * Ultralight SDK
+ * Galactic SDK
  *
- * TypeScript SDK for programmatic access to Ultralight platform.
+ * TypeScript SDK for programmatic access to Galactic platform.
  *
  * @example
  * ```typescript
- * import { Ultralight } from 'ultralightpro-sdk';
+ * import { Galactic } from 'ultralightpro-sdk';
  *
- * const ul = new Ultralight({ token: 'your-token' });
+ * const ul = new Galactic({ token: 'your-token' });
  *
  * // List apps
  * const apps = await ul.apps.list();
@@ -132,9 +132,9 @@ function normalizeToolArgs(args: unknown): Record<string, unknown> {
 }
 
 /**
- * Main Ultralight SDK client
+ * Main Galactic SDK client
  */
-export class Ultralight {
+export class Galactic {
   private apiUrl: string;
   private token: string;
   private requestId = 0;
@@ -311,10 +311,10 @@ interface JsonRpcResponse {
 }
 
 /**
- * Apps client for managing Ultralight apps
+ * Apps client for managing Galactic apps
  */
 class AppsClient {
-  constructor(private client: Ultralight) {}
+  constructor(private client: Galactic) {}
 
   /**
    * List apps owned by the authenticated user
@@ -407,7 +407,7 @@ class AppsClient {
  * Drafts client for managing app drafts
  */
 class DraftsClient {
-  constructor(private client: Ultralight) {}
+  constructor(private client: Galactic) {}
 
   /**
    * Upload a draft for an existing app
@@ -480,7 +480,7 @@ class DraftsClient {
  * Docs client for managing app documentation
  */
 class DocsClient {
-  constructor(private client: Ultralight) {}
+  constructor(private client: Galactic) {}
 
   /**
    * Generate documentation from app code
@@ -601,7 +601,7 @@ class McpClient {
 }
 
 /**
- * Custom error class for Ultralight SDK
+ * Custom error class for Galactic SDK
  */
 export class UltralightError extends Error {
   constructor(message: string, public code?: number) {
@@ -611,4 +611,4 @@ export class UltralightError extends Error {
 }
 
 // Default export
-export default Ultralight;
+export default Galactic;

@@ -3,7 +3,7 @@
 // The central vector store for the content hub.
 // All MCPs write content here and query it via semantic search.
 //
-// Storage: Ultralight D1
+// Storage: Galactic D1
 // AI: ultralight.ai() with text-embedding-3-small for embeddings
 // Permissions: ai:call (embeddings)
 

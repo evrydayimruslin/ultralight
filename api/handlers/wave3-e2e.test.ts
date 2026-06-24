@@ -467,7 +467,7 @@ class Wave3Harness {
         getEntrypoint: () => ({
           fetch: async () => {
             const previousConsole = globalThis.console;
-            const previousUltralight = (globalThis as Record<string, unknown>)
+            const previousGalactic = (globalThis as Record<string, unknown>)
               .ultralight;
             const previousRpcEnv = (globalThis as Record<string, unknown>)
               .__rpcEnv;
@@ -554,11 +554,11 @@ class Wave3Harness {
               });
             } finally {
               globalThis.console = previousConsole;
-              if (previousUltralight === undefined) {
+              if (previousGalactic === undefined) {
                 delete (globalThis as Record<string, unknown>).ultralight;
               } else {
                 (globalThis as Record<string, unknown>).ultralight =
-                  previousUltralight;
+                  previousGalactic;
               }
               if (previousRpcEnv === undefined) {
                 delete (globalThis as Record<string, unknown>).__rpcEnv;

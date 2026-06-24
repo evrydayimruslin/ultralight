@@ -229,13 +229,13 @@ export function createApp() {
         try {
           const r2 = createR2Service();
           const dmgData = await r2.fetchFile(
-            "desktop/Ultralight_0.1.0_x64.dmg",
+            "desktop/Galactic_0.1.0_x64.dmg",
           );
           return new Response(toResponseBody(dmgData), {
             headers: {
               "Content-Type": "application/x-apple-diskimage",
               "Content-Disposition":
-                'attachment; filename="Ultralight_0.1.0_x64.dmg"',
+                'attachment; filename="Galactic_0.1.0_x64.dmg"',
               "Content-Length": String(dmgData.byteLength),
             },
           });
@@ -266,15 +266,15 @@ export function createApp() {
           }
 
           const r2 = createR2Service();
-          await r2.uploadFile("desktop/Ultralight_0.1.0_x64.dmg", {
-            name: "Ultralight_0.1.0_x64.dmg",
+          await r2.uploadFile("desktop/Galactic_0.1.0_x64.dmg", {
+            name: "Galactic_0.1.0_x64.dmg",
             content: body,
             contentType: "application/x-apple-diskimage",
           });
           return json({
             success: true,
             size: body.length,
-            key: "desktop/Ultralight_0.1.0_x64.dmg",
+            key: "desktop/Galactic_0.1.0_x64.dmg",
           });
         } catch (e) {
           return error(e instanceof Error ? e.message : "Upload failed", 500);
@@ -578,7 +578,7 @@ export function createApp() {
       // Internal TCP protocol endpoints — called by Dynamic Worker sandbox via fetch()
       // Internal event emit (Phase 4.5 pub/sub). Auth is DOUBLE-gated:
       // X-Worker-Secret proves an internal (sandbox/SELF) caller, and the
-      // signed X-Ultralight-Caller token proves the emitter app id + user
+      // signed X-Galactic-Caller token proves the emitter app id + user
       // unforgeably. App code cannot forge either, so the emitter/user can't
       // be spoofed by sandbox JS.
       if (path === "/api/events/emit" && method === "POST") {
@@ -593,7 +593,7 @@ export function createApp() {
           const { verifyCallerContextToken } = await import(
             "../services/agent-caller-context.ts"
           );
-          const callerHeader = request.headers.get("X-Ultralight-Caller");
+          const callerHeader = request.headers.get("X-Galactic-Caller");
           const verified = callerHeader
             ? await verifyCallerContextToken(callerHeader)
             : { claims: null };
@@ -1933,7 +1933,7 @@ button{cursor:pointer;border:none;border-radius:8px;font-size:13px;font-weight:6
 <div id="auth-screen" class="auth-screen">
 <div style="font-size:48px">&#9881;</div>
 <h2>${appName}</h2>
-<p>Enter your Ultralight API token to access this app's dashboard. Your token stays in the browser only.</p>
+<p>Enter your Galactic API token to access this app's dashboard. Your token stays in the browser only.</p>
 <input type="password" id="token-input" class="token-input" placeholder="ul_..." />
 <button class="btn-primary" onclick="submitToken()">Connect</button>
 </div>
@@ -2645,7 +2645,7 @@ function getPublicAppPageHTML(
     ? rawDescription.slice(0, 157) + "..."
     : rawDescription;
   const metaDescEscaped = escapeHtml(
-    metaDesc || `${app.name || app.slug} on Ultralight — MCP app store`,
+    metaDesc || `${app.name || app.slug} on Galactic — MCP app store`,
   );
 
   return `<!DOCTYPE html>
@@ -2653,13 +2653,13 @@ function getPublicAppPageHTML(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${appName} — Ultralight</title>
+<title>${appName} — Galactic</title>
 <meta name="description" content="${metaDescEscaped}">
 ${isEmbed ? '<meta name="robots" content="noindex">' : ""}
 
 <!-- OpenGraph / social share previews -->
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="Ultralight">
+<meta property="og:site_name" content="Galactic">
 <meta property="og:title" content="${appName}">
 <meta property="og:description" content="${metaDescEscaped}">
 <meta property="og:url" content="${escapeHtml(shareUrl)}">
@@ -3569,7 +3569,7 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ""}
 
   <!-- Footer with share -->
   <div class="footer-bar">
-    <span>Powered by <a href="${escapeHtml(baseUrl)}">Ultralight</a></span>
+    <span>Powered by <a href="${escapeHtml(baseUrl)}">Galactic</a></span>
     <button class="btn btn-ghost" onclick="copyShareLink()" id="shareLinkBtn">
       <span>Copy share link</span>
     </button>
@@ -4074,7 +4074,7 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ""}
         '<div class="cta-row">' +
           '<button class="btn btn-primary btn-lg" onclick="window.__ul.installAnon()">Install this app</button>' +
         '</div>' +
-        '<a class="cta-secondary-link" href="' + escAttr(DOWNLOAD_URL) + '">Download Ultralight Desktop &rarr;</a>';
+        '<a class="cta-secondary-link" href="' + escAttr(DOWNLOAD_URL) + '">Download Galactic Desktop &rarr;</a>';
     } else if (state === 'not-in-library') {
       html =
         '<div class="cta-row">' +
@@ -4098,7 +4098,7 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ""}
         // Web + in library: prompt to open in desktop + uninstall fallback.
         html =
           '<div class="cta-row">' +
-            '<button class="btn btn-primary btn-lg" onclick="window.__ul.openInDesktop()">Open in Ultralight</button>' +
+            '<button class="btn btn-primary btn-lg" onclick="window.__ul.openInDesktop()">Open in Galactic</button>' +
             (status.hasUserSettings ? '<button class="btn btn-secondary" onclick="window.__ul.openSettings()">Settings</button>' : '') +
             '<button class="btn btn-secondary" onclick="window.__ul.uninstallApp()">Uninstall</button>' +
           '</div>';
@@ -4246,7 +4246,7 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ""}
     showToast('Did not open?', {
       sticky: true,
       action: function() { location.href = DOWNLOAD_URL; },
-      actionLabel: 'Get Ultralight',
+      actionLabel: 'Get Galactic',
     });
   }
 
@@ -4405,7 +4405,7 @@ async function renderTermsHTML(): Promise<string> {
     {
       title: "Platform Fees And Waivers",
       body: [
-        `Ultralight's standard internal platform fee on eligible creator revenue is ${platformFeePercent}.`,
+        `Galactic's standard internal platform fee on eligible creator revenue is ${platformFeePercent}.`,
         copy.feeWaivers,
         copy.feeWaiverEndUserImpact,
         copy.feeWaiverCredit,
@@ -4426,7 +4426,7 @@ async function renderTermsHTML(): Promise<string> {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Terms - Ultralight</title>
+<title>Terms - Galactic</title>
 <style>
   * { box-sizing: border-box; }
   body {
@@ -4454,10 +4454,10 @@ async function renderTermsHTML(): Promise<string> {
 </head>
 <body>
 <main>
-  <div class="eyebrow">Ultralight Terms</div>
+  <div class="eyebrow">Galactic Terms</div>
   <h1>Credits Economy Terms</h1>
   <p class="updated">Last updated May 18, 2026</p>
-  <p>These terms summarize the payment, creator earnings, payout, and platform fee rules used by Ultralight. Additional product or marketplace terms may apply to specific workflows.</p>
+  <p>These terms summarize the payment, creator earnings, payout, and platform fee rules used by Galactic. Additional product or marketplace terms may apply to specific workflows.</p>
   ${
     sections.map((section) => `
     <section>
@@ -4726,7 +4726,7 @@ function getPublicUserProfileHTML(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${displayName} — Ultralight</title>
+<title>${displayName} — Galactic</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -4913,7 +4913,7 @@ function getPublicUserProfileHTML(
   }
 
   <div class="footer-bar">
-    Powered by <a href="/">Ultralight</a>
+    Powered by <a href="/">Galactic</a>
   </div>
 </div>
 </body>
@@ -5606,7 +5606,7 @@ function renderMarkdownPage(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${escapeHtml(title)} — Ultralight</title>
+<title>${escapeHtml(title)} — Galactic</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -5708,7 +5708,7 @@ function renderMarkdownPage(
 <article>
 ${metaHeader}
 ${html}
-<div class="footer">Published with <a href="https://api.ultralightagent.com">Ultralight</a></div>
+<div class="footer">Published with <a href="https://api.ultralightagent.com">Galactic</a></div>
 </article>
 </body>
 </html>`;
@@ -5727,7 +5727,7 @@ function escapeHtml(str: string): string {
 
 const DESKTOP_VERSION = "0.1.0";
 const DESKTOP_DMG_URL =
-  "https://github.com/evrydayimruslin/ultralight/releases/download/v0.1.0/Ultralight_0.1.0_x64.dmg";
+  "https://github.com/evrydayimruslin/ultralight/releases/download/v0.1.0/Galactic_0.1.0_x64.dmg";
 
 function getDownloadPageHTML(): string {
   return `<!DOCTYPE html>
@@ -5735,7 +5735,7 @@ function getDownloadPageHTML(): string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Download Ultralight</title>
+  <title>Download Galactic</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
@@ -5855,7 +5855,7 @@ function getDownloadPageHTML(): string {
 <body>
   <a href="/" class="back-link">&larr; Back</a>
   <div class="container">
-    <div class="logo">Ultralight</div>
+    <div class="logo">Galactic</div>
     <p class="tagline">
       Desktop agent manager. Connect MCP servers, run AI agents,<br>
       and manage approval workflows — all from your desktop.
@@ -5879,7 +5879,7 @@ function getDownloadPageHTML(): string {
         <li>Activity inbox with widget-based approval workflows</li>
         <li>Project-based agent organization with kanban boards</li>
         <li>Runs with BYOK or credits-billed platform inference</li>
-        <li>Full access to the Ultralight app ecosystem</li>
+        <li>Full access to the Galactic app ecosystem</li>
       </ul>
     </div>
 

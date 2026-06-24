@@ -1,6 +1,6 @@
-// Home Inventory — Ultralight MCP App
+// Home Inventory — Galactic MCP App
 // Catalog belongings for insurance, moving, or organization.
-// Storage: Ultralight D1 (items)
+// Storage: Galactic D1 (items)
 
 const ultralight = (globalThis as any).ultralight;
 

@@ -10,7 +10,7 @@ import type { GpuConfig, GpuExecutionResult, GpuType } from "./types.ts";
 
 /** Parameters for building a GPU container from developer code. */
 export interface BuildContainerParams {
-  /** Ultralight app ID. */
+  /** Galactic app ID. */
   appId: string;
   /** App version string (e.g. "1.0.0"). */
   version: string;

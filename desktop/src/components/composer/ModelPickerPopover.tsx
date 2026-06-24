@@ -4,7 +4,7 @@
 // since the BE doesn't distinguish flash/heavy at the model level.
 //
 // Data: ChatInferenceOptionsResponse from /chat/inference-options.
-// The "light" option is rendered as a virtual "Ultralight" provider on top
+// The "light" option is rendered as a virtual "Galactic" provider on top
 // of the real BYOK providers, matching the mockup's mental model.
 
 import { useEffect, useMemo, useState } from 'react';
@@ -69,7 +69,7 @@ function buildProviderRows(
   const light: ChatInferenceLightOption = options.light;
   rows.push({
     id: '__light__',
-    name: 'Ultralight',
+    name: 'Galactic',
     description: 'Light-denominated · pay per call',
     status: { kind: 'light', balanceLight: light.balanceLight, usable: light.usable },
     models: filterModels(light.models),
@@ -90,7 +90,7 @@ function findInitialProviderId(rows: ProviderRow[], selectedModel: string): stri
   for (const r of rows) {
     if (r.models.some((m) => m.id === selectedModel)) return r.id;
   }
-  // Fallback to Ultralight (light option)
+  // Fallback to Galactic (light option)
   return rows[0]?.id ?? '__light__';
 }
 

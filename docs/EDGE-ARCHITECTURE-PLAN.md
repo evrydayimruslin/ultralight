@@ -2,7 +2,7 @@
 
 ## Overview
 
-Migrate Ultralight from DigitalOcean + Supabase to a fully colocated Cloudflare edge architecture. Four pillars:
+Migrate Galactic from DigitalOcean + Supabase to a fully colocated Cloudflare edge architecture. Four pillars:
 
 1. **KV Function Index** — per-user function index in Workers KV, cached locally on desktop
 2. **CF Workers Migration** — move API from DigitalOcean to Cloudflare Workers

@@ -1649,7 +1649,7 @@ async function handleGetAppInstructions(
     const sections: string[] = [];
 
     // Header
-    sections.push(`# ${name} — Ultralight MCP App`);
+    sections.push(`# ${name} — Galactic MCP App`);
     if (desc) sections.push(desc);
 
     // Functions
@@ -1661,10 +1661,10 @@ async function handleGetAppInstructions(
       sections.push(`## Contract Status\n${contractResolution.message}`);
     }
 
-    // Connection: Platform gateway (for agents already connected to Ultralight)
+    // Connection: Platform gateway (for agents already connected to Galactic)
     sections.push(
       `## Connect & Use\n\n` +
-        `**Option A — If already connected to Ultralight:**\n` +
+        `**Option A — If already connected to Galactic:**\n` +
         `gx.call({ app_id: "${appId}", function_name: "${firstFn}", args: {} })\n\n` +
         `**Option B — Direct MCP (any HTTP agent):**\n` +
         `POST ${baseUrl}/mcp/${appId}\n` +
@@ -1678,7 +1678,7 @@ async function handleGetAppInstructions(
       sections.push(
         `## Direct HTTP Routes\n\n` +
           httpRoutes.map(formatHttpRouteCatalogLine).join("\n") +
-          `\n\nPublic routes do not require an Ultralight token. Authenticated routes require \`Authorization: Bearer {TOKEN}\`.`,
+          `\n\nPublic routes do not require an Galactic token. Authenticated routes require \`Authorization: Bearer {TOKEN}\`.`,
       );
     }
 

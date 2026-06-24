@@ -657,7 +657,7 @@ export class EmbeddingService {
         "Authorization": `Bearer ${this.apiKey}`,
         "Content-Type": "application/json",
         "HTTP-Referer": "https://api.ultralightagent.com",
-        "X-Title": "Ultralight",
+        "X-Title": "Galactic",
       },
       body: JSON.stringify({
         model: this.model,
@@ -697,7 +697,7 @@ export class EmbeddingService {
         "Authorization": `Bearer ${this.apiKey}`,
         "Content-Type": "application/json",
         "HTTP-Referer": "https://api.ultralightagent.com",
-        "X-Title": "Ultralight",
+        "X-Title": "Galactic",
       },
       body: JSON.stringify({
         model: this.model,

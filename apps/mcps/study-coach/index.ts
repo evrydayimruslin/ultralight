@@ -1,6 +1,6 @@
-// Private Tutor — Ultralight MCP App
+// Private Tutor — Galactic MCP App
 // Your personal AI tutor with quizzes, custom lessons, and progress tracking.
-// Storage: Ultralight D1 | Permissions: ai:call
+// Storage: Galactic D1 | Permissions: ai:call
 
 const ultralight = (globalThis as typeof globalThis & { ultralight: any }).ultralight;
 const AI_MODEL = 'meta-llama/llama-4-scout';

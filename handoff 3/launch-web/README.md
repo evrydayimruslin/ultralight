@@ -1,7 +1,7 @@
 # Launch Web — Implementation Handoff
 
 This package hands off the **Launch Web** surface — the public, agent‑facing web
-product for Ultralight’s MCP‑tool marketplace — to a coding agent (Claude Code)
+product for Galactic’s MCP‑tool marketplace — to a coding agent (Claude Code)
 running in `evrydayimruslin/ultralight`, with one human reviewer.
 
 ## What’s in here

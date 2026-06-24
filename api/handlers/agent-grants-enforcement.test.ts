@@ -1,6 +1,6 @@
 // Integration coverage for the cross-Agent grant chokepoint in handleMcp /
 // handleToolsCall (Phase 4a). Drives the real handler with a signed
-// X-Ultralight-Caller header and asserts the deny / fail-closed branches that
+// X-Galactic-Caller header and asserts the deny / fail-closed branches that
 // return before sandbox execution — the security-critical surface.
 
 import { assertEquals } from "https://deno.land/std@0.210.0/assert/assert_equals.ts";
@@ -111,7 +111,7 @@ async function callTarget(
     "Authorization": `Bearer ${USER_TOKEN}`,
     "Content-Type": "application/json",
   };
-  if (callerHeader) headers["X-Ultralight-Caller"] = callerHeader;
+  if (callerHeader) headers["X-Galactic-Caller"] = callerHeader;
   const response = await handleMcp(
     new Request(`https://ultralight.test/mcp/${TARGET_ID}`, {
       method: "POST",

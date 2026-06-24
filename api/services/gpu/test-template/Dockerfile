@@ -1,4 +1,4 @@
-# Ultralight GPU Base Template — Phase 2
+# Galactic GPU Base Template — Phase 2
 # Shared base image for all GPU apps. Developer code is downloaded
 # at container startup from R2 via the platform code proxy.
 #

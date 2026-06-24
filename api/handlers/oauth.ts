@@ -2,7 +2,7 @@
 // Implements RFC 9728 (Protected Resource Metadata), OAuth Authorization Server Metadata,
 // Dynamic Client Registration (RFC 7591), Authorization Code + PKCE flow.
 //
-// This wraps Ultralight's existing Supabase Google OAuth + ul_ token system
+// This wraps Galactic's existing Supabase Google OAuth + ul_ token system
 // into the standard OAuth 2.1 shape that MCP clients (Claude Desktop, etc.) expect.
 
 import { json, error } from './response.ts';
@@ -847,7 +847,7 @@ function getConsentScreenHTML(
     <div class="header">
       ${logoHtml}
       <h1>${escapeHtml(appName)}</h1>
-      <p class="subtitle">wants to access your Ultralight account</p>
+      <p class="subtitle">wants to access your Galactic account</p>
     </div>
     <div class="scopes">
       <h2>This will allow the application to:</h2>
@@ -1234,7 +1234,7 @@ async function handleTokenExchange(request: Request): Promise<Response> {
     ? codeEntry.scope.split(' ').filter(Boolean)
     : ['*'];
 
-  // Mint an Ultralight API token for this user
+  // Mint an Galactic API token for this user
   try {
     const tokenName = `oauth-${codeEntry.client_id.slice(0, 8)}-${Date.now()}`;
     const result = await createToken(codeEntry.user_id, tokenName, {

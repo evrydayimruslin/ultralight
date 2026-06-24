@@ -198,7 +198,7 @@ export function calculatePlatformInferenceCost(
 ): PlatformInferenceCostBreakdown {
   const model = resolvePlatformInferenceModel(modelId);
   if (!model) {
-    throw new Error(`Unsupported Ultralight platform model: ${modelId}`);
+    throw new Error(`Unsupported Galactic platform model: ${modelId}`);
   }
 
   const pricing = getDeepSeekDirectPricingSnapshot(

@@ -1,10 +1,10 @@
-// Resort Manager — Ultralight MCP App
+// Resort Manager — Galactic MCP App
 //
 // Complete ski/golf resort management system:
 // rooms, ski rentals/lessons, golf tee times, restaurant,
 // store, guidelines, email agent, and admin approval queue.
 //
-// Storage: Ultralight D1 (14 tables across 3 migrations)
+// Storage: Galactic D1 (14 tables across 3 migrations)
 // AI: ultralight.ai() for email classification + reply drafting
 // Network: Resend API for outbound email
 // Permissions: ai:call, net:fetch

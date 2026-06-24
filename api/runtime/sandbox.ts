@@ -1,4 +1,4 @@
-// Ultralight Deno Runtime
+// Galactic Deno Runtime
 // Sandboxed execution with pre-bundled stdlib
 
 import type {
@@ -65,7 +65,7 @@ export interface RuntimeConfig {
   // only as incoming request context and is no longer read by either sandbox.
   authToken?: string;
   appCallDependencies?: RuntimeAppCallDependency[];
-  // Signed caller-context token (X-Ultralight-Caller) minted server-side so a
+  // Signed caller-context token (X-Galactic-Caller) minted server-side so a
   // cross-Agent call can prove WHO is calling without trusting sandbox code.
   // Asserts only the caller's OWN app id, so an app reading it cannot forge a
   // different caller.
@@ -1560,7 +1560,7 @@ function createSupabaseClient(
     // Auth helpers (limited - mainly for reading user from JWT)
     auth: {
       getUser: async () => {
-        // In Ultralight context, user is available via ultralight.user
+        // In Galactic context, user is available via ultralight.user
         // This is a placeholder for compatibility
         return { data: { user: null }, error: null };
       },
@@ -1871,7 +1871,7 @@ export async function executeInSandbox(
       if (/^(insert|replace)\s/i.test(normalized)) {
         if (!normalized.includes("user_id")) {
           throw new Error(
-            `[Ultralight] db.${context}(): INSERT statements must include user_id. ` +
+            `[Galactic] db.${context}(): INSERT statements must include user_id. ` +
               `Add user_id to your column list and pass ultralight.user.id as the value.`,
           );
         }
@@ -1882,7 +1882,7 @@ export async function executeInSandbox(
       if (/^(select|update|delete)\s/i.test(normalized)) {
         if (!normalized.includes("user_id")) {
           throw new Error(
-            `[Ultralight] db.${context}(): Queries must filter by user_id. ` +
+            `[Galactic] db.${context}(): Queries must filter by user_id. ` +
               `Add WHERE user_id = ? to your query and pass ultralight.user.id.`,
           );
         }

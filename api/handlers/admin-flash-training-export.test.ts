@@ -155,7 +155,7 @@ Deno.test("admin flash training export: returns provider-compatible JSONL", asyn
       response.headers.get("Content-Disposition") || "",
       "flash-training-openai_messages.jsonl",
     );
-    assertEquals(response.headers.get("X-Ultralight-Flash-Examples"), "1");
+    assertEquals(response.headers.get("X-Galactic-Flash-Examples"), "1");
 
     const text = await response.text();
     const rows = text.trim().split("\n").map((line) => JSON.parse(line));

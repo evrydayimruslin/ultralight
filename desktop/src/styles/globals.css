@@ -44,7 +44,7 @@
 }
 
 @layer components {
-  /* Ultralight button base */
+  /* Galactic button base */
   .btn {
     @apply inline-flex items-center justify-center font-medium transition-all;
     height: 36px;

@@ -96,7 +96,7 @@ alter table energy_logs enable row level security;
 alter table reminders enable row level security;
 alter table goals enable row level security;
 
--- Service role full access (Ultralight uses service key)
+-- Service role full access (Galactic uses service key)
 create policy "Service role full access" on weight_logs for all using (true);
 create policy "Service role full access" on sleep_logs for all using (true);
 create policy "Service role full access" on energy_logs for all using (true);

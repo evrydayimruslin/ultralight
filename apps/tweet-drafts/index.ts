@@ -260,7 +260,7 @@ export async function ui(request: {
     '<div id="auth-screen" class="auth-screen">' +
     '<div style="font-size:48px">&#9998;</div>' +
     '<h2>Tweet Drafts</h2>' +
-    '<p>Enter your Ultralight API token to access your drafts. The token stays in your browser only.</p>' +
+    '<p>Enter your Galactic API token to access your drafts. The token stays in your browser only.</p>' +
     '<input type="password" id="token-input" class="token-input" placeholder="ul_..." />' +
     '<button class="btn-primary" onclick="submitToken()">Connect</button>' +
     '<p style="font-size:11px;color:var(--text2)">Tip: add ?token=ul_... to the URL to skip this step</p>' +

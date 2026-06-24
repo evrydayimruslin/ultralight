@@ -58,17 +58,17 @@ export const SYSTEM_AGENTS: SystemAgentConfig[] = [
     role: 'builder',
     icon: 'Wrench',
     accent: '#3b82f6', // ul-info — matches mockup's "blue" for tool-builder
-    persona: 'Tool Maker, an expert MCP developer who builds, tests, and deploys Ultralight apps, widgets, and Command cards',
+    persona: 'Tool Maker, an expert MCP developer who builds, tests, and deploys Galactic apps, widgets, and Command cards',
     skillsPath: 'system-agents/tool_builder/skills.md',
     description: 'Build, test, and deploy MCP tools, widgets, and Command cards',
     welcome: {
-      greeting: 'I help you build, test, and deploy MCP tools on Ultralight, including widgets and Command cards. Describe what you want to create and I\'ll write the code, set up the database, and get it running.',
+      greeting: 'I help you build, test, and deploy MCP tools on Galactic, including widgets and Command cards. Describe what you want to create and I\'ll write the code, set up the database, and get it running.',
       starters: [
         { label: 'Build a new tool from scratch', prompt: 'Help me build a new MCP tool from scratch' },
         { label: 'Build a Command card', prompt: 'Help me add a widget and Command card to an MCP app' },
         { label: 'Debug my app\'s code', prompt: 'Help me debug my app\'s function code' },
         { label: 'Deploy an app to production', prompt: 'Walk me through deploying my app to production' },
-        { label: 'SDK quick reference', prompt: 'Show me the Ultralight SDK reference for database, KV, and HTTP' },
+        { label: 'SDK quick reference', prompt: 'Show me the Galactic SDK reference for database, KV, and HTTP' },
       ],
     },
   },
@@ -102,11 +102,11 @@ export const SYSTEM_AGENTS: SystemAgentConfig[] = [
     skillsPath: 'system-agents/platform_manager/skills.md',
     description: 'Settings, API keys, billing, Command dashboards, and platform guidance',
     welcome: {
-      greeting: 'I\'m here to help you get the most out of Ultralight. Ask me about settings, billing, API keys, Command dashboards, or how anything on the platform works.',
+      greeting: 'I\'m here to help you get the most out of Galactic. Ask me about settings, billing, API keys, Command dashboards, or how anything on the platform works.',
       starters: [
         { label: 'How does Light work?', prompt: 'How does the Light currency system work and how do I earn or spend it?' },
         { label: 'Set up Command', prompt: 'Help me set up a Command dashboard for my work and personal workflows' },
-        { label: 'Set up my first app', prompt: 'Walk me through setting up and using my first app on Ultralight' },
+        { label: 'Set up my first app', prompt: 'Walk me through setting up and using my first app on Galactic' },
         { label: 'Check my balance & usage', prompt: 'Show me my current Light balance and recent usage breakdown' },
         { label: 'Manage my API key', prompt: 'Help me manage my API key and connected services' },
       ],

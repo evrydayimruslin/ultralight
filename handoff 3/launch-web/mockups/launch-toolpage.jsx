@@ -394,7 +394,7 @@ function WidgetSandboxFrame({ tool, widget, state = 'ready' }) {
       </div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, marginTop: 12 }}>
         <span style={{ color: TP.mute, display: 'inline-flex' }}><T_Shield size={13}/></span>
-        <span style={{ fontSize: 12, color: TP.mute }}>Calls relay through Ultralight — the widget never sees your API key.</span>
+        <span style={{ fontSize: 12, color: TP.mute }}>Calls relay through Galactic — the widget never sees your API key.</span>
       </div>
     </div>
   );

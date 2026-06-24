@@ -679,8 +679,8 @@ async function invokeRoutineHandler(
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${actor.token}`,
-        "X-Ultralight-Routine-Id": routine.id,
-        "X-Ultralight-Routine-Run-Id": run.id,
+        "X-Galactic-Routine-Id": routine.id,
+        "X-Galactic-Routine-Run-Id": run.id,
       },
       body: JSON.stringify({
         jsonrpc: "2.0",

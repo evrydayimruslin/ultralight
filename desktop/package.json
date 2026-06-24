@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Ultralight Chat Agent Desktop",
+  "description": "Galactic Chat Agent Desktop",
   "engines": {
     "node": ">=20.0.0"
   },

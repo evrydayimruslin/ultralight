@@ -71,7 +71,7 @@ export function buildLaunchWalletPaymentIntentParams(
     amount: String(input.quote.totalAmountCents),
     currency: "usd",
     customer: input.stripeCustomerId,
-    description: `Ultralight credits funding (${
+    description: `Galactic credits funding (${
       formatLight(input.quote.amountLight)
     })`,
     "metadata[user_id]": input.userId,

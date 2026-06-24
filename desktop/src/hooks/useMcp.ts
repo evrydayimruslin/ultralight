@@ -1,5 +1,5 @@
 // MCP tool execution helper hook.
-// Bridges the useChat tool-use loop to the Ultralight MCP platform.
+// Bridges the useChat tool-use loop to the Galactic MCP platform.
 
 import { useCallback, useMemo } from 'react';
 import { executeMcpTool, type ChatTool } from '../lib/api';
@@ -13,7 +13,7 @@ const TRADITIONAL_TOOLS: ChatTool[] = [
     function: {
       name: 'ul_discover',
       description:
-        'Find and explore apps on the Ultralight platform. ' +
+        'Find and explore apps on the Galactic platform. ' +
         'scope="desk": last 5 used apps (check first). ' +
         'scope="inspect": deep introspection of one app (requires app_id). ' +
         'scope="library": your owned+saved apps. ' +
@@ -58,7 +58,7 @@ const TRADITIONAL_TOOLS: ChatTool[] = [
     function: {
       name: 'ul_call',
       description:
-        "Call any app's function through the Ultralight platform. " +
+        "Call any app's function through the Galactic platform. " +
         'No separate per-app connection needed. Uses your auth context.',
       parameters: {
         type: 'object',

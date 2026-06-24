@@ -142,7 +142,7 @@ async function readPlatformApiKey(
   if (!apiKey) {
     throw new InferenceRouteError(
       "platform_key_unavailable",
-      `${envName} is not configured for Ultralight platform inference`,
+      `${envName} is not configured for Galactic platform inference`,
       503,
     );
   }
@@ -206,7 +206,7 @@ async function buildLightRoute(
   if (selectedProvider && selectedProvider !== "openrouter") {
     throw new InferenceRouteError(
       "invalid_route_selection",
-      "Light-debit inference provider selection must be omitted or openrouter; model IDs choose the Ultralight upstream",
+      "Light-debit inference provider selection must be omitted or openrouter; model IDs choose the Galactic upstream",
       400,
     );
   }

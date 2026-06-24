@@ -182,7 +182,7 @@ export async function runMigrations(
 // ============================================
 
 /**
- * Validate migration SQL for Ultralight conventions.
+ * Validate migration SQL for Galactic conventions.
  * Called at deploy time (upload handler) before storing migrations.
  *
  * Rules:

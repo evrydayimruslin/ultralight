@@ -127,7 +127,7 @@ export function formatHttpRouteCatalogLine(
 ): string {
   const methodLabel = route.allows_any_method ? "ANY" : route.methods.join("|");
   const target = route.url || route.path;
-  const authLabel = route.public ? "public" : "requires Ultralight auth";
+  const authLabel = route.public ? "public" : "requires Galactic auth";
   const billingLabel = route.billing === "owner"
     ? "owner-billed"
     : "caller-billed";

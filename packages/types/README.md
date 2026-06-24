@@ -1,6 +1,6 @@
 # @ultralightpro/types
 
-TypeScript type definitions for [Ultralight](https://ultralight.dev) apps.
+TypeScript type definitions for [Galactic](https://ultralight.dev) apps.
 
 `index.d.ts` and the `generated/` declarations are generated artifacts. Update
 the shared contract sources under `/shared/contracts` and then run
@@ -96,5 +96,5 @@ export default App;
 
 ## Links
 
-- [Ultralight Documentation](https://ultralight.dev/docs)
+- [Galactic Documentation](https://ultralight.dev/docs)
 - [GitHub](https://github.com/evrydayimruslin/ultralight)

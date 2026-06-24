@@ -21,7 +21,7 @@ STRIPE_WEBHOOK_SECRET=
 # BYOK provider keys are saved per user and encrypted in Supabase.
 OPENROUTER_API_KEY=
 
-# DeepSeek platform key for Ultralight Light-debit DeepSeek model routing.
+# DeepSeek platform key for Galactic Light-debit DeepSeek model routing.
 DEEPSEEK_API_KEY=
 
 # Encryption key for user BYOK provider API keys.
@@ -64,7 +64,7 @@ SUPABASE_MGMT_OAUTH_CLIENT_SECRET=
 # Inter-service auth
 TIER_CHANGE_SECRET=
 GPU_SECRET=
-# Signs cross-Agent caller-context headers (X-Ultralight-Caller). Required for
+# Signs cross-Agent caller-context headers (X-Galactic-Caller). Required for
 # agent-to-agent grant enforcement.
 AGENT_CALLER_SECRET=
 # Signs routine/sandbox actor tokens (internal execution identities).

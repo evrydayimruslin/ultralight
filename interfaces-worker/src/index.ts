@@ -1,4 +1,4 @@
-// Ultralight Interfaces sandbox worker entry. All behavior lives in serve.ts
+// Galactic Interfaces sandbox worker entry. All behavior lives in serve.ts
 // (structurally typed, Deno-tested); keep this shim logic-free.
 
 import {

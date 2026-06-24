@@ -2,7 +2,7 @@
   "name": "AI Fan-out",
   "version": "1.0.0",
   "type": "mcp",
-  "description": "Reference Agent: fan out one prompt across several models in parallel with Promise.all, then synthesize a single best answer ('best-of-N' / fusion). Shows the supported way to build fusion on Ultralight — no special primitive required.",
+  "description": "Reference Agent: fan out one prompt across several models in parallel with Promise.all, then synthesize a single best answer ('best-of-N' / fusion). Shows the supported way to build fusion on Galactic — no special primitive required.",
   "entry": { "functions": "index.ts" },
   "permissions": ["ai:call"],
   "functions": {

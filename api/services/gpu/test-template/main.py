@@ -1,5 +1,5 @@
 """
-Ultralight GPU Test Functions — Phase 1 smoke test.
+Galactic GPU Test Functions — Phase 1 smoke test.
 
 These functions exercise the harness contract without needing a real GPU.
 Used to validate the full pipeline: upload → build → deploy → call → billing.
@@ -11,7 +11,7 @@ import math
 
 def hello(name="World"):
     """Simple echo test — verifies basic function dispatch."""
-    return f"Hello {name} from Ultralight GPU!"
+    return f"Hello {name} from Galactic GPU!"
 
 
 def add(a=0, b=0):

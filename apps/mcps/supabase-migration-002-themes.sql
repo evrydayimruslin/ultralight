@@ -46,7 +46,7 @@ create index idx_themes_slug on themes (slug);
 -- ============================================
 -- CONVICTIONS — The Index (slow-moving theses)
 -- ============================================
--- Core beliefs that inform what Ultralight builds.
+-- Core beliefs that inform what Galactic builds.
 -- These are the 13D-style entries that live in the amphitheater.
 
 create table if not exists convictions (

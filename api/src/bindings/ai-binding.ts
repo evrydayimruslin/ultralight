@@ -162,7 +162,7 @@ export class AIBinding extends WorkerEntrypoint<unknown, AIBindingProps> {
           'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
           'HTTP-Referer': 'https://api.ultralightagent.com',
-          'X-Title': 'Ultralight',
+          'X-Title': 'Galactic',
         },
         body: JSON.stringify({
           // Spread defaults FIRST so the clamped max_tokens (and explicit

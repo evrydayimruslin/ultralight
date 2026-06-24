@@ -106,6 +106,21 @@ export function App(): ReactElement {
     [location.pathname],
   );
   const live = useLaunchRouteLiveData(location, route);
+
+  // Per-page tab title: "<Page> | Galactic"; agent pages use the agent's name
+  // ("Story Builder | Galactic"); the home page is just "Galactic".
+  const agentDisplayName = route.definition.key === "agent"
+    ? (live.data.agent?.agent?.name ?? live.data.agent?.tool?.name ?? null)
+    : null;
+  useEffect(() => {
+    const key = route.definition.key;
+    document.title = key === "home"
+      ? "Galactic"
+      : agentDisplayName
+      ? `${agentDisplayName} | Galactic`
+      : `${routeTitles[key]} | Galactic`;
+  }, [route.definition.key, agentDisplayName]);
+
   const providerCodeMisrouted = route.definition.key !== "authCallback" &&
     new URLSearchParams(location.search).has("code");
 

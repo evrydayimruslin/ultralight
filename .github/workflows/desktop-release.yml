@@ -221,7 +221,7 @@ jobs:
         with:
           projectPath: desktop
           tagName: ${{ github.ref_name }}
-          releaseName: Ultralight ${{ github.ref_name }}
+          releaseName: Galactic ${{ github.ref_name }}
           releaseCommitish: ${{ github.sha }}
           releaseDraft: false
           prerelease: false

@@ -1,6 +1,6 @@
 # ultralightpro-sdk
 
-TypeScript SDK for the Ultralight platform.
+TypeScript SDK for the Galactic platform.
 
 ## Installation
 
@@ -11,15 +11,15 @@ npm install ultralightpro-sdk
 Or with Deno:
 
 ```typescript
-import { Ultralight } from 'https://ultralight.dev/sdk/mod.ts';
+import { Galactic } from 'https://ultralight.dev/sdk/mod.ts';
 ```
 
 ## Quick Start
 
 ```typescript
-import { Ultralight } from 'ultralightpro-sdk';
+import { Galactic } from 'ultralightpro-sdk';
 
-const ul = new Ultralight({
+const ul = new Galactic({
   token: process.env.ULTRALIGHT_TOKEN
 });
 
@@ -47,12 +47,12 @@ console.log(result); // { city: 'NYC', temp: 72, conditions: 'Sunny' }
 
 ## API Reference
 
-### Ultralight
+### Galactic
 
 Main client class.
 
 ```typescript
-const ul = new Ultralight({
+const ul = new Galactic({
   token: 'your-token',      // Required: JWT or API key
   apiUrl: 'https://...',    // Optional: Custom API URL
 });
@@ -172,7 +172,7 @@ const output = await mcp.callTool('functionName', { arg: 'value' });
 ### Error Handling
 
 ```typescript
-import { Ultralight, UltralightError } from 'ultralightpro-sdk';
+import { Galactic, UltralightError } from 'ultralightpro-sdk';
 
 try {
   await ul.run('app-id', 'someFunction');

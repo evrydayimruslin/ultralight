@@ -1,7 +1,7 @@
 {
   "name": "ultralightpro-sdk",
   "version": "0.2.1",
-  "description": "TypeScript SDK for Ultralight - Serverless app platform with AI integration",
+  "description": "TypeScript SDK for Galactic - Serverless app platform with AI integration",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -25,7 +25,7 @@
     "ai",
     "typescript"
   ],
-  "author": "Ultralight",
+  "author": "Galactic",
   "license": "MIT",
   "homepage": "https://api.ultralightagent.com",
   "devDependencies": {

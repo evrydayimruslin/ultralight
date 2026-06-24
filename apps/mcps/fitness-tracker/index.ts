@@ -1,6 +1,6 @@
-// Fitness Tracker — Ultralight MCP App
+// Fitness Tracker — Galactic MCP App
 // Log meals, workouts, sleep, and body metrics. AI-powered calorie estimation.
-// Storage: Ultralight D1 | Permissions: ai:call
+// Storage: Galactic D1 | Permissions: ai:call
 
 const ultralight = (globalThis as any).ultralight;
 

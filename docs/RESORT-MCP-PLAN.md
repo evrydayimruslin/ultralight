@@ -4,7 +4,7 @@
 > **Author:** Claude + Russell
 > **Date:** 2026-03-20
 > **Scope:** Single MCP app (`resort-manager`) with D1 database for ski/golf resort operations
-> **Platform:** Ultralight (Cloudflare D1, Deno sandbox, MCP protocol)
+> **Platform:** Galactic (Cloudflare D1, Deno sandbox, MCP protocol)
 
 ---
 
@@ -30,7 +30,7 @@
 
 ## 1. System Overview
 
-A single Ultralight MCP that manages all operations for a ski/golf resort:
+A single Galactic MCP that manages all operations for a ski/golf resort:
 
 - **Room reservations** — 180+ rooms across buildings 4–8, four tiers
 - **Ski equipment rentals** — inventory tracking, multi-item rentals, Tohoku pass support
@@ -40,7 +40,7 @@ A single Ultralight MCP that manages all operations for a ski/golf resort:
 - **Resort store** — product inventory, transaction history
 - **Resort guidelines** — key-value reference data (policies, rates, hours, contacts)
 - **Email agent** — inbound classification, AI-drafted replies, admin approval queue
-- **Admin chatbot** — natural language interface via Ultralight Desktop
+- **Admin chatbot** — natural language interface via Galactic Desktop
 
 ### Design Principles
 
@@ -973,10 +973,10 @@ Set via `ul.set` with env var configuration, stored encrypted per-app.
 
 ### 6.6 External Trigger Options
 
-Since Ultralight has no built-in cron, the email check needs an external trigger:
+Since Galactic has no built-in cron, the email check needs an external trigger:
 
 **Option A: Cloudflare Worker Cron Trigger (Recommended)**
-- Add a cron trigger to the existing Ultralight worker (or a small dedicated worker)
+- Add a cron trigger to the existing Galactic worker (or a small dedicated worker)
 - Every 5 minutes: `POST /mcp/{appId}` with `email_process` tool call
 - Authenticated via service account token
 - Zero cost on Cloudflare free plan (up to 100K invocations/day)
@@ -1461,7 +1461,7 @@ apps/mcps/resort-manager/
     └── 003_email_log.sql           # Email tracking table
 ```
 
-**Single file architecture** — follows Ultralight convention. All functions in `index.ts`. Helper functions (internal, not exported) handle shared logic like date validation, name normalization, and SQL builders.
+**Single file architecture** — follows Galactic convention. All functions in `index.ts`. Helper functions (internal, not exported) handle shared logic like date validation, name normalization, and SQL builders.
 
 ### Helper Functions (not exported, not MCP tools)
 

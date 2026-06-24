@@ -1331,7 +1331,7 @@ function getDesktopCallbackHTML(): string {
 <body>
   <div class="container">
     <div class="checkmark">&#10003;</div>
-    <h2>Signed in to Ultralight</h2>
+    <h2>Signed in to Galactic</h2>
     <p>You can close this tab and return to the desktop app.</p>
   </div>
 </body>

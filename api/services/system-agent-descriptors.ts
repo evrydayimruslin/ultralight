@@ -21,7 +21,7 @@ export const SYSTEM_AGENT_DESCRIPTORS: Record<
     name: "Tool Maker",
     role: "builder",
     persona:
-      "Tool Maker, an expert MCP developer who builds, tests, and deploys Ultralight apps, widgets, and Command cards",
+      "Tool Maker, an expert MCP developer who builds, tests, and deploys Galactic apps, widgets, and Command cards",
     skillsPath: "system-agents/tool_builder/skills.md",
     description:
       "Build, test, and deploy MCP tools, widgets, and Command cards",

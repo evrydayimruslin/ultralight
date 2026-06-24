@@ -141,7 +141,7 @@ Deno.test("inference client: unsupported web search routes strip the internal fl
   assertEquals("web_search_options" in body, false);
 });
 
-Deno.test("inference client: Ultralight direct DeepSeek maps canonical models to upstream ids", () => {
+Deno.test("inference client: Galactic direct DeepSeek maps canonical models to upstream ids", () => {
   const route = makeRoute({
     upstreamProvider: "deepseek",
     baseUrl: "https://api.deepseek.com",
@@ -187,7 +187,7 @@ Deno.test("inference client: builds OpenAI-compatible chat requests from the rou
     const response = await fetchInferenceChatCompletion(
       route,
       { model: "deepseek/deepseek-v4-flash", messages: [] },
-      { title: "Ultralight Test", referer: "https://ultralight.test" },
+      { title: "Galactic Test", referer: "https://ultralight.test" },
     );
 
     assertEquals(response.status, 200);
@@ -195,7 +195,7 @@ Deno.test("inference client: builds OpenAI-compatible chat requests from the rou
     assertEquals(capturedHeaders.get("authorization"), "Bearer route-key");
     assertEquals(capturedHeaders.get("content-type"), "application/json");
     assertEquals(capturedHeaders.get("http-referer"), "https://ultralight.test");
-    assertEquals(capturedHeaders.get("x-title"), "Ultralight Test");
+    assertEquals(capturedHeaders.get("x-title"), "Galactic Test");
     assertEquals(capturedBody.model, "deepseek/deepseek-v4-flash");
   } finally {
     globalThis.fetch = previousFetch;

@@ -8,7 +8,7 @@ legacy-removal PR deletes older paths.
 
 ## Canonical Statement
 
-Ultralight's launch path runs the main API as a Cloudflare Worker from
+Galactic's launch path runs the main API as a Cloudflare Worker from
 [api/src/worker-entry.ts](../api/src/worker-entry.ts),
 deployed by Wrangler and GitHub Actions through
 [api/wrangler.toml](../api/wrangler.toml)

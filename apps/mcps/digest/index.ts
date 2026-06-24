@@ -6,7 +6,7 @@
 //
 // Pipeline: collect -> synthesize -> review -> compose -> approve
 //
-// Storage: Ultralight D1
+// Storage: Galactic D1
 // AI: ultralight.ai() for LLM synthesis + embeddings
 // Permissions: ai:call (synthesis + embeddings), net:fetch (external APIs)
 

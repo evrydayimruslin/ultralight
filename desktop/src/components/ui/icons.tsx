@@ -34,7 +34,7 @@
 // IconSparkles       →  Sparkles
 //
 // Custom-drawn (not in lucide):
-//   Spark (the Ultralight brand glyph)  →  ./Spark
+//   Spark (the Galactic brand glyph)  →  ./Spark
 //
 // Usage:
 //   import { IconWrench, IconStore } from '@/components/ui/icons';

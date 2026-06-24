@@ -4,7 +4,7 @@
 // publishes newsletters as web pages, sends emails via Resend,
 // posts to Discord via webhook, and manages the subscriber list.
 //
-// Storage: Ultralight D1
+// Storage: Galactic D1
 // Network: Resend API (email), Discord webhooks
 // Permissions: net:fetch (Resend API, Discord webhook)
 

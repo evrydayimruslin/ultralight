@@ -14,7 +14,7 @@ import {
   ULTRALIGHT_DEEPSEEK_V4_PRO_MODEL,
 } from "./platform-inference-models.ts";
 
-Deno.test("platform inference models: canonical Ultralight ids and legacy aliases normalize together", () => {
+Deno.test("platform inference models: canonical Galactic ids and legacy aliases normalize together", () => {
   assertEquals(
     normalizePlatformInferenceModelId("ultralight/deepseek-v4-flash"),
     ULTRALIGHT_DEEPSEEK_V4_FLASH_MODEL,

@@ -16,12 +16,12 @@ This is the active implementation roadmap for the next launch-upgrade sequence. 
 - Money movement remains database-authoritative through atomic Supabase/Postgres RPCs.
 - Durable Objects may be revisited later only as a thin per-user spend sequencer in front of the same DB RPCs, not as the financial source of truth.
 - Cloudflare Pages is the recommended launch-web hosting target. The API remains the existing Cloudflare Worker.
-- Accurate Cloudflare compute passthrough means Ultralight's configured internal Cloud unit rates, not live Cloudflare invoice reconciliation.
+- Accurate Cloudflare compute passthrough means Galactic's configured internal Cloud unit rates, not live Cloudflare invoice reconciliation.
 - Sales tax collection is deferred.
 - Public `/tools/:slug` SEO optimization is deferred. Preserve existing legacy `/app/:id` SEO while this is deferred.
 - Publisher minimum balance before publish is the first guardrail for embedding passthrough cost risk.
 - Tool embeddings should live in a platform-owned semantic index/table keyed by app/version/subject, not in developer-owned app D1 by default.
-- Platform docs skills should be refined so connected agents know when to link users to relevant Ultralight pages.
+- Platform docs skills should be refined so connected agents know when to link users to relevant Galactic pages.
 
 ## Current Foundations
 
@@ -392,7 +392,7 @@ cloud usage events, holds, receipts, and launch wallet summaries.
 - Call receipts now expose `billing_config_version` and
   `billing_config_versions`; launch wallet receipt summaries expose
   `billingConfigVersion` and `billingConfigVersions`.
-- Public billing config copy now states that Ultralight's configured internal
+- Public billing config copy now states that Galactic's configured internal
   cloud-unit and GB-month rates are authoritative.
 - Tests now prove configured-rate overrides for Worker execution, D1 reads and
   writes, R2 operations, widget pulls, and storage-at-rest billing.
@@ -578,7 +578,7 @@ Actual implementation:
 
 ## PR NS-10 - Platform Docs Skills Agent Guidance
 
-Goal: improve the platform skills docs so connected agents can use and link Ultralight surfaces naturally.
+Goal: improve the platform skills docs so connected agents can use and link Galactic surfaces naturally.
 
 Status: Implemented 2026-06-08.
 
@@ -625,7 +625,7 @@ Actual implementation:
 ### Acceptance Criteria
 
 - `initialize`, `resources/read`, and `GET /api/skills` agree on core guidance.
-- Agents are told when to post Ultralight URLs and which routes to prefer.
+- Agents are told when to post Galactic URLs and which routes to prefer.
 - Docs mention skill pulls as context retrieval, not Worker execution.
 - Docs mention `policy: true` scaffolding and the access-policy contract.
 

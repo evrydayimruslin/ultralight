@@ -69,7 +69,7 @@ function SettingsBody({ mobile, empty }) {
         <S2_Btn kind="secondary" size="sm">Sign out</S2_Btn>
       </div>
 
-      <Card title="API key" sub="One token your agents use to call Ultralight.">
+      <Card title="API key" sub="One token your agents use to call Galactic.">
         <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 0 4px' }}>
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 10, padding: '10px 13px', border: `1px solid ${S2.border}`, borderRadius: 9, background: S2.raised, minWidth: 0 }}>
             <span style={{ color: S2.mute, display: 'inline-flex', flexShrink: 0 }}><S2_Key size={15}/></span>

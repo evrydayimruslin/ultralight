@@ -40,7 +40,7 @@ export default function ConstellationHero({
   subtitle = 'Ask Command. It will bring the right help forward.',
   onPickAgent,
 }: ConstellationHeroProps) {
-  const wordmark = 'Ultralight';
+  const wordmark = 'Galactic';
   const [typed, setTyped] = useState(0);
   const [phase, setPhase] = useState(0);
 

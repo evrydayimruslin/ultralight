@@ -18,10 +18,10 @@ Active next-step PR stack: see [LAUNCH_NEXT_STEPS_PR_ROADMAP.md](LAUNCH_NEXT_STE
 - Bring-your-own-customer attribution is permanent: customers a publisher brings through their own referral link generate 0% platform fee for that publisher forever.
 - Platform-sourced customers generate the standard 15% platform fee.
 - Storage remains a soft cap system. The first 100MB is included; after that, accounts need a minimum Light balance, initially 1000 Light, so storage charges have spendable balance to draw from.
-- Sales tax will be calculated internally from Ultralight-owned jurisdiction/rate data.
-- Cloudflare compute pass-through uses Ultralight's existing internal Cloud unit rates, not live Cloudflare invoice reconciliation.
+- Sales tax will be calculated internally from Galactic-owned jurisdiction/rate data.
+- Cloudflare compute pass-through uses Galactic's existing internal Cloud unit rates, not live Cloudflare invoice reconciliation.
 - Monetized skills live at the same platform level as functions. They have semantic descriptions, permission and monetization policy, and can cost Light when an agent pulls the full skill/context into its context window. Skill pulls do not require Worker execution.
-- External-agent prompt/response/reasoning telemetry is out of scope for this roadmap unless an agent explicitly sends that data through Ultralight.
+- External-agent prompt/response/reasoning telemetry is out of scope for this roadmap unless an agent explicitly sends that data through Galactic.
 
 ## Workstream 1: Wire Launch FE To Launch API
 
@@ -147,7 +147,7 @@ Goal: move from tax-location foundation to an internal calculation and Light ded
 
 ### Model
 
-- Add Ultralight-owned jurisdiction/rate tables with effective dates.
+- Add Galactic-owned jurisdiction/rate tables with effective dates.
 - Preserve versioned billing address snapshots already present on receipts.
 - Classify taxable transaction types:
   - Light top-ups

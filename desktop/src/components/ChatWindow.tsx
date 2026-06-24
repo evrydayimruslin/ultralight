@@ -21,7 +21,7 @@ export default function ChatWindow() {
   // Update window title when we know the agent name
   useEffect(() => {
     if (agentName) {
-      getCurrentWebviewWindow().setTitle(`${agentName} — Ultralight`);
+      getCurrentWebviewWindow().setTitle(`${agentName} — Galactic`);
     }
   }, [agentName]);
 
@@ -31,7 +31,7 @@ export default function ChatWindow() {
       onNavigateToAgent={(newAgentId) => {
         // When a new chat creates an agent, update the window title.
         // The chat continues in this window — no navigation needed.
-        getCurrentWebviewWindow().setTitle('Chat — Ultralight');
+        getCurrentWebviewWindow().setTitle('Chat — Galactic');
         // If opening a different agent (e.g. from subagent link), pop a new window
         if (agentId && newAgentId !== agentId) {
           openViewWindow({ kind: 'chat', agentId: newAgentId, agentName: newAgentId.slice(0, 8) });

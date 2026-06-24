@@ -1,6 +1,6 @@
-// Recipe Box — Ultralight MCP App
+// Recipe Box — Galactic MCP App
 // Save recipes, plan meals, generate grocery lists, and get AI recipe suggestions.
-// Storage: Ultralight D1 | Permissions: ai:call
+// Storage: Galactic D1 | Permissions: ai:call
 
 const ultralight = (globalThis as any).ultralight;
 

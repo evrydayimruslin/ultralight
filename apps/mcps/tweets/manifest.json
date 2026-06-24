@@ -17,7 +17,7 @@
       "required": true
     },
     "SUPABASE_SERVICE_KEY": {
-      "description": "Supabase service role key (configured via the canonical Ultralight Supabase settings flow)",
+      "description": "Supabase service role key (configured via the canonical Galactic Supabase settings flow)",
       "required": true
     }
   },

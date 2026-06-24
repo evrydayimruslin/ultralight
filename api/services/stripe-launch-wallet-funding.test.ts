@@ -28,7 +28,7 @@ Deno.test("stripe launch wallet funding: card intent params carry gross-up metad
   assertEquals(params.get("currency"), "usd");
   assertEquals(
     params.get("description"),
-    "Ultralight credits funding (✦10.0K)",
+    "Galactic credits funding (✦10.0K)",
   );
   assertEquals(params.get("automatic_payment_methods[enabled]"), "true");
   assertEquals(
@@ -75,7 +75,7 @@ Deno.test("stripe launch wallet funding: ACH intent params use Bank direct debit
   assertEquals(params.get("amount"), "100500");
   assertEquals(
     params.get("description"),
-    "Ultralight credits funding (✦100.0K)",
+    "Galactic credits funding (✦100.0K)",
   );
   assertEquals(params.get("payment_method_types[0]"), "us_bank_account");
   assertEquals(

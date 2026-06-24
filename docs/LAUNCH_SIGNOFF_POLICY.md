@@ -2,7 +2,7 @@
 
 Last reviewed: `2026-04-21`
 
-This document defines how Ultralight moves from `Not ready` to a releasable
+This document defines how Galactic moves from `Not ready` to a releasable
 candidate.
 
 The policy is intentionally evidence-first. A launch is approved from a filled

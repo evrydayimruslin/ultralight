@@ -122,7 +122,7 @@ alter table price_alerts enable row level security;
 alter table reminders enable row level security;
 alter table goals enable row level security;
 
--- For service role access (Ultralight uses service key)
+-- For service role access (Galactic uses service key)
 -- These policies allow full access when using service_role key
 create policy "Service role full access" on weight_logs for all using (true);
 create policy "Service role full access" on sleep_logs for all using (true);

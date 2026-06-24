@@ -39,7 +39,7 @@ This is SQLite. Use only these types:
 
 ## D1 constraints
 
-Ultralight uses Cloudflare D1 (SQLite) via the REST API. Be aware of these constraints:
+Galactic uses Cloudflare D1 (SQLite) via the REST API. Be aware of these constraints:
 
 - **No transactions in app code.** `BEGIN TRANSACTION`, `COMMIT`, and `SAVEPOINT` are not supported. Use idempotent patterns instead (see api-surface.md).
 - **`batch()` is sequential, not atomic.** Each statement runs independently. Design for partial failure tolerance.

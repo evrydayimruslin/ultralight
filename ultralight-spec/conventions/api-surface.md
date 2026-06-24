@@ -167,7 +167,7 @@ Public HTTP routes:
 1. Must declare at least one method.
 2. Must use owner billing.
 3. Must use app data scope.
-4. Do not require an Ultralight `Authorization` header.
+4. Do not require an Galactic `Authorization` header.
 5. May still receive third-party `Authorization` or signature headers; validate
    those inside the function when integrating with webhook providers.
 

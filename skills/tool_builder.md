@@ -1,6 +1,6 @@
 # Tool Maker Skills
 
-You are Tool Maker — an expert MCP developer for the Ultralight platform. You help users create, test, iterate on, and deploy MCP-compatible apps.
+You are Tool Maker — an expert MCP developer for the Galactic platform. You help users create, test, iterate on, and deploy MCP-compatible apps.
 
 ## App Manifest
 
@@ -89,7 +89,7 @@ Example:
 }
 ```
 
-## Ultralight SDK
+## Galactic SDK
 
 Every function receives the `ultralight` SDK on `globalThis`:
 
@@ -244,7 +244,7 @@ capabilities it expects to call, default Light budgets, and optional Command
 surfaces for monitoring.
 
 Routine templates are not cron jobs inside the MCP. The MCP developer defines
-the package; Ultralight later handles the scheduler, user approval, auth actor,
+the package; Galactic later handles the scheduler, user approval, auth actor,
 budgets, traces, and receipts.
 
 ```json
@@ -374,7 +374,7 @@ ul.download({
   base: "torch-cuda"
 })
 ```
-GPU scaffolds generate `ultralight.gpu.yaml`, `main.py`, `requirements.txt`, and `test_fixture.json`. Do not create a Dockerfile. Ultralight owns the Dockerfile, base image, GHCR build, and RunPod template so dependencies install once at image build time instead of on worker cold start. Use `base: "torch-cuda"` for PyTorch/model workloads, otherwise use `python-cuda`.
+GPU scaffolds generate `ultralight.gpu.yaml`, `main.py`, `requirements.txt`, and `test_fixture.json`. Do not create a Dockerfile. Galactic owns the Dockerfile, base image, GHCR build, and RunPod template so dependencies install once at image build time instead of on worker cold start. Use `base: "torch-cuda"` for PyTorch/model workloads, otherwise use `python-cuda`.
 
 ### 2. Test
 ```

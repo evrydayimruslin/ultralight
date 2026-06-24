@@ -359,7 +359,7 @@ create trigger newsletters_updated_at
 -- ============================================
 -- ROW LEVEL SECURITY
 -- ============================================
--- Service role has full access (Ultralight uses service key)
+-- Service role has full access (Galactic uses service key)
 
 alter table content enable row level security;
 alter table insights enable row level security;

@@ -1,5 +1,5 @@
 /**
- * Ultravision - Business Hub for Ultralight
+ * Ultravision - Business Hub for Galactic
  *
  * Storage: R2 + OpenRouter embeddings
  * Features: Roadmap, quarterly goals, decisions, risks, semantic search
@@ -126,7 +126,7 @@ function App() {
         <h1 className="text-3xl font-bold bg-gradient-to-r from-violet-400 to-fuchsia-500 bg-clip-text text-transparent">
           Ultravision
         </h1>
-        <p className="text-gray-400 mt-1">Ultralight Business Hub • {currentQuarter}</p>
+        <p className="text-gray-400 mt-1">Galactic Business Hub • {currentQuarter}</p>
       </header>
 
       {/* Search Bar */}

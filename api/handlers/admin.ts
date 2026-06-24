@@ -554,8 +554,8 @@ async function handleFlashTrainingExport(url: URL): Promise<Response> {
             "Content-Type": "application/x-ndjson; charset=utf-8",
             "Content-Disposition":
               `attachment; filename="${label}-${params.datasetFormat}.jsonl"`,
-            "X-Ultralight-Flash-Examples": String(dataset.example_count),
-            "X-Ultralight-Flash-Filtered-Out": String(
+            "X-Galactic-Flash-Examples": String(dataset.example_count),
+            "X-Galactic-Flash-Filtered-Out": String(
               dataset.filtered_out_example_count,
             ),
           },

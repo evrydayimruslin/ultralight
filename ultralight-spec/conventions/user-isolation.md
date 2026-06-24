@@ -1,6 +1,6 @@
 # User Isolation
 
-Every Ultralight app enforces strict per-user data isolation. Users can only see and modify their own data.
+Every Galactic app enforces strict per-user data isolation. Users can only see and modify their own data.
 
 ## Requirements
 

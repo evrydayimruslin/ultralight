@@ -1,5 +1,5 @@
 """
-Ultralight GPU Harness — injected into every GPU container at build time.
+Galactic GPU Harness — injected into every GPU container at build time.
 
 Wraps the developer's function with structured error handling, timing,
 and VRAM measurement. Conforms to RunPod's serverless worker protocol.
@@ -160,7 +160,7 @@ def handler(event):
     """
     RunPod handler — receives input dict, returns structured result.
 
-    Input format (from Ultralight platform):
+    Input format (from Galactic platform):
     {
         "function": "function_name",   # Python function to call
         "args": { ... },               # Keyword arguments

@@ -107,8 +107,8 @@ Functions are callable. Widgets are renderable via `{{widget:name:app_id}}`. Wid
 
 | Client | Mode |
 |---|---|
-| Ultralight desktop (Sonnet/Opus) | Code mode: search() + execute() |
-| Ultralight desktop (small models) | Traditional: direct ul_call per function |
+| Galactic desktop (Sonnet/Opus) | Code mode: search() + execute() |
+| Galactic desktop (small models) | Traditional: direct ul_call per function |
 | External MCP clients (OpenClaw, etc.) | Standard MCP: tools/list + tools/call |
 | API/webhook callers | Direct HTTP: POST /mcp/{appId} |
 

@@ -143,7 +143,7 @@ function HomeContent({ mobile, signedIn = false, balance = 0 }) {
 
       {/* Shared core — keep the “Thousands…” line */}
       <div style={{ marginBottom: mobile ? 48 : 80, textAlign: 'center', maxWidth: 640, marginLeft: 'auto', marginRight: 'auto' }}>
-        <div style={{ fontSize: mobile ? 24 : 30, fontWeight: 400, letterSpacing: '-0.025em', lineHeight: 1.1, marginBottom: 12 }}>Thousands have given Ultralight to their agents</div>
+        <div style={{ fontSize: mobile ? 24 : 30, fontWeight: 400, letterSpacing: '-0.025em', lineHeight: 1.1, marginBottom: 12 }}>Thousands have given Galactic to their agents</div>
         <div style={{ fontSize: mobile ? 15 : 16.5, color: H.sec, lineHeight: 1.55, marginBottom: 24 }}>Every agent draws from one core — the same context, tools, auth, and payments.</div>
         <SharedCore mobile={mobile}/>
       </div>

@@ -1,4 +1,4 @@
--- Standard CRUD patterns for Ultralight D1 apps.
+-- Standard CRUD patterns for Galactic D1 apps.
 -- Copy-paste these into your app code. Always use parameterized queries.
 
 -- INSERT

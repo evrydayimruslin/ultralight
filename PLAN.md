@@ -2,7 +2,7 @@
 
 ## The Core Insight
 
-Right now Ultralight has three separate content systems that don't talk to each other:
+Right now Galactic has three separate content systems that don't talk to each other:
 
 1. **Apps** — have embeddings, discovery, permissions, visibility (`public`/`private`/`unlisted`)
 2. **Pages** — R2-only, always public, no embeddings, no discovery, no permissions

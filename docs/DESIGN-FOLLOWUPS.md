@@ -109,7 +109,7 @@ Activity event feed) are now unreachable from the desktop UI.
 Decide:
 - (a) Re-spec each as a widget tile that ships on the cozy homescreen
       (Kanban widget, Activity widget — would also need a BE manifest
-      since they're Ultralight-native, not app-supplied)
+      since they're Galactic-native, not app-supplied)
 - (b) Relocate to dedicated screens (e.g., new sidebar items)
 - (c) Sunset entirely — accept that those surfaces are gone
 

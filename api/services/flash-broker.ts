@@ -1131,7 +1131,7 @@ export async function* runFlashBroker(
 
   // Build persona-aware system prompt
   const analyzeSystem = systemAgentContext
-    ? `You are acting as "${systemAgentContext.persona}" — a specialized system agent on the Ultralight platform.\n\n${FLASH_ANALYZE_SYSTEM}`
+    ? `You are acting as "${systemAgentContext.persona}" — a specialized system agent on the Galactic platform.\n\n${FLASH_ANALYZE_SYSTEM}`
     : FLASH_ANALYZE_SYSTEM;
 
   let analyzeContent = "";
@@ -2316,7 +2316,7 @@ async function callFlash(
         ...requestParams,
       },
       {
-        title: "Ultralight Flash Broker",
+        title: "Galactic Flash Broker",
         referer: "https://api.ultralightagent.com",
         signal: options?.signal,
       },
@@ -2496,7 +2496,7 @@ export async function callFlashText(
         // No response_format — plain text output
       },
       {
-        title: "Ultralight Flash Broker",
+        title: "Galactic Flash Broker",
         referer: "https://api.ultralightagent.com",
         signal: options?.signal,
       },

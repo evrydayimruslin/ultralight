@@ -160,7 +160,7 @@ const DANGEROUS_RULES: ScanRule[] = [
 ];
 
 const WARNING_RULES: ScanRule[] = [
-  // Direct env access (should use Ultralight env vars system)
+  // Direct env access (should use Galactic env vars system)
   {
     id: 'warn-env-direct-access',
     severity: 'warning',

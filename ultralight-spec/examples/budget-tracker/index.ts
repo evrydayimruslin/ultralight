@@ -1,4 +1,4 @@
-// Smart Budget — Ultralight MCP App (D1 SQL)
+// Smart Budget — Galactic MCP App (D1 SQL)
 // Track spending, manage budgets, and get financial insights.
 // Storage: Cloudflare D1 via ultralight.db
 

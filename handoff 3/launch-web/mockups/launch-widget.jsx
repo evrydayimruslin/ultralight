@@ -102,7 +102,7 @@ function WidgetShell({ kind, state }) {
       <StateBody kind={kind} state={state}/>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px', borderTop: `1px solid ${WG.border}`, background: '#0b1220' }}>
         <span style={{ color: '#a7f3d0', display: 'inline-flex' }}><WG_Shield size={13}/></span>
-        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', flex: 1, lineHeight: 1.4 }}>Calls relay through Ultralight — the widget never sees your API key.</span>
+        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', flex: 1, lineHeight: 1.4 }}>Calls relay through Galactic — the widget never sees your API key.</span>
         <WG_Mono size={10.5} color="rgba(255,255,255,0.55)">ulAction('{m.fn}', {m.args})</WG_Mono>
         {state === 'ready' && <WG_Mono size={10.5} color="#fcd34d">session 4:58</WG_Mono>}
       </div>

@@ -377,7 +377,7 @@ Deno.test("inference route: legacy BYOK provider state falls back to Light mode"
     userService,
     getPlatformApiKey: async () => "ds-platform-key",
     getOrCreateOpenRouterKey: async () => {
-      throw new Error("OpenRouter key should not be provisioned for default Ultralight route");
+      throw new Error("OpenRouter key should not be provisioned for default Galactic route");
     },
   });
 

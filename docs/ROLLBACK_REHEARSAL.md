@@ -2,7 +2,7 @@
 
 Last reviewed: `2026-04-21`
 
-This document is the Wave 6 recovery and rollback rehearsal kit for Ultralight.
+This document is the Wave 6 recovery and rollback rehearsal kit for Galactic.
 
 Its purpose is to make release-day recovery decisions explicit and rehearsable.
 It does not pretend every incident has a clean “undo” button.
@@ -19,7 +19,7 @@ Use the right word for the right recovery mode:
   for database incidents, where the platform does not support a safe automatic
   rollback.
 
-Ultralight is intentionally fix-forward in many places. That is acceptable as
+Galactic is intentionally fix-forward in many places. That is acceptable as
 long as the recovery path is explicit and rehearsed.
 
 ## Scope

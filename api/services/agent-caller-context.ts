@@ -2,7 +2,7 @@
 //
 // When the runtime initiates a cross-Agent call (Agent A -> Agent B for user
 // U), it mints one of these server-side and attaches it as the
-// X-Ultralight-Caller header. The target's MCP chokepoint verifies it to learn
+// X-Galactic-Caller header. The target's MCP chokepoint verifies it to learn
 // WHO is calling (caller app id + user) without trusting anything the sandbox
 // could forge, then runs the grant check.
 //

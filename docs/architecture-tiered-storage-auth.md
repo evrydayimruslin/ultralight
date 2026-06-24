@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-This document designs the Free/Pro tier enforcement infrastructure for Ultralight. The current codebase has **scaffolding already in place** (`users.tier`, `storage_used_bytes`, `storage_limit_bytes`, `TIER_LIMITS`) but **none of it is enforced**. This architecture builds on those foundations.
+This document designs the Free/Pro tier enforcement infrastructure for Galactic. The current codebase has **scaffolding already in place** (`users.tier`, `storage_used_bytes`, `storage_limit_bytes`, `TIER_LIMITS`) but **none of it is enforced**. This architecture builds on those foundations.
 
 ---
 

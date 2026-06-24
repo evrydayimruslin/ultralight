@@ -2,7 +2,7 @@
 
 Last reviewed: `2026-04-21`
 
-This document defines the Wave 6 backup-and-restore drill for Ultralight.
+This document defines the Wave 6 backup-and-restore drill for Galactic.
 
 The goal is not to prove that backups exist. The goal is to prove that a real
 restore can be executed into a safe target, validated against known data, and

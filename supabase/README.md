@@ -1,6 +1,6 @@
 # Supabase Migrations
 
-This `supabase/` directory is now the canonical home for Ultralight's platform
+This `supabase/` directory is now the canonical home for Galactic's platform
 database migration history.
 
 ## Rules
@@ -14,7 +14,7 @@ database migration history.
 
 ## Baseline Status
 
-Ultralight's production schema was originally managed by hand in the Supabase
+Galactic's production schema was originally managed by hand in the Supabase
 SQL editor. That one-time gap has now been closed: the production schema has
 been captured into a checked-in baseline migration, and the fresh staging
 project has been bootstrapped from that same baseline.

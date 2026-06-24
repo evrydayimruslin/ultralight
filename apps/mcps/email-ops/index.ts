@@ -1,4 +1,4 @@
-// Email-Ops — Ultralight MCP App (v2: IMAP/SMTP Direct)
+// Email-Ops — Galactic MCP App (v2: IMAP/SMTP Direct)
 //
 // Version-controlled email thread system. Connects directly to hotel mailbox
 // via IMAP (inbound) and SMTP (outbound) using ultralight.net TCP/TLS sockets.

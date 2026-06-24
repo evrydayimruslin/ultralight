@@ -2,7 +2,7 @@
 
 ## Context
 
-Ultralight is a marketplace where developers deploy functions as callable MCP tools. Currently CPU-only via Deno sandbox. We're adding GPU compute as a parallel runtime so developers can publish GPU-native functions (3D rendering, physics simulations, video processing, scientific computing, cryptographic proofs) alongside existing Deno functions. The marketplace mechanics (discovery, micropayments, escrow acquisition) are compute-agnostic and require minimal changes.
+Galactic is a marketplace where developers deploy functions as callable MCP tools. Currently CPU-only via Deno sandbox. We're adding GPU compute as a parallel runtime so developers can publish GPU-native functions (3D rendering, physics simulations, video processing, scientific computing, cryptographic proofs) alongside existing Deno functions. The marketplace mechanics (discovery, micropayments, escrow acquisition) are compute-agnostic and require minimal changes.
 
 ---
 
@@ -88,7 +88,7 @@ max_duration_ms: 2000
 - GPU compute is always charged as platform pass-through: provider execution time plus provider-reported queue/cold-start delay, rounded to the billing increment.
 - Developer earns: developer fee x 0.90 (10% platform fee).
 - Platform earns: developer fee x 0.10 + GPU compute margin.
-- Before settlement, caller balance is checked against the full actual charge. Compute is debited before developer fee transfer so Ultralight does not pay provider GPU costs without collecting the pass-through.
+- Before settlement, caller balance is checked against the full actual charge. Compute is debited before developer fee transfer so Galactic does not pay provider GPU costs without collecting the pass-through.
 - Egress absorbed for MVP.
 
 ### Failure Policy

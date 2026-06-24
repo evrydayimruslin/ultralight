@@ -34,7 +34,7 @@ export async function openSubagentWindow(agentId: string, agentName: string): Pr
   // Create new window with subagent query param
   const _webview = new WebviewWindow(label, {
     url: `index.html?subagent=${encodeURIComponent(agentId)}`,
-    title: `${agentName} — Ultralight`,
+    title: `${agentName} — Galactic`,
     width: 700,
     height: 600,
     minWidth: 400,
@@ -70,7 +70,7 @@ export async function openWidgetWindow(source: WidgetAppSource, context?: Record
 
   const _webview = new WebviewWindow(label, {
     url: `index.html?${params.toString()}`,
-    title: `${source.appName} — Ultralight`,
+    title: `${source.appName} — Galactic`,
     width: 800,
     height: 650,
     minWidth: 450,
@@ -119,10 +119,10 @@ export async function openViewWindow(popout: PopoutView): Promise<void> {
   }
 
   const title = popout.kind === 'chat'
-    ? `${popout.agentName} — Ultralight`
+    ? `${popout.agentName} — Galactic`
     : popout.kind === 'tool-detail'
-      ? `${popout.appName ?? 'Tool'} — Ultralight`
-      : `${VIEW_TITLES[popout.kind] || popout.kind} — Ultralight`;
+      ? `${popout.appName ?? 'Tool'} — Galactic`
+      : `${VIEW_TITLES[popout.kind] || popout.kind} — Galactic`;
 
   const _webview = new WebviewWindow(label, {
     url: `index.html?${params.toString()}`,

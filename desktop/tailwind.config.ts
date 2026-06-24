@@ -1,7 +1,7 @@
 import type { Config } from 'tailwindcss';
 
 /**
- * Ultralight Desktop — Tailwind theme.
+ * Galactic Desktop — Tailwind theme.
  *
  * Phase 1 of the premium-UI port. Additions over the previous version are
  * tagged `// +premium`. No existing tokens were removed or renamed — this is

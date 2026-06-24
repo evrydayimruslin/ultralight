@@ -36,6 +36,6 @@ Deno.test('analytics identity: sha256 text helper is deterministic', async () =>
   );
   assertNotEquals(
     await sha256Text('ultralight'),
-    await sha256Text('Ultralight'),
+    await sha256Text('Galactic'),
   );
 });

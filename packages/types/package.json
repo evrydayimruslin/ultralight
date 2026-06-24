@@ -1,7 +1,7 @@
 {
   "name": "@ultralightpro/types",
   "version": "1.1.0",
-  "description": "TypeScript type definitions for Ultralight SDK - provides autocomplete and type checking for ultralight.ai(), ultralight.store(), and more",
+  "description": "TypeScript type definitions for Galactic SDK - provides autocomplete and type checking for ultralight.ai(), ultralight.store(), and more",
   "types": "index.d.ts",
   "scripts": {
     "generate": "node ../../scripts/contracts/generate-types-package.mjs",
@@ -21,7 +21,7 @@
     "ai",
     "mcp"
   ],
-  "author": "Ultralight",
+  "author": "Galactic",
   "license": "MIT",
   "homepage": "https://api.ultralightagent.com",
   "repository": {

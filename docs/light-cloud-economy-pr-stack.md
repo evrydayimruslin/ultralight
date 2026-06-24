@@ -513,7 +513,7 @@ Implementation:
   - fee estimate
   - actual transfer amount
   - actual payout amount
-- Payout processor should transfer/payout net where appropriate instead of letting Ultralight eat the fee.
+- Payout processor should transfer/payout net where appropriate instead of letting Galactic eat the fee.
 
 Affected files:
 

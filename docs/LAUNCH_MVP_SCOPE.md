@@ -4,7 +4,7 @@ Last rewritten: 2026-06-10 (launch pivot — see
 [LAUNCH_PIVOT_DECISIONS.md](LAUNCH_PIVOT_DECISIONS.md) for the decision record
 and phase plan).
 
-This document defines the public launch surface for the Ultralight MVP. The
+This document defines the public launch surface for the Galactic MVP. The
 repository remains the capability basin; launch exposes a curated,
 production-facing layer over it. The desktop app is scrapped and is not part
 of any launch stage.
@@ -13,9 +13,9 @@ of any launch stage.
 
 Deploy Agents any existing agent can install, call, compose, and pay for.
 
-Ultralight launches as the agent-native layer for MCP-capable clients. Users
+Galactic launches as the agent-native layer for MCP-capable clients. Users
 bring their own **connected agent** (Claude Code, Cursor, Codex, OpenClaw, any
-MCP client) and connect it to Ultralight once. Developers deploy TypeScript
+MCP client) and connect it to Galactic once. Developers deploy TypeScript
 functions that become **Agents** — live MCP servers with functions, pricing,
 trust cards, and user-controlled permissions. Everything an Agent exposes is a
 Function; Agents are interoperable and composable out of the box, with the
@@ -115,7 +115,7 @@ The install experience teaches a connected agent a small loop:
 
 1. Discover relevant Agents and platform primitives.
 2. Inspect an Agent's Functions before calling.
-3. Call Functions through Ultralight (billing settles in Credits).
+3. Call Functions through Galactic (billing settles in Credits).
 4. Link users to public Agent pages when a human decision is useful
    (permissions, top-up, install).
 5. Preserve receipts and errors in the final response.

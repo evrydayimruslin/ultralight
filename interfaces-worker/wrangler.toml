@@ -1,4 +1,4 @@
-# Ultralight Interfaces sandbox worker (Interfaces PR3).
+# Galactic Interfaces sandbox worker (Interfaces PR3).
 #
 # Serves developer-shipped interface HTML from the dedicated content-addressed
 # R2 prefix interfaces/{appId}/{sha256}.html — and ONLY that prefix. This

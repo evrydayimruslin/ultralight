@@ -132,7 +132,7 @@ PY
 }
 
 echo "╔══════════════════════════════════════════════╗"
-echo "║      Ultralight Auth Redirect Smoke         ║"
+echo "║      Galactic Auth Redirect Smoke         ║"
 echo "╚══════════════════════════════════════════════╝"
 echo ""
 echo "API:       $BASE_URL"

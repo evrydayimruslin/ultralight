@@ -67,7 +67,7 @@ export function buildInferenceHeaders(
     "Authorization": `Bearer ${route.apiKey}`,
     "Content-Type": "application/json",
     "HTTP-Referer": options.referer || DEFAULT_REFERER,
-    "X-Title": options.title || "Ultralight",
+    "X-Title": options.title || "Galactic",
   };
 }
 

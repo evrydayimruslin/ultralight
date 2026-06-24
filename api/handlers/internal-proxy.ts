@@ -109,7 +109,7 @@ export async function handleGpuBuildContextProxy(
       headers: {
         "Content-Type": "application/x-tar",
         "Cache-Control": "no-store",
-        "X-Ultralight-Build-Id": metadata.build_id,
+        "X-Galactic-Build-Id": metadata.build_id,
       },
     });
   } catch (err) {

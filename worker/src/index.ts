@@ -1,4 +1,4 @@
-// Ultralight Data Layer Worker
+// Galactic Data Layer Worker
 // Cloudflare Worker providing native R2 data access + D1 query proxy for MCP app storage
 //
 // Architecture:

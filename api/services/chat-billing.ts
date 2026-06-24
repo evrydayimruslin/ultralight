@@ -114,7 +114,7 @@ export function calculateCostLight(
     const platformModel = resolvePlatformInferenceModel(model);
     if (!platformModel) {
       throw new Error(
-        `Unsupported Ultralight platform model for direct billing: ${model}`,
+        `Unsupported Galactic platform model for direct billing: ${model}`,
       );
     }
     return calculatePlatformInferenceCost(

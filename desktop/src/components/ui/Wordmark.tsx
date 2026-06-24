@@ -1,4 +1,4 @@
-// Wordmark — Spark glyph + "Ultralight" type lockup.
+// Wordmark — Spark glyph + "Galactic" type lockup.
 // Ported from handoff/mockups/primitives.jsx.
 
 import Spark from './Spark';
@@ -16,7 +16,7 @@ export default function Wordmark({ fontSize = 15, color = 'currentColor' }: Word
         className="font-bold leading-none tracking-[-0.03em]"
         style={{ fontSize, color }}
       >
-        Ultralight
+        Galactic
       </span>
     </span>
   );

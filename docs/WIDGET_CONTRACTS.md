@@ -3,7 +3,7 @@
 Last reviewed: `2026-05-27`
 
 This document is the canonical contract for desktop/home-screen widgets in
-Ultralight. The goal is to keep widget discovery predictable and make Wave 4
+Galactic. The goal is to keep widget discovery predictable and make Wave 4
 legacy removal reviewable.
 
 ## Canonical Contract

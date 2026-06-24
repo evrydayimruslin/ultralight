@@ -1,6 +1,6 @@
-// Goal Tracker — Ultralight MCP App
+// Goal Tracker — Galactic MCP App
 // Set goals, break them into milestones, and track progress over time.
-// Storage: Ultralight D1 (goals, milestones, progress_logs)
+// Storage: Galactic D1 (goals, milestones, progress_logs)
 
 const ultralight = (globalThis as any).ultralight;
 

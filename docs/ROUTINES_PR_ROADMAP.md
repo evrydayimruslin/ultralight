@@ -1,4 +1,4 @@
-# Ultralight Routines PR Roadmap
+# Galactic Routines PR Roadmap
 
 Routines let MCP developers compose ongoing business processes from any MCP
 capabilities a user has approved. The platform owns durable scheduling, actor
@@ -7,7 +7,7 @@ auth, Light budgets, receipts, traces, retries, pause/kill, and Command state.
 ## Default Architecture Decisions
 
 - The execution principal is always the user/account that approved the routine.
-- MCP developers publish routine templates; Ultralight runs routine instances.
+- MCP developers publish routine templates; Galactic runs routine instances.
 - Downstream MCP access means approved routine capabilities, not silent access to
   every tool the user has ever installed.
 - Routine authors may define customizable schedules, arguments/config,

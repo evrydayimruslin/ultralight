@@ -1,5 +1,5 @@
 // launch-chrome.jsx — frames (browser / phone), nav shells, and shared atoms.
-// Pure Ultralight monochrome. Consumes window.LaunchData + window.PUI_Icons.
+// Pure Galactic monochrome. Consumes window.LaunchData + window.PUI_Icons.
 
 const { L: LC, CAP_COLORS: LCAP_C, CAP_GLYPH: LCAP_G, fmtLight: lcFmtLight, sparkPoints: lcSpark } = window.LaunchData;
 const LI = window.PUI_Icons;
@@ -43,7 +43,7 @@ function LEclipseU({ height = 16, color = LC.text, style }) {
   );
 }
 
-// ── Wordmark — EclipseU + "Ultralight" in Newsreader light italic (the locked logo).
+// ── Wordmark — EclipseU + "Galactic" in Newsreader light italic (the locked logo).
 function LWordmark({ size = 16, color = LC.text }) {
   const fs = Math.round(size * 1.08);
   const capH = Math.round(fs * 0.70);
@@ -54,7 +54,7 @@ function LWordmark({ size = 16, color = LC.text }) {
       <span style={{ display: 'inline-flex', marginRight: gap, transform: `translateY(${rise})` }}>
         <LEclipseU height={capH} color={color} style={{ display: 'block', verticalAlign: 'top' }}/>
       </span>
-      <span style={{ fontFamily: "'Newsreader', serif", fontWeight: 400, fontStyle: 'italic', fontSize: fs, letterSpacing: 0, lineHeight: 1, transform: 'translateY(1px)' }}>Ultralight</span>
+      <span style={{ fontFamily: "'Newsreader', serif", fontWeight: 400, fontStyle: 'italic', fontSize: fs, letterSpacing: 0, lineHeight: 1, transform: 'translateY(1px)' }}>Galactic</span>
     </span>
   );
 }

@@ -310,7 +310,7 @@ function getDeveloperPortalHTML(request: Request): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Ultralight Developer Portal</title>
+  <title>Galactic Developer Portal</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: system-ui, -apple-system, sans-serif; background: #0a0a0a; color: #e5e5e5; min-height: 100vh; }
@@ -398,7 +398,7 @@ function getDeveloperPortalHTML(request: Request): string {
     <!-- LIST VIEW -->
     <div id="view-list">
       <h1>OAuth Applications</h1>
-      <p class="subtitle">Register apps that use "Login with Ultralight" to authenticate users.</p>
+      <p class="subtitle">Register apps that use "Login with Galactic" to authenticate users.</p>
       <div style="display:flex;justify-content:flex-end;margin-bottom:1rem;">
         <button class="btn btn-primary btn-sm" onclick="showView('create')">New Application</button>
       </div>
@@ -431,7 +431,7 @@ import NextAuth from "next-auth"
 export const { handlers, auth } = NextAuth({
   providers: [{
     id: "ultralight",
-    name: "Ultralight",
+    name: "Galactic",
     type: "oauth",
     authorization: {
       url: "${apiOrigin}/oauth/authorize",

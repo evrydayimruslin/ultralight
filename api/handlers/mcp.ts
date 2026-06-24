@@ -659,7 +659,7 @@ const SDK_TOOLS: MCPTool[] = [
     name: "ultralight.call",
     title: "Call Another App",
     description:
-      "Call a function on another Ultralight app. Uses the current user's auth context — " +
+      "Call a function on another Galactic app. Uses the current user's auth context — " +
       "the called app sees the same user. Accepts app ID or slug as the target.",
     inputSchema: {
       type: "object",
@@ -854,7 +854,7 @@ export async function handleMcp(
   userId = callerContext.userId;
   user = callerContext.user;
 
-  // Cross-Agent caller identity: a valid X-Ultralight-Caller header means this
+  // Cross-Agent caller identity: a valid X-Galactic-Caller header means this
   // request is one Agent calling another on behalf of the user. The token is
   // unforgeable (HMAC, server-only secret) and asserts the caller app id, the
   // user, the executing caller function, and the call-chain hop. We verify it
@@ -1167,7 +1167,7 @@ function handleInitialize(
   } else {
     // Skills.md not yet generated — use description + resource directive
     instructions = (app.description ||
-      `${app.name || app.slug} — an Ultralight MCP server.`) +
+      `${app.name || app.slug} — an Galactic MCP server.`) +
       `\n\nRead the ultralight://app/${appId}/manifest.json resource for function definitions and schemas.`;
   }
 

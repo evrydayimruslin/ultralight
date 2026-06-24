@@ -30,7 +30,7 @@ export async function createTask(args: {
 
 ## SDK access
 
-Access the Ultralight SDK via `globalThis.ultralight`:
+Access the Galactic SDK via `globalThis.ultralight`:
 
 ```ts
 const userId = ultralight.user.id;

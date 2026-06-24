@@ -1,6 +1,6 @@
 # Payments PR Stack
 
-This stack moves Ultralight toward a closed-loop Light economy:
+This stack moves Galactic toward a closed-loop Light economy:
 
 - External money enters only through Apple Pay / Google Pay wallet funding or Stripe bank-transfer/wire funding.
 - Purchased Light is platform credit and is not cash-out eligible.

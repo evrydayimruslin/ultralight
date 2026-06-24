@@ -1,4 +1,4 @@
-// Ultralight App Template — D1 SQL
+// Galactic App Template — D1 SQL
 // Replace "items" with your domain (e.g., "tasks", "recipes", "notes").
 // Every query uses ultralight.user.id for data isolation.
 

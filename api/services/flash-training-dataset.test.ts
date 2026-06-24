@@ -609,7 +609,7 @@ Deno.test("flash training dataset: builds from capture export bundles", () => {
   assert(dataset.examples[0].training_candidate);
 });
 
-Deno.test("flash training dataset: exports canonical Ultralight JSONL records", () => {
+Deno.test("flash training dataset: exports canonical Galactic JSONL records", () => {
   const dataset = buildFlashTrainingDataset({
     invocations: [invocation()],
     contextSnapshots: [snapshot(), responseSnapshot()],

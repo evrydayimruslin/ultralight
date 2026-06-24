@@ -77,7 +77,7 @@ alter table tweets enable row level security;
 alter table collections enable row level security;
 alter table notes enable row level security;
 
--- Service role full access (Ultralight uses service key)
+-- Service role full access (Galactic uses service key)
 create policy "Service role full access" on tweets for all using (true);
 create policy "Service role full access" on collections for all using (true);
 create policy "Service role full access" on notes for all using (true);

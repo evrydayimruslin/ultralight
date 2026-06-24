@@ -1,4 +1,4 @@
-// AI Fan-out — reference Agent for best-of-N / "fusion" on Ultralight.
+// AI Fan-out — reference Agent for best-of-N / "fusion" on Galactic.
 //
 // There is no special fan-out primitive: ultralight.ai() is a plain async call,
 // so you fan out with Promise.all and synthesize with one more call. That's it.

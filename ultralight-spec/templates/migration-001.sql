@@ -1,5 +1,5 @@
 -- migrations/001_initial.sql
--- Starter migration template for an Ultralight app.
+-- Starter migration template for an Galactic app.
 -- Every table MUST have: id, user_id, created_at, updated_at.
 -- Every table MUST have an index on user_id.
 

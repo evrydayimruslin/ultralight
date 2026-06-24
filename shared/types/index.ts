@@ -1,4 +1,4 @@
-// Ultralight Shared Types
+// Galactic Shared Types
 // Used across API, Web, and Runtime
 
 export {

@@ -30,7 +30,7 @@ const AGENT_ICONS = {
 
 // ── Typing wordmark — used on the welcome screen ─────────────────────────
 function TypingWordmark({ replayKey }: { replayKey: number }) {
-  const target = 'Ultralight';
+  const target = 'Galactic';
   const [n, setN] = useState(0);
 
   useEffect(() => {
