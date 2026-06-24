@@ -3256,7 +3256,9 @@ export async function handlePlatformMcp(request: Request): Promise<Response> {
  * Reusable by both buildInstructions() and resources/read.
  */
 function buildPlatformDocs(): string {
-  const docs = `## Calling Apps
+  const docs = `**Naming:** tools use the \`gx.\` prefix (e.g. \`gx.discover\`) and the in-Agent SDK is \`galactic.*\` (e.g. \`galactic.ai()\`). The \`ul.*\` / \`ultralight.*\` names used throughout this guide are permanent aliases — either prefix works; prefer the \`gx.\`/\`galactic.\` ones in new code.
+
+## Calling Apps
 
 \`ul.call({ app_id: "...", function_name: "...", args: {...} })\` — execute any function. One connection, all apps.
 
@@ -3451,7 +3453,7 @@ Manage your wallet: balance, earnings, conversions, withdrawals, payouts.
 
 ## Building Apps
 
-**Workflow:** \`ul.download\` (scaffold) → implement → \`ul.test\` → \`ul.upload\` → \`ul.set\`
+**Workflow:** \`gx.download\` (scaffold) → implement functions (reach for \`galactic.ai()\`, \`galactic.call()\`, \`galactic.db\`) → add an Interface (\`interfaces[]\`) for a human-facing UI → \`gx.test\` → \`gx.upload\` → \`gx.set\`. The richest Agents combine functions + AI + an Interface — see "The SDK" and "Interfaces" below.
 
 **Always include a manifest.json** alongside index.ts. The manifest enables per-function pricing in the dashboard, typed parameter schemas for better agent tool use, permission grants, Settings surfaces on public app pages, and a declared \`access_policy\` hook for custom-coded permission/monetization logic. Without it, functions are auto-detected from exports but lack parameter/return metadata. Structure: \`{ "functions": { "fnName": { "description": "...", "parameters": { "paramName": { "type": "string", "required": true, "description": "What this param does" } } } }, "access_policy": { "mode": "module", "module": "policy.ts", "export": "planAccess" }, "env_vars": { "MY_KEY": { "scope": "per_user", "input": "password", "description": "..." } } }\`. Parameters must be an object keyed by parameter name (NOT an array). \`access_policy.module\` records the source file, and \`access_policy.export\` must be exported from the bundled app entry surface, e.g. \`export { planAccess } from "./policy.ts";\`. Policy functions receive \`{ app, caller, subject, input, metadata, static }\` and return \`{ effect: "allow", price_light?, charge_light?, free_quota_limit?, metadata? }\` or \`{ effect: "deny", reason }\`. \`ul.download\` scaffolds the base manifest automatically.
 
@@ -3467,36 +3469,63 @@ The policy function is the custom code path for functions. It receives \`{ app, 
 3. **EXECUTION LIMIT:** 30s per call, 15s fetch timeout, 10MB fetch limit, max 20 concurrent fetches.
 4. **STORAGE KEYS:** \`ultralight.list()\` returns full keys (e.g., \`draft_abc123\`), not prefixed.
 
-### SDK Globals Available in Sandbox
-| Global | Purpose |
-|--------|---------|
-| \`ultralight.store(key, value)\` | Store a value in app-scoped persistent KV storage (per user) |
-| \`ultralight.load(key)\` | Load a value from app-scoped storage by key |
-| \`ultralight.list(prefix?)\` | List keys in storage, optionally filtered by prefix |
-| \`ultralight.remove(key)\` | Remove a key from storage |
-| \`ultralight.query(prefix, options?)\` | Query storage with pagination (\`{ limit, offset }\`) |
-| \`ultralight.db.run(sql, params?)\` | Execute INSERT/UPDATE/DELETE (returns { success, meta }) |
-| \`ultralight.db.all(sql, params?)\` | Execute SELECT, returns all rows |
-| \`ultralight.db.first(sql, params?)\` | Execute SELECT, returns first row or null |
-| \`ultralight.db.batch(statements)\` | Execute multiple statements sequentially (NOT atomic — design for idempotency) |
-| \`ultralight.remember(key, value)\` | Cross-app user memory (KV store) |
-| \`ultralight.recall(key)\` | Read from user memory |
-| \`ultralight.user\` | Auth context: \`{ id, email, displayName, avatarUrl, tier }\` (null if anon) |
-| \`ultralight.isAuthenticated()\` | Returns boolean |
-| \`ultralight.requireAuth()\` | Throws if not authenticated |
-| \`ultralight.env\` | Decrypted environment variables |
-| \`ultralight.ai(request)\` | Call AI models (requires \`ai:call\` permission) |
-| \`ultralight.call(appId, fn, args)\` | Call another Ultralight app's function |
-| \`fetch(url)\` | HTTP requests (HTTPS only, 15s timeout, 10MB limit) |
-| \`crypto.randomUUID()\` | Generate UUIDs |
-| \`uuid.v4()\` | Alternative UUID |
-| \`_\` | Lodash utilities |
-| \`dateFns\` | Date manipulation |
-| \`base64\` | \`.encode(str)\`, \`.decode(str)\`, \`.encodeBytes(uint8)\`, \`.decodeBytes(str)\` |
-| \`hash\` | \`.sha256(str)\`, \`.sha512(str)\`, \`.md5(str)\` |
+### The SDK — what your Agent inherits
 
-### The \`ui()\` Export
-Any app can export \`ui()\` returning HTML, served at \`GET /http/{appId}/ui\`. Direct users to this URL for visual data views. Browser access should rely on an Ultralight session, while agent/API access should use the MCP endpoint with an \`Authorization\` header.
+Agent code runs in a sandbox with the \`galactic.*\` SDK (alias: \`ultralight.*\` — both work; prefer \`galactic.*\` in new code). An Agent is not just a function — it inherits a whole backend: storage, a SQL database, AI, cross-Agent calls, payments, raw sockets, and secrets. Each capability and the permission it needs:
+
+| Capability | Call | Permission |
+|---|---|---|
+| **AI** — multimodal chat (incl. vision) | \`galactic.ai({ messages })\` | \`ai:call\` |
+| **Call another Agent** | \`galactic.call(appId, fn, args)\` | \`app:call\` or a declared dependency |
+| **Charge the user** (in-app purchase) | \`galactic.charge(credits, reason?)\` | caller must be signed in |
+| KV storage (per-user, app-scoped) | \`galactic.store / load / list / remove / query\` | — |
+| SQL (D1, per-user isolation enforced) | \`galactic.db.run / all / first / batch\` | — |
+| Cross-app user memory | \`galactic.remember / recall\` | — |
+| Identity | \`galactic.user\` · \`isAuthenticated()\` · \`requireAuth()\` | — |
+| Secrets (decrypted) | \`galactic.env.MY_KEY\` | declare in manifest \`env_vars\` |
+| HTTPS fetch | \`fetch(url)\` (15s · 10MB · 20 concurrent) | — |
+| **Raw TCP/TLS sockets** | \`galactic.net.connectTls(host, port)\` · \`connectPlain\` | \`net:connect\` |
+| Supabase (bring-your-own) | \`supabase\` client (when configured) | — |
+| Stdlib (global) | \`_\` (lodash) · \`uuid\` · \`base64\` · \`hash\` · \`dateFns\` · \`schema\` (Zod-like) · \`markdown\` · \`str\` · \`jwt\` · \`http\` · \`crypto\` | — |
+
+#### \`galactic.ai(request)\` — multimodal chat completion
+Request: \`{ messages: [{ role, content }], model?, max_tokens?, temperature? }\`. \`content\` is a string OR an array of parts — \`{ type: "text", text }\` and \`{ type: "file", data, filename? }\` where an image file enables **vision**. Returns \`{ content, model, usage }\`. Billed in credits (or the user's BYOK key). Requires \`ai:call\` in manifest permissions. There is no streaming / JSON-mode / image-generation — ask for JSON in the prompt and \`JSON.parse\` the result.
+- Generate: \`const { content } = await galactic.ai({ messages: [{ role: "user", content: prompt }] });\`
+- Extract to JSON: prompt \`"Return ONLY JSON {title, tags[]} for: " + text\`, then \`JSON.parse(content)\`.
+- Vision: \`content: [{ type: "text", text: "What is this?" }, { type: "file", data: dataUri, filename: "p.png" }]\`.
+
+#### \`galactic.call(appId, fn, args)\` — orchestrate other Agents
+Calls another Agent's function over MCP and returns its parsed result. This is how Agents compose into graphs. Requires \`app:call\` or a declared manifest dependency on that app/function. Example: \`const r = await galactic.call("app-abc", "translate", { text, to: "fr" });\`
+
+#### \`galactic.charge(credits, reason?)\` — get paid mid-execution
+Charges the signed-in caller and credits you, net of the 15% platform fee — waived to 0% for customers you brought yourself (the same fee + referral system as per-call pricing). Returns \`{ success, to_balance, platform_fee, fee_waived }\`. Use it for in-app purchases, metered features, or tips. For simple "price per call" instead, set a price in the manifest or via \`ul.set\` — identical economics.
+
+### Interfaces — give your Agent a real UI
+
+An **Interface** is a single self-contained HTML file (≤ 1 MiB) that renders in a sandbox and talks to your Agent over a bridge — a human-facing front-end for the very same Agent that other AIs call over MCP. Declare it in the manifest alongside \`functions\`:
+\`\`\`json
+"interfaces": [
+  { "id": "main", "label": "Playground", "entry": "interfaces/main.html",
+    "functions": ["get_data", "act"], "min_height": 360 }
+]
+\`\`\`
+Inside the HTML, the bridge exposes \`galactic.call\` (alias \`window.ul.call\`):
+\`\`\`js
+const result = await galactic.call("get_data", { id });  // runs YOUR Agent's function
+galactic.resize(600);                                     // set the iframe height
+const ctx = galactic.context;                             // { user, ... } — null if signed out
+\`\`\`
+**The Agent IS the interface's backend.** The interface renders; \`galactic.call\` runs functions that can \`galactic.ai()\`, read \`galactic.db\`, charge, or call other Agents. So any pixel can be backed by generation and persistent memory.
+
+**Sandbox rules — read them as a superpower, not just limits:** inline JS + WebGL/WebGPU run (three.js, shaders, procedural 3D, audio synthesis — demoscene-style visuals with no assets); external **https images** load (textures); BUT there is **no fetch/network inside the interface** — every piece of dynamic data comes through \`galactic.call\` to your Agent (or is inlined). No localStorage either — persist through your Agent. One file, ≤ 1 MiB. So: build procedural, AI-backed experiences, not asset-streamed ones.
+
+(Legacy: an app may also export \`ui()\` returning HTML at \`GET /http/{appId}/ui\` for a quick read-only data view. Prefer an Interface for anything interactive.)
+
+### Recipes (copy-paste)
+- **AI-backed function** (manifest \`permissions: ["ai:call"]\`): \`export async function summarize(args) { const { content } = await galactic.ai({ messages: [{ role: "user", content: "Summarize: " + args.text }] }); return { summary: content }; }\`
+- **Paywalled feature:** \`galactic.requireAuth(); await galactic.charge(50, "premium_export"); return { url: url };\`
+- **Compose Agents:** \`const out = await galactic.call("translator-app", "translate", { text: t, to: "fr" });\`
+- **Persistent counter:** \`const n = (await galactic.load("count")) || 0; await galactic.store("count", n + 1); return { count: n + 1 };\`
 
 ## Building GPU Functions
 
@@ -3800,7 +3829,7 @@ function formatTimeAgo(isoTimestamp: string): string {
 function buildInstructions(deskSection: string, libraryHint: string): string {
   const platformDocs = buildPlatformDocs();
 
-  return `# Ultralight Platform
+  return `# Galactic Platform
 
 MCP-first app hosting. TypeScript functions → MCP servers. Platform tools + unlimited app tools via ul.call.
 
@@ -3912,7 +3941,7 @@ async function handleResourcesRead(
   if (uri === "ultralight://platform/skills.md") {
     // Return platform docs (same content as initialize instructions, minus user-specific sections)
     const platformDocs =
-      `# Ultralight Platform MCP — Skills\n\n${buildPlatformDocs()}`;
+      `# Galactic Platform MCP — Skills\n\n${buildPlatformDocs()}`;
     const contents: MCPResourceContent[] = [{
       uri: uri,
       mimeType: "text/markdown",
@@ -15098,7 +15127,7 @@ async function executePages(userId: string): Promise<unknown> {
  * Cached for 1 hour. Returns text/markdown.
  */
 export function handleSkills(request: Request): Response {
-  const skills = `# Ultralight Platform MCP — Skills
+  const skills = `# Galactic Platform MCP — Skills
 
 Endpoint: \`POST /mcp/platform\`
 Protocol: JSON-RPC 2.0

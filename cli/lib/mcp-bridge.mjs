@@ -138,6 +138,22 @@ function relDisplay(abs) {
 // ─── Remote JSON-RPC (stateless POST, no session/SSE) ──────────────────────
 let rpcId = 0;
 const RPC_TIMEOUT_MS = Number(process.env.ULTRALIGHT_TIMEOUT_MS) || 30000;
+
+// Single source of truth: fetch the LIVE platform skills/SDK guide and serve it
+// as the MCP `initialize` instructions, so an Agent connecting through this
+// bridge reads the same up-to-date guide as a direct connection (the website
+// and direct MCP already render /api/skills). Best-effort — never block startup.
+async function fetchPlatformSkills(apiUrl) {
+  try {
+    const url = new URL('/api/skills', apiUrl).toString();
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (res.ok) {
+      const text = await res.text();
+      if (text && text.length > 200) return text;
+    }
+  } catch { /* offline / transient — fall through to no instructions */ }
+  return undefined;
+}
 async function rpc(apiUrl, token, method, params) {
   let res;
   try {
@@ -295,9 +311,13 @@ export async function runMcpBridge() {
     }
   }
 
+  const instructions = await fetchPlatformSkills(apiUrl);
   const server = new Server(
-    { name: 'ultralightagent', version },
-    { capabilities: { tools: {} } },
+    { name: 'galacticagent', version },
+    {
+      capabilities: { tools: {} },
+      ...(instructions ? { instructions } : {}),
+    },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
