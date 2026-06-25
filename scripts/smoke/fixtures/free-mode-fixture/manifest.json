@@ -1,0 +1,25 @@
+{
+  "name": "Free Mode Smoke Fixture",
+  "version": "1.0.0",
+  "type": "mcp",
+  "description": "Test fixture for scripts/smoke/free-mode-e2e-smoke.mjs: one free function, one paid function, and one inference function. Used to prove the Free Mode gates (paid blocked, AI-without-BYOK blocked, free allowed) against a live deployment. Stays private; never goes live.",
+  "entry": { "functions": "index.ts" },
+  "permissions": ["ai:call"],
+  "functions": {
+    "free_ping": {
+      "description": "Free function (price 0, no inference). Must RUN in Free Mode.",
+      "returns": { "type": "object", "description": "{ ok, kind }" }
+    },
+    "paid_ping": {
+      "description": "Paid function (priced via gx.set, no inference). Must be BLOCKED in Free Mode (free_mode_paid_blocked).",
+      "returns": { "type": "object", "description": "{ ok, kind }" }
+    },
+    "ai_ping": {
+      "description": "Inference function (calls galactic.ai). Must be BLOCKED in Free Mode without BYOK (free_mode_ai_requires_byok).",
+      "parameters": {
+        "prompt": { "type": "string", "description": "Ignored in Free Mode — the call is blocked before execution.", "required": false }
+      },
+      "returns": { "type": "object", "description": "{ ok, kind, content }" }
+    }
+  }
+}
