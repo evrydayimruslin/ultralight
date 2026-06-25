@@ -3122,6 +3122,29 @@ export async function handlePlatformMcp(request: Request): Promise<Response> {
     const authUser = await authenticate(request);
     userId = authUser.id;
 
+    // Hardening: actor tokens (sandbox_actor / routine_actor) are minted only
+    // for the per-app execution path — galactic.call() POSTs them to
+    // /mcp/:appId WITH a server-minted X-Galactic-Caller header, which is what
+    // the target uses to run the cross-Agent grant check. They must never reach
+    // this aggregator: gx.call here forwards the bearer to a target app WITHOUT
+    // minting that header, so a sandbox token exfiltrated by untrusted app code
+    // (readable via `galactic.call.toString()`, see services/sandbox-actor.ts)
+    // could otherwise skip the grant gate entirely. Reject them at the door —
+    // in-Agent cross-Agent calls must go through galactic.call(), not gx.call.
+    if (
+      authUser.authSource === "sandbox_actor" ||
+      authUser.authSource === "routine_actor"
+    ) {
+      return jsonRpcErrorResponse(
+        rpcRequest.id,
+        FORBIDDEN,
+        "Sandbox and routine actor tokens cannot use the platform endpoint. " +
+          "Make cross-Agent calls from inside your Agent with galactic.call() — " +
+          "it mints a verified caller identity and enforces the user's grants.",
+        { type: "ACTOR_TOKEN_FORBIDDEN" },
+      );
+    }
+
     let displayName: string | null = authUser.email.split("@")[0];
     let avatarUrl: string | null = null;
     const token = request.headers.get("Authorization")?.slice(7) || "";
