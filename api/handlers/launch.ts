@@ -4567,19 +4567,19 @@ function buildInstallInstructions(
   const claudeCodeAddCommand =
     `claude mcp add --transport http --scope user galactic ${mcpUrl} --header "Authorization: ${bearer}"`;
   const connectPrompt = [
-    "Set up Galactic for me, then start using it.",
+    "Set up Galactic for me, then orient me to it.",
     "",
-    "Galactic is one MCP server that gives you a library of Agents (apps) you can discover, call, and deploy, with unified auth and per-call payments.",
+    "Galactic is one MCP connection that opens onto a growing library and public marketplace of Agents (apps) you can discover and run, plus everything you need to build and deploy new ones — with unified auth and per-call payments handled through this single connection.",
     "",
     "1. Install the MCP server (pick whichever works in your environment):",
     `   - Claude Code: ${claudeCodeAddCommand}`,
     `   - Any MCP config file: ${JSON.stringify(genericConfig)}`,
     "   - Automated installer: npx galacticconnection setup --token $ULTRALIGHT_API_KEY",
     "",
-    "2. Connect, then learn the platform: the server's initialize response carries the full platform guide. The same docs live at the ultralight://platform/skills.md MCP resource" +
+    "2. Connect, then learn the platform: the server's initialize response carries the full platform guide, including a first-contact directive for how to orient me on this first connection. The same docs live at the ultralight://platform/skills.md MCP resource" +
     ` and ${baseUrl}/api/skills.`,
     "",
-    '3. Prove it works: call gx.discover with {"scope":"library"} to list the Agents already installed on this account, then tell me in a few lines what you can now do for me.',
+    `3. Take a look around, then give me a real orientation — not a few lines. Call gx.discover with {"scope":"library"} to see the Agents already on this account, and {"scope":"appstore"} to sample what's published in the wider marketplace. Then follow the first-contact directive in your platform guide and write me an informative, structured first message. If for any reason that directive isn't in the guide, cover it yourself: explain how Galactic works (discover, call, build, deploy), tell me plainly that you can build and deploy new Agents for me — not only find and run existing ones — and invite me to ask you how to use or build anything. Lead with one or two real Agents you actually found, so it's concrete, not a generic pitch. Be my guide to it.`,
     "",
     "Treat the API key in this prompt as a secret: never echo it back, log it, or commit it anywhere.",
   ].join("\n");

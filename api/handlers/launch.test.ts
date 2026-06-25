@@ -261,6 +261,17 @@ Deno.test('launch facade: install instructions expose MCP and CLI targets', asyn
       promptInstruction?.configText || '',
       '"Authorization":"Bearer $ULTRALIGHT_API_KEY"',
     );
+    // First-contact UX: the prompt must drive a real orientation (build+deploy,
+    // not "a few lines") rather than a terse capability list.
+    assertStringIncludes(
+      promptInstruction?.configText || '',
+      'build and deploy new Agents',
+    );
+    assertStringIncludes(promptInstruction?.configText || '', 'not a few lines');
+    assertEquals(
+      (promptInstruction?.configText || '').includes('in a few lines what you can now do'),
+      false,
+    );
     const apiInstruction = body.instructions.find((instruction) => instruction.target === 'api');
     assertStringIncludes(
       apiInstruction?.configText || '',

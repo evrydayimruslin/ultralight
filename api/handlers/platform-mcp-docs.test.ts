@@ -167,3 +167,36 @@ Deno.test("platform docs guidance is shared by initialize, resources/read, and G
     assertCoreGuidance(skillsText);
   });
 });
+
+Deno.test("initialize instructions carry the first-contact directive that shapes the agent's first message", async () => {
+  await withPlatformDocsEnv(async () => {
+    const payload = await readJsonRpc(
+      await handlePlatformMcp(platformRequest("initialize")),
+    );
+    const instructions =
+      ((payload.result as Record<string, unknown>).instructions || "") as string;
+
+    // The standing first-contact directive must be present and lead the doc.
+    assertStringIncludes(instructions, "## First contact");
+    assertStringIncludes(
+      instructions,
+      "I can build and deploy new Agents for you",
+    );
+    // It must teach (the four verbs) and invite follow-ups / teaching.
+    for (const verb of ["**Discover**", "**Call**", "**Build**", "**Deploy**"]) {
+      assertStringIncludes(instructions, verb);
+    }
+    assertStringIncludes(instructions, "ongoing guide");
+    // Awe-but-true guardrails travel with the directive.
+    assertStringIncludes(instructions, "awe that is true");
+    assertStringIncludes(instructions, "never the internal");
+    // The directive heads the instructions, before the dense reference.
+    const firstContactAt = instructions.indexOf("## First contact");
+    const platformToolsAt = instructions.indexOf("## Platform Tools");
+    assertEquals(
+      firstContactAt > -1 && firstContactAt < platformToolsAt,
+      true,
+      "first-contact directive must precede the tool reference",
+    );
+  });
+});
