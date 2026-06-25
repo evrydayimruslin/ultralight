@@ -25,6 +25,7 @@ function makeUser(overrides: Partial<UserProfile> = {}): UserProfile {
     byok_enabled: false,
     byok_provider: null,
     byok_configs: [],
+    platform_inference_model: null,
     ...overrides,
   };
 }
@@ -60,6 +61,39 @@ Deno.test("inference route: Light mode routes DeepSeek platform models through O
   assertEquals(route.shouldRequireBalance, true);
   assertEquals(route.shouldDebitLight, true);
   assertEquals(openRouterCalled, true);
+});
+
+Deno.test("inference route: Light mode honors the user's saved platform model when no model is requested", async () => {
+  const route = await resolveInferenceRoute({
+    userId: "user-1",
+    userEmail: "auth@example.com",
+    userService: {
+      getUser: async () => makeUser({ platform_inference_model: "anthropic/claude-x" }),
+      getDecryptedApiKey: async () => null,
+    },
+    getOrCreateOpenRouterKey: async () => "or-platform-key",
+  });
+
+  assertEquals(route.billingMode, "light");
+  assertEquals(route.upstreamProvider, "openrouter");
+  assertEquals(route.model, "anthropic/claude-x");
+  assertEquals(route.billingSource, "openrouter");
+});
+
+Deno.test("inference route: a per-request Light model overrides the user's saved platform model", async () => {
+  const route = await resolveInferenceRoute({
+    userId: "user-1",
+    userEmail: "auth@example.com",
+    requestedModel: "openai/gpt-4o-mini",
+    userService: {
+      getUser: async () => makeUser({ platform_inference_model: "anthropic/claude-x" }),
+      getDecryptedApiKey: async () => null,
+    },
+    getOrCreateOpenRouterKey: async () => "or-platform-key",
+  });
+
+  assertEquals(route.model, "openai/gpt-4o-mini");
+  assertEquals(route.billingSource, "openrouter");
 });
 
 Deno.test("inference route: Light mode keeps non-platform models on platform OpenRouter", async () => {

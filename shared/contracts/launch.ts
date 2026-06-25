@@ -70,6 +70,7 @@ export const LAUNCH_API_ROUTES = [
   "PUT /api/launch/byok/:provider",
   "DELETE /api/launch/byok/:provider",
   "POST /api/launch/byok/primary",
+  "PUT /api/launch/platform-model",
   "GET /api/launch/inference-options",
   "GET /api/launch/library",
   "GET /api/launch/store",
@@ -531,9 +532,21 @@ export interface LaunchByokPrimaryRequest {
   provider: string;
 }
 
+/** Set the platform (credits) OpenRouter model. No key required; empty clears it. */
+export interface LaunchPlatformModelRequest {
+  model: string;
+}
+
+export interface LaunchPlatformModelResponse {
+  ok: true;
+  platformModel: string | null;
+}
+
 export interface LaunchInferenceOptionsResponse {
   billingMode: "byok" | "credits";
   primaryProvider: string | null;
+  /** The user's chosen platform (credits) OpenRouter model slug; null = default. */
+  platformModel: string | null;
   configuredProviders: string[];
   credits: {
     spendable: number | null;

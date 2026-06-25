@@ -20,6 +20,11 @@ import { decryptApiKey, encryptApiKey } from './api-key-crypto.ts';
 
 const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
 const PLATFORM_OR_KEY = '_platform_openrouter';
+// Reserved key in the same byok_keys JSONB holding the user's chosen OpenRouter
+// model slug for the platform (credits-billed Light) path. Plaintext — it's a
+// model id, not a secret. Hidden from byok_configs by parseByokConfigs' provider
+// filter, exactly like _platform_openrouter.
+const PLATFORM_MODEL_KEY = '_platform_model';
 
 // ── Types ──
 
@@ -193,6 +198,43 @@ export async function storeOpenRouterKey(userId: string, key: string): Promise<v
   await patchUserByokKeys(userId, updatedKeys);
 
   console.log(`[OR-KEYS] Key stored for user ${userId} in byok_keys.${PLATFORM_OR_KEY}`);
+}
+
+// ── Platform inference model preference ──
+
+/**
+ * Read the user's chosen platform (credits) OpenRouter model slug, or null if
+ * unset. Stored plaintext under byok_keys._platform_model.
+ */
+export async function getPlatformInferenceModel(userId: string): Promise<string | null> {
+  const byokKeys = await fetchUserByokKeys(userId);
+  if (!byokKeys) return null;
+  const entry = byokKeys[PLATFORM_MODEL_KEY];
+  const model = entry && typeof (entry as { model?: unknown }).model === 'string'
+    ? (entry as { model: string }).model.trim()
+    : '';
+  return model || null;
+}
+
+/**
+ * Set (or clear, when model is null/empty) the user's platform inference model.
+ * Merges into byok_keys so it preserves _platform_openrouter and every provider
+ * key — same merge-and-PATCH discipline as storeOpenRouterKey.
+ */
+export async function setPlatformInferenceModel(userId: string, model: string | null): Promise<void> {
+  const currentKeys = await fetchUserByokKeys(userId);
+  if (currentKeys === null) {
+    throw new Error(`Failed to fetch byok_keys for ${userId}`);
+  }
+  const next: StoredByokKeys = { ...currentKeys };
+  const trimmed = model?.trim();
+  if (trimmed) {
+    next[PLATFORM_MODEL_KEY] = { model: trimmed, added_at: new Date().toISOString() };
+  } else {
+    delete next[PLATFORM_MODEL_KEY];
+  }
+  await patchUserByokKeys(userId, next);
+  console.log(`[OR-KEYS] Platform model for ${userId} set to ${trimmed || '(cleared)'}`);
 }
 
 // ── Get or Create ──

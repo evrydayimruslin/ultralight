@@ -36,6 +36,8 @@ export interface UserProfile {
   byok_enabled: boolean;
   byok_provider: BYOKProvider | null;
   byok_configs: BYOKConfig[];
+  /** OpenRouter slug for the platform (credits) Light path; null = provider default. */
+  platform_inference_model: string | null;
   /** Spendable balance in Light. Loaded for free-mode/economic-state checks. */
   balance_light: number;
 }
@@ -89,6 +91,11 @@ export function createUserService(): UserService {
 
     const user = users[0];
     const byokConfigs = parseByokConfigs(user.byok_keys);
+    const platformModelEntry = user.byok_keys?.['_platform_model'];
+    const platformInferenceModel =
+      typeof platformModelEntry?.model === 'string' && platformModelEntry.model.trim()
+        ? platformModelEntry.model.trim()
+        : null;
     const configProviders = new Set(
       byokConfigs
         .filter(config => config.has_key)
@@ -110,6 +117,7 @@ export function createUserService(): UserService {
       byok_enabled: (user.byok_enabled || false) && configProviders.size > 0,
       byok_provider: primaryProvider,
       byok_configs: byokConfigs,
+      platform_inference_model: platformInferenceModel,
       balance_light: typeof user.balance_light === 'number' ? user.balance_light : 0,
     };
   }

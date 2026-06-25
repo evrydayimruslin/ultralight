@@ -51,6 +51,7 @@ import {
   type LaunchJobStatusResponse,
   type LaunchFunctionSummary,
   type LaunchInferenceOptionsResponse,
+  type LaunchPlatformModelResponse,
   type LaunchInstallInstruction,
   type LaunchInstallResponse,
   type LaunchLeaderboardEntry,
@@ -509,6 +510,10 @@ export async function handleLaunch(request: Request): Promise<Response> {
       path.startsWith("/api/launch/byok/")
     ) {
       return await handleLaunchByok(request, path, method);
+    }
+
+    if (path === "/api/launch/platform-model") {
+      return await handleLaunchPlatformModel(request, method);
     }
 
     if (
@@ -1190,6 +1195,40 @@ function buildLaunchOpenApiSpec(request: Request): Record<string, unknown> {
               }),
             },
             "400": { description: "Invalid or unconfigured provider" },
+            "401": { description: "Authentication required" },
+            "403": { description: "Account session required" },
+          },
+        },
+      },
+      "/api/launch/platform-model": {
+        put: {
+          operationId: "setLaunchPlatformModel",
+          summary:
+            "Set the platform (credits) OpenRouter model — no key required; empty clears it",
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: jsonContent({
+              type: "object",
+              required: ["model"],
+              properties: {
+                model: { type: "string" },
+              },
+            }),
+          },
+          responses: {
+            "200": {
+              description: "Platform model updated",
+              content: jsonContent({
+                type: "object",
+                required: ["ok", "platformModel"],
+                properties: {
+                  ok: { type: "boolean" },
+                  platformModel: { type: ["string", "null"] },
+                },
+              }),
+            },
+            "400": { description: "Invalid model id format" },
             "401": { description: "Authentication required" },
             "403": { description: "Account session required" },
           },
@@ -3147,6 +3186,46 @@ async function handleLaunchByokPrimary(
   );
 }
 
+// Set (or clear) the user's platform (credits) OpenRouter model. Unlike BYOK,
+// this requires NO key — it's the slug the credit-billed Light path routes for
+// the user, honored by both interactive chat and autonomous/agent runs.
+async function handleLaunchPlatformModel(
+  request: Request,
+  method: string,
+): Promise<Response> {
+  const user = await requireLaunchUser(request);
+  requireAccountSessionForByok(user);
+  if (method !== "PUT" && method !== "POST") {
+    return error("Method not allowed for launch platform model", 405);
+  }
+  const body = asRecord(await readJsonBody<unknown>(request)) || {};
+  // Throws RequestValidationError (400) on bad format — handled by the top-level
+  // handleLaunch catch, same as the BYOK upsert path.
+  const model = normalizeLaunchByokModel(body.model);
+
+  return await withSensitiveRouteRateLimit(
+    user.id,
+    "user:platform_model",
+    async () => {
+      try {
+        const { setPlatformInferenceModel } = await import(
+          "../services/openrouter-keys.ts"
+        );
+        await setPlatformInferenceModel(user.id, model ?? null);
+        return json(
+          {
+            ok: true,
+            platformModel: model ?? null,
+          } satisfies LaunchPlatformModelResponse,
+        );
+      } catch (e) {
+        console.error("[LAUNCH] set platform model failed:", e);
+        return error("Failed to set platform model", 500);
+      }
+    },
+  );
+}
+
 async function buildLaunchByokSummary(
   userId: string,
 ): Promise<LaunchByokSummaryResponse> {
@@ -3567,6 +3646,7 @@ async function handleLaunchInferenceOptions(
     {
       billingMode,
       primaryProvider: profile.byok_provider,
+      platformModel: profile.platform_inference_model,
       configuredProviders,
       credits: {
         spendable,

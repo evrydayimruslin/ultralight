@@ -26,6 +26,8 @@ import type {
   LaunchFunctionRunRequest,
   LaunchFunctionRunResponse,
   LaunchInferenceOptionsResponse,
+  LaunchPlatformModelRequest,
+  LaunchPlatformModelResponse,
   LaunchInstallInstruction,
   LaunchInstallResponse,
   LaunchJobStatusResponse,
@@ -425,6 +427,15 @@ export class LaunchApiClient {
 
   inferenceOptions(): Promise<LaunchInferenceOptionsResponse> {
     return this.fetchJson("/api/launch/inference-options");
+  }
+
+  /** Set the platform (credits) OpenRouter model. Empty string clears it. */
+  setPlatformModel(model: string): Promise<LaunchPlatformModelResponse> {
+    const request: LaunchPlatformModelRequest = { model };
+    return this.fetchJson("/api/launch/platform-model", {
+      method: "PUT",
+      body: JSON.stringify(request),
+    });
   }
 
   leaderboard(

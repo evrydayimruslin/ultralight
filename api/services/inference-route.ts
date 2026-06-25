@@ -180,6 +180,7 @@ async function buildByokRoute(
 
 async function buildLightRoute(
   params: ResolveInferenceRouteParams,
+  user: UserProfile | null,
 ): Promise<ResolvedInferenceRoute> {
   const selectedProvider = getSelectionProvider(params.selection);
   if (selectedProvider && selectedProvider !== "openrouter") {
@@ -195,7 +196,10 @@ async function buildLightRoute(
   // every other model are reached as OpenRouter model slugs. A legacy platform
   // model id (e.g. ultralight/deepseek-v4-flash or deepseek-v4-flash) is mapped
   // to its OpenRouter slug (deepseek/deepseek-v4-flash) so existing callers keep
-  // working; an absent model falls back to the OpenRouter provider default.
+  // working. Model precedence: per-request model > the user's saved platform
+  // model > the OpenRouter provider default. The saved preference makes both
+  // interactive chat AND autonomous/agent runs (which pass no model) honor the
+  // user's choice.
   const requestedModel = getRequestedLightModel(params);
   const platformModel = requestedModel
     ? resolvePlatformInferenceModel(requestedModel)
@@ -217,7 +221,7 @@ async function buildLightRoute(
       upstreamProvider: "openrouter",
       baseUrl: providerInfo.baseUrl,
       apiKey,
-      model: requestedOrDefault(openRouterModel, undefined, "openrouter"),
+      model: requestedOrDefault(openRouterModel, user?.platform_inference_model ?? undefined, "openrouter"),
       keySource: "platform_openrouter",
       billingSource: "openrouter",
       shouldRequireBalance: true,
@@ -244,7 +248,7 @@ export async function resolveInferenceRoute(
   const selectedProvider = getSelectionProvider(params.selection);
 
   if (selectedBillingMode === "light") {
-    return await buildLightRoute(params);
+    return await buildLightRoute(params, user);
   }
 
   if (selectedBillingMode === "byok" || selectedProvider) {
@@ -264,5 +268,5 @@ export async function resolveInferenceRoute(
     return await buildByokRoute(user, params, byokProvider);
   }
 
-  return await buildLightRoute(params);
+  return await buildLightRoute(params, user);
 }

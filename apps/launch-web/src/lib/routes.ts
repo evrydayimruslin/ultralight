@@ -101,6 +101,7 @@ export const launchRoutes: LaunchRouteDefinition[] = [
       "PUT /api/launch/byok/:provider",
       "DELETE /api/launch/byok/:provider",
       "POST /api/launch/byok/primary",
+      "PUT /api/launch/platform-model",
       "GET /api/launch/inference-options",
       "GET /api/launch/agents/:id/caller-permissions",
       "PATCH /api/launch/agents/:id/caller-permissions",

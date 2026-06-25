@@ -5898,6 +5898,11 @@ function ByokSettingsCard({
   const [modalProvider, setModalProvider] = useState<
     LaunchByokProviderOption | null
   >(null);
+  // The platform (credits) OpenRouter model — settable WITHOUT a key. Distinct
+  // from the per-provider BYOK model field (which only governs own-key runs).
+  const [platformModelDraft, setPlatformModelDraft] = useState(
+    live.data.inferenceOptions?.platformModel ?? "",
+  );
 
   const runProviderAction = async (
     provider: string,
@@ -5931,6 +5936,43 @@ function ByokSettingsCard({
         navigate={navigate}
         providers={providers}
       />
+      {canManageKeys
+        ? (
+          <div className="preference-row byok-platform-model-row">
+            <div>
+              <strong>Platform model (credits)</strong>
+              <span className="settings-help">
+                The OpenRouter model the credit-billed platform path uses. No key
+                required — applies to chat and autonomous runs.
+              </span>
+            </div>
+            <input
+              onChange={(event) =>
+                setPlatformModelDraft(event.currentTarget.value)}
+              placeholder={live.data.inferenceOptions?.platformModel ||
+                "deepseek/deepseek-v4-flash"}
+              value={platformModelDraft}
+            />
+            <Button
+              onClick={() =>
+                runProviderAction("__platform_model__", async () => {
+                  const res = await launchApi.setPlatformModel(
+                    platformModelDraft.trim(),
+                  );
+                  return {
+                    message: `Platform model set to ${
+                      res.platformModel ?? "provider default"
+                    }`,
+                  };
+                })}
+              size="sm"
+              variant="secondary"
+            >
+              {busyProvider === "__platform_model__" ? "Saving" : "Save model"}
+            </Button>
+          </div>
+        )
+        : null}
       {canManageKeys
         ? (
           <div className="byok-provider-list">

@@ -21,6 +21,7 @@ export type SensitiveRoute =
   | "user:byok_update"
   | "user:byok_delete"
   | "user:byok_primary"
+  | "user:platform_model"
   | "user:token_create"
   | "user:token_delete"
   | "user:token_delete_all"
@@ -261,6 +262,16 @@ export const SENSITIVE_ROUTE_RATE_LIMITS: Record<
       "Too many BYOK primary-provider changes. Please wait and try again.",
     unavailableMessage:
       "Primary provider changes are temporarily unavailable while protection controls recover. Please try again shortly.",
+  },
+  "user:platform_model": {
+    endpoint: "user:platform_model",
+    limit: 20,
+    windowMinutes: 10,
+    resource: "PUT /api/launch/platform-model",
+    limitMessage:
+      "Too many platform model changes. Please wait and try again.",
+    unavailableMessage:
+      "Platform model changes are temporarily unavailable while protection controls recover. Please try again shortly.",
   },
   "user:token_create": {
     endpoint: "user:token_create",

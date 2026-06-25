@@ -26,6 +26,7 @@ function makeUser(overrides: Partial<UserProfile> = {}): UserProfile {
     byok_enabled: false,
     byok_provider: null,
     byok_configs: [],
+    platform_inference_model: null,
     ...overrides,
   };
 }
