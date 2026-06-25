@@ -4375,7 +4375,11 @@ button {
 
 .byok-provider-list {
   display: grid;
-  margin-top: 4px;
+  margin-top: 0;
+}
+
+.byok-provider-list .preference-row:first-child {
+  padding-top: 6px;
 }
 
 .byok-provider-row {

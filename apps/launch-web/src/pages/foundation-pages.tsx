@@ -5877,6 +5877,10 @@ function PermissionSelect({
   );
 }
 
+// Mirrors the backend OpenRouter default (BYOK_PROVIDERS.openrouter.defaultModel)
+// for display/prefill; the actual route default lives server-side.
+const GALACTIC_DEFAULT_MODEL = "deepseek/deepseek-v4-flash";
+
 function ByokSettingsCard({
   live,
   navigate,
@@ -5936,10 +5940,10 @@ function ByokSettingsCard({
               <div>
                 <strong>Galactic AI</strong>
                 <span>
-                  Platform credits ·{" "}
+                  Current model:{" "}
                   {live.data.inferenceOptions?.platformModel ||
-                    "deepseek/deepseek-v4-flash"}{" "}
-                  — the model galactic.ai() uses, no key required
+                    GALACTIC_DEFAULT_MODEL}{" "}
+                  · no BYOK key required
                 </span>
               </div>
               <Button
@@ -6043,7 +6047,9 @@ function GalacticModelModal({
   onClose: () => void;
   onSaved: (message: string) => void;
 }): ReactElement {
-  const [modelDraft, setModelDraft] = useState(inference?.platformModel ?? "");
+  const [modelDraft, setModelDraft] = useState(
+    inference?.platformModel || GALACTIC_DEFAULT_MODEL,
+  );
   const [state, setState] = useState<"idle" | "saving" | "error">("idle");
   const [message, setMessage] = useState("");
 
@@ -6105,7 +6111,7 @@ function GalacticModelModal({
             <input
               autoFocus
               onChange={(event) => setModelDraft(event.currentTarget.value)}
-              placeholder={inference?.platformModel || "deepseek/deepseek-v4-flash"}
+              placeholder={inference?.platformModel || GALACTIC_DEFAULT_MODEL}
               value={modelDraft}
             />
           </label>
