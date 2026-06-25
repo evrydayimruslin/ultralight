@@ -201,20 +201,8 @@ export async function storeOpenRouterKey(userId: string, key: string): Promise<v
 }
 
 // ── Platform inference model preference ──
-
-/**
- * Read the user's chosen platform (credits) OpenRouter model slug, or null if
- * unset. Stored plaintext under byok_keys._platform_model.
- */
-export async function getPlatformInferenceModel(userId: string): Promise<string | null> {
-  const byokKeys = await fetchUserByokKeys(userId);
-  if (!byokKeys) return null;
-  const entry = byokKeys[PLATFORM_MODEL_KEY];
-  const model = entry && typeof (entry as { model?: unknown }).model === 'string'
-    ? (entry as { model: string }).model.trim()
-    : '';
-  return model || null;
-}
+// Note: reads happen inline in user.ts getUser (off the already-loaded
+// byok_keys, no extra fetch), so there is no getter here — only the setter.
 
 /**
  * Set (or clear, when model is null/empty) the user's platform inference model.

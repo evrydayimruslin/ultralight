@@ -24,6 +24,12 @@
       ]
     },
     {
+      "exports": [
+        "SITE_BASE"
+      ],
+      "file": "lib/urls.ts"
+    },
+    {
       "file": "runtime/dynamic-executor.ts",
       "types": [
         "DynamicExecuteOptions"
@@ -256,6 +262,12 @@
     },
     {
       "exports": [
+        "hasCurrentBillingAddress"
+      ],
+      "file": "services/billing-addresses.ts"
+    },
+    {
+      "exports": [
         "DEFAULT_PAYOUT_POLICY_COPY",
         "formatLightPerUsd",
         "LIGHT_ECONOMY_POLICY_COPY"
@@ -339,7 +351,7 @@
     },
     {
       "duplicates": [
-        "{\"0\":{\"col\":17,\"line\":216,\"name\":\"calculateCloudUsageLight\",\"pos\":5201},\"1\":{\"col\":14,\"line\":230,\"name\":\"calcCloudUsageLight\",\"pos\":5690}}"
+        "{\"0\":{\"col\":17,\"line\":219,\"name\":\"calculateCloudUsageLight\",\"pos\":5383},\"1\":{\"col\":14,\"line\":233,\"name\":\"calcCloudUsageLight\",\"pos\":5872}}"
       ],
       "file": "services/cloud-usage.ts",
       "types": [
@@ -647,6 +659,12 @@
       "file": "services/flash-training-labels.ts",
       "types": [
         "FlashOutcomeLabelRows"
+      ]
+    },
+    {
+      "file": "services/free-mode.ts",
+      "types": [
+        "CallerUsage"
       ]
     },
     {
@@ -1215,12 +1233,11 @@
     },
     {
       "exports": [
-        "SALES_TAX_BALANCE_TRIGGER_RATIO"
+        "_clearBuyerTaxLocationCache"
       ],
-      "file": "services/sales-tax.ts",
+      "file": "services/sales-tax-location.ts",
       "types": [
-        "SalesTaxAccrualState",
-        "SalesTaxChargeDecision"
+        "BuyerTaxLocation"
       ]
     },
     {
@@ -1289,6 +1306,7 @@
       ],
       "file": "services/stripe-connect.ts",
       "types": [
+        "ConnectAccountAddress",
         "ConnectAccountStatus",
         "PayoutEstimate",
         "PayoutResult",
