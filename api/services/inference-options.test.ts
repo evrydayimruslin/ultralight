@@ -38,7 +38,7 @@ Deno.test("inference options: Light-only account exposes provider registry and b
   const options = await buildInferenceOptions({
     userId: "user-1",
     userService,
-    checkBalance: async () => 42,
+    checkBalance: async () => 10,
   });
 
   assertEquals(options.defaultBillingMode, "light");
@@ -48,7 +48,7 @@ Deno.test("inference options: Light-only account exposes provider registry and b
     model: BYOK_PROVIDERS.openrouter.defaultModel,
     webSearchEnabled: false,
   });
-  assertEquals(options.light.balanceLight, 42);
+  assertEquals(options.light.balanceLight, 10);
   assertEquals(options.light.minimumBalanceLight, CHAT_MIN_BALANCE_LIGHT);
   assertEquals(options.light.usable, false);
   assertEquals(options.light.markup, CHAT_PLATFORM_MARKUP);

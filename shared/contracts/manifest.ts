@@ -141,6 +141,10 @@ export interface ManifestFunction {
   examples?: string[];
   annotations?: MCPToolAnnotations;
   generation_hints?: WidgetGenerationHints;
+  // Upload-derived: this function (transitively) calls galactic.ai()/
+  // ultralight.ai(). Drives Free Mode (AI functions need a BYOK key when the
+  // caller is in free mode). Conservative — see docs/FREE_MODE_DESIGN.md.
+  uses_inference?: boolean;
   // Durable execution: class 'async' dispatches calls to the execution queue
   // — the caller gets a { _async, job_id } envelope in milliseconds and polls
   // ul.job. Queue executions run with an extended budget (timeout_ms can only

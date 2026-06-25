@@ -8861,12 +8861,12 @@ function executeLint(args: Record<string, unknown>): unknown {
       !permissions || !Array.isArray(permissions) || permissions.length === 0
     ) {
       // Check if code uses features that need permissions
-      if (code.includes("ultralight.ai(") || code.includes("ultralight.ai (")) {
+      if (/(?:ultralight|galactic)\.ai\s*\(/.test(code)) {
         issues.push({
           severity: "error",
           rule: "manifest-permissions",
           message:
-            'Code calls ultralight.ai() but manifest does not declare "ai:call" permission.',
+            'Code calls galactic.ai() but manifest does not declare "ai:call" permission.',
           suggestion: 'Add "permissions": ["ai:call"] to manifest.json',
         });
       }
@@ -8883,14 +8883,14 @@ function executeLint(args: Record<string, unknown>): unknown {
     } else {
       // Check for unnecessary permissions
       if (
-        permissions.includes("ai:call") && !code.includes("ultralight.ai(") &&
-        !code.includes("ultralight.ai (")
+        permissions.includes("ai:call") &&
+        !/(?:ultralight|galactic)\.ai\s*\(/.test(code)
       ) {
         issues.push({
           severity: "info",
           rule: "unused-permission",
           message:
-            'manifest declares "ai:call" permission but code does not appear to use ultralight.ai().',
+            'manifest declares "ai:call" permission but code does not appear to use galactic.ai().',
         });
       }
     }

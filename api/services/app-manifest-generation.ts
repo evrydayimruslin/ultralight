@@ -135,6 +135,7 @@ export function generateManifestFromParseResult(
         } as ManifestReturn)
         : undefined,
       examples: fn.examples.length > 0 ? fn.examples : undefined,
+      ...(fn.usesInference ? { uses_inference: true } : {}),
     };
   }
 
@@ -213,6 +214,16 @@ export function mergeManifestWithParseResult(
         if (!mergedManifest.functions?.[fnName]) {
           mergedManifest.functions![fnName] = fnDef;
         }
+      }
+    }
+
+    // uses_inference is upload-derived (Free Mode signal); overlay it so the
+    // derived value wins even on developer-authored manifests. True is sticky —
+    // a function can't shed the flag by omission or by declaring it false.
+    for (const fn of parseResult.functions) {
+      const target = mergedManifest.functions?.[fn.name];
+      if (target && (fn.usesInference || target.uses_inference)) {
+        target.uses_inference = true;
       }
     }
 

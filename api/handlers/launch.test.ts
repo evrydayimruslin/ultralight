@@ -1945,7 +1945,7 @@ Deno.test('launch facade: inference options report credits billing without byok'
       assertEquals(body.primaryProvider, null);
       assertEquals(body.configuredProviders, []);
       assertEquals(body.credits.spendable, 5000);
-      assertEquals(body.credits.minimumForPlatformInference, 50);
+      assertEquals(body.credits.minimumForPlatformInference, 25);
       assertEquals(body.credits.usable, true);
       assertEquals(body.credits.display, '5,000 credits');
     },

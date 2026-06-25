@@ -85,6 +85,7 @@ import {
   callerUsesSandboxActorToken,
   type RequestCallerContext,
   resolveRequestCallerContext,
+  deriveCallerEconomicState,
 } from "../services/request-caller-context.ts";
 import {
   type RoutineTraceContext,
@@ -2957,6 +2958,7 @@ export async function executeEventDelivery(input: {
   }
 
   let user: UserContext | null = null;
+  let econ = deriveCallerEconomicState(null);
   try {
     const { createUserService } = await import("../services/user.ts");
     const profile = await createUserService().getUser(input.userId);
@@ -2968,6 +2970,7 @@ export async function executeEventDelivery(input: {
         avatarUrl: profile.avatar_url,
         tier: profile.tier,
       };
+      econ = deriveCallerEconomicState(profile);
     }
   } catch (err) {
     console.warn("[EVENT-DELIVERY] Failed to load user context:", err);
@@ -2981,6 +2984,7 @@ export async function executeEventDelivery(input: {
     user,
     userProfile: null,
     userApiKey: null,
+    ...econ,
     tokenAppIds: null,
     tokenFunctionNames: null,
     // The verified emitter identity drives attribution + the subscriber's own
@@ -3116,6 +3120,7 @@ export async function executeQueuedJob(
   }
 
   let user: UserContext | null = null;
+  let econ = deriveCallerEconomicState(null);
   try {
     const { createUserService } = await import("../services/user.ts");
     const profile = await createUserService().getUser(job.user_id);
@@ -3127,6 +3132,7 @@ export async function executeQueuedJob(
         avatarUrl: profile.avatar_url,
         tier: profile.tier,
       };
+      econ = deriveCallerEconomicState(profile);
     }
   } catch (err) {
     console.warn("[QUEUE-EXEC] Failed to load user context:", err);
@@ -3140,6 +3146,7 @@ export async function executeQueuedJob(
     user,
     userProfile: null,
     userApiKey: null,
+    ...econ,
     tokenAppIds: null,
     tokenFunctionNames: null,
     callerApp: job.caller_app_id

@@ -9,6 +9,7 @@ import {
   type RequestTokenSourcePolicy,
 } from './request-auth.ts';
 import { createUserService, type UserProfile } from './user.ts';
+import { FREE_MODE_BALANCE_LIGHT } from '../../shared/contracts/ai.ts';
 
 export const ANONYMOUS_USER_ID = '00000000-0000-0000-0000-000000000000';
 
@@ -22,6 +23,15 @@ export interface RequestCallerContext {
   user: UserContext | null;
   userProfile: UserProfile | null;
   userApiKey: string | null;
+  // Caller economic state (Free Mode signals — see docs/FREE_MODE_DESIGN.md).
+  // Computed once here so discovery + execution read a consistent view.
+  /** Spendable balance in Light, or null when unknown (load failed / anonymous). */
+  balanceLight: number | null;
+  /** balanceLight is known AND below the free-mode threshold. Fails OPEN: an
+   *  unknown balance is NOT free mode, so a paying user is never wrongly gated. */
+  freeMode: boolean;
+  /** Caller has a usable BYOK key — BYOK inference draws no platform credits. */
+  byokPresent: boolean;
   tokenAppIds: string[] | null;
   tokenFunctionNames: string[] | null;
   scopes?: string[];
@@ -64,10 +74,33 @@ function buildAnonymousContext(
     user: null,
     userProfile: null,
     userApiKey: null,
+    balanceLight: null,
+    freeMode: false,
+    byokPresent: false,
     tokenAppIds: null,
     tokenFunctionNames: null,
     scopes: undefined,
     routineActor: undefined,
+  };
+}
+
+/**
+ * Derive Free Mode signals from a loaded user profile. Fails open: a null
+ * profile (load failed / anonymous) yields freeMode=false so a paying user is
+ * never wrongly gated. See docs/FREE_MODE_DESIGN.md.
+ */
+export function deriveCallerEconomicState(
+  profile:
+    | Pick<UserProfile, 'balance_light' | 'byok_enabled' | 'byok_provider'>
+    | null,
+): { balanceLight: number | null; freeMode: boolean; byokPresent: boolean } {
+  const balanceLight = typeof profile?.balance_light === 'number'
+    ? profile.balance_light
+    : null;
+  return {
+    balanceLight,
+    freeMode: balanceLight !== null && balanceLight < FREE_MODE_BALANCE_LIGHT,
+    byokPresent: Boolean(profile?.byok_enabled && profile.byok_provider),
   };
 }
 
@@ -116,6 +149,8 @@ export async function resolveRequestCallerContext(
       || authUser.user_metadata?.avatar_url
       || null;
 
+    const { balanceLight, freeMode, byokPresent } = deriveCallerEconomicState(userProfile);
+
     return {
       authState: 'authenticated',
       authSource: authUser.authSource,
@@ -132,6 +167,9 @@ export async function resolveRequestCallerContext(
       },
       userProfile,
       userApiKey,
+      balanceLight,
+      freeMode,
+      byokPresent,
       tokenAppIds: authUser.tokenAppIds || null,
       tokenFunctionNames: authUser.tokenFunctionNames || null,
       scopes: authUser.scopes,

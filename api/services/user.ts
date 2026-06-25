@@ -36,6 +36,8 @@ export interface UserProfile {
   byok_enabled: boolean;
   byok_provider: BYOKProvider | null;
   byok_configs: BYOKConfig[];
+  /** Spendable balance in Light. Loaded for free-mode/economic-state checks. */
+  balance_light: number;
 }
 
 // Database row structure
@@ -51,6 +53,7 @@ interface UserRow {
   byok_enabled: boolean;
   byok_provider: string | null;
   byok_keys: Record<string, { encrypted_key?: string; model?: string; added_at?: string; [key: string]: unknown }> | null;
+  balance_light: number | null;
 }
 
 function isKnownByokProvider(provider: string): provider is BYOKProvider {
@@ -68,7 +71,7 @@ export function createUserService(): UserService {
 
   async function getUser(userId: string): Promise<UserProfile | null> {
     const response = await fetch(
-      `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${userId}&select=id,email,display_name,avatar_url,tier,country,featured_app_id,profile_slug,byok_enabled,byok_provider,byok_keys`,
+      `${getEnv('SUPABASE_URL')}/rest/v1/users?id=eq.${userId}&select=id,email,display_name,avatar_url,tier,country,featured_app_id,profile_slug,byok_enabled,byok_provider,byok_keys,balance_light`,
       {
         headers: {
           'apikey': getEnv('SUPABASE_SERVICE_ROLE_KEY'),
@@ -107,6 +110,7 @@ export function createUserService(): UserService {
       byok_enabled: (user.byok_enabled || false) && configProviders.size > 0,
       byok_provider: primaryProvider,
       byok_configs: byokConfigs,
+      balance_light: typeof user.balance_light === 'number' ? user.balance_light : 0,
     };
   }
 

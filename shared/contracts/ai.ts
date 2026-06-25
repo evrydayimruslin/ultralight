@@ -195,5 +195,10 @@ export interface ChatInferenceOptionsResponse {
   configuredProviderIds: ActiveBYOKProvider[];
 }
 
-export const CHAT_MIN_BALANCE_LIGHT = 50;
+// Single unified threshold (25 Light = $0.25). Below it a caller is in "free
+// mode": platform inference is unavailable (BYOK only) and paid app calls are
+// blocked. This is the canonical source — CHAT_MIN_BALANCE_LIGHT aliases it.
+export const FREE_MODE_BALANCE_LIGHT = 25;
+/** @deprecated Use FREE_MODE_BALANCE_LIGHT. Kept as the platform-inference-floor name. */
+export const CHAT_MIN_BALANCE_LIGHT = FREE_MODE_BALANCE_LIGHT;
 export const CHAT_PLATFORM_MARKUP = 1.0;

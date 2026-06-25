@@ -62,6 +62,9 @@ export interface ParsedFunction {
   isAsync: boolean;
   examples: string[];
   permissions: string[];
+  /** True when this exported function (transitively) reaches galactic.ai() /
+   *  ultralight.ai(). Conservative: true when uncertain. See FREE_MODE_DESIGN. */
+  usesInference?: boolean;
 }
 
 export interface JsonSchema {
@@ -191,6 +194,24 @@ export async function parseTypeScript(code: string, filename = 'index.ts'): Prom
       }
     });
 
+    // Per-function inference detection (Free Mode signal). Conservative — a
+    // failure here marks every function by the cheap whole-code regex.
+    try {
+      const inference = analyzeInferenceUsage(ts, sourceFile, code);
+      for (const fn of functions) {
+        fn.usesInference = !inference.hasAi
+          ? false
+          : inference.allInference
+          ? true
+          : inference.byFunction.get(fn.name) ?? true;
+      }
+    } catch (infErr) {
+      parseWarnings.push(
+        `Inference analysis failed: ${infErr instanceof Error ? infErr.message : String(infErr)}`,
+      );
+      const hasAi = new RegExp(`${SDK}\\.ai\\s*\\(`).test(code);
+      for (const fn of functions) fn.usesInference = hasAi;
+    }
   } catch (err) {
     parseErrors.push(`Parse error: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -724,30 +745,34 @@ function parseJSDocComment(comment: string): JSDocInfo {
 /**
  * Infer permissions from code patterns
  */
+// The in-sandbox SDK is reachable as both `galactic.*` (rebranded, primary) and
+// `ultralight.*` (permanent alias). Permission inference must match either.
+const SDK = '(?:ultralight|galactic)';
+
 function inferPermissions(code: string): string[] {
   const permissions: string[] = [];
 
   // Storage operations
-  if (/ultralight\.(store|batchStore)/.test(code)) {
+  if (new RegExp(`${SDK}\\.(store|batchStore)`).test(code)) {
     permissions.push('storage:write');
   }
-  if (/ultralight\.(load|list|query|batchLoad)/.test(code)) {
+  if (new RegExp(`${SDK}\\.(load|list|query|batchLoad)`).test(code)) {
     permissions.push('storage:read');
   }
-  if (/ultralight\.(remove|batchRemove)/.test(code)) {
+  if (new RegExp(`${SDK}\\.(remove|batchRemove)`).test(code)) {
     permissions.push('storage:delete');
   }
 
   // Memory operations
-  if (/ultralight\.remember/.test(code)) {
+  if (new RegExp(`${SDK}\\.remember`).test(code)) {
     permissions.push('memory:write');
   }
-  if (/ultralight\.recall/.test(code)) {
+  if (new RegExp(`${SDK}\\.recall`).test(code)) {
     permissions.push('memory:read');
   }
 
   // AI operations
-  if (/ultralight\.ai/.test(code)) {
+  if (new RegExp(`${SDK}\\.ai`).test(code)) {
     permissions.push('ai:call');
   }
 
@@ -757,6 +782,105 @@ function inferPermissions(code: string): string[] {
   }
 
   return [...new Set(permissions)];
+}
+
+/**
+ * Per-function inference detection (Free Mode signal — docs/FREE_MODE_DESIGN.md).
+ *
+ * Builds a call graph over the entry file's AST and marks each function that
+ * transitively reaches galactic.ai() / ultralight.ai(). Conservative by design:
+ * when inference is present but can't be attributed precisely — multi-file
+ * helpers (relative imports), a destructured `ai` binding, module-scope ai, or
+ * an unresolved callee — every function is marked true (fail-safe toward
+ * blocking). Apps with no inference at all yield all-false (no over-blocking).
+ */
+function analyzeInferenceUsage(
+  ts: TSModule,
+  sourceFile: tsTypes.SourceFile,
+  code: string,
+): { hasAi: boolean; allInference: boolean; byFunction: Map<string, boolean> } {
+  if (!new RegExp(`${SDK}\\.ai\\s*\\(`).test(code)) {
+    return { hasAi: false, allInference: false, byFunction: new Map() };
+  }
+
+  // Collect every named function-like (exported or local helper): name -> body.
+  const bodies = new Map<string, tsTypes.Node>();
+  const addBody = (name: string | undefined, body: tsTypes.Node | undefined) => {
+    if (name && body) bodies.set(name, body);
+  };
+  for (const stmt of sourceFile.statements) {
+    if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body) {
+      addBody(stmt.name.text, stmt.body);
+    } else if (ts.isVariableStatement(stmt)) {
+      for (const decl of stmt.declarationList.declarations) {
+        if (
+          ts.isIdentifier(decl.name) && decl.initializer &&
+          (ts.isArrowFunction(decl.initializer) ||
+            ts.isFunctionExpression(decl.initializer))
+        ) {
+          addBody(decl.name.text, decl.initializer.body);
+        }
+      }
+    }
+  }
+  const known = new Set(bodies.keys());
+
+  const isAiCall = (node: tsTypes.Node): boolean =>
+    ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    node.expression.name.text === 'ai' &&
+    ts.isIdentifier(node.expression.expression) &&
+    (node.expression.expression.text === 'ultralight' ||
+      node.expression.expression.text === 'galactic');
+
+  const directAi = new Set<string>();
+  const edges = new Map<string, Set<string>>();
+  for (const [name, body] of bodies) {
+    const callees = new Set<string>();
+    const walk = (node: tsTypes.Node) => {
+      if (isAiCall(node)) directAi.add(name);
+      if (
+        ts.isCallExpression(node) && ts.isIdentifier(node.expression) &&
+        known.has(node.expression.text)
+      ) {
+        callees.add(node.expression.text);
+      }
+      ts.forEachChild(node, walk);
+    };
+    walk(body);
+    edges.set(name, callees);
+  }
+
+  // Transitive reachability with a cycle guard.
+  const reaches = new Map<string, boolean>();
+  const resolve = (name: string, stack: Set<string>): boolean => {
+    const cached = reaches.get(name);
+    if (cached !== undefined) return cached;
+    if (stack.has(name)) return false;
+    stack.add(name);
+    let r = directAi.has(name);
+    if (!r) {
+      for (const callee of edges.get(name) ?? []) {
+        if (resolve(callee, stack)) {
+          r = true;
+          break;
+        }
+      }
+    }
+    stack.delete(name);
+    reaches.set(name, r);
+    return r;
+  };
+  for (const name of bodies.keys()) resolve(name, new Set());
+
+  const multiFile = /\bfrom\s+['"]\.\.?\//.test(code);
+  const destructuredAi = new RegExp(
+    `(?:const|let|var)\\s*\\{[^}]*\\bai\\b[^}]*\\}\\s*=\\s*${SDK}\\b`,
+  ).test(code);
+  const anyAttributed = [...reaches.values()].some(Boolean);
+  const allInference = multiFile || destructuredAi || !anyAttributed;
+
+  return { hasAi: true, allInference, byFunction: reaches };
 }
 
 // ============================================
