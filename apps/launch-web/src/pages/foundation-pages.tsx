@@ -6280,12 +6280,13 @@ function ByokBillingBanner({
     <div className="byok-banner">
       <Icon name="wallet" />
       <span>
-        Platform inference is billed in credits. {inference.credits.display}
-        {" "}
-        spendable
+        Platform inference is billed from your balance.{" "}
+        {formatCreditFromLight(inference.credits.spendable ?? 0)} spendable
         {inference.credits.usable
           ? "."
-          : ` — below the ${inference.credits.minimumForPlatformInference}-credit minimum for platform inference.`}
+          : ` — below the ${
+            formatCreditFromLight(inference.credits.minimumForPlatformInference)
+          } minimum for platform inference.`}
         {" "}
         <RouteLink navigate={navigate} to="/account?tab=balance">Manage wallet</RouteLink>
       </span>
