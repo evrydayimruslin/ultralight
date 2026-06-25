@@ -4415,7 +4415,7 @@ export function AccountFoundationPage(
               summary={visibleKeys.length > 0
                 ? <Pill>{visibleKeys.length} keys</Pill>
                 : null}
-              title="Galactic Auth Keys"
+              title="Galactic Keys"
             >
               <p className="settings-help">
                 {canManageKeys
@@ -5898,11 +5898,9 @@ function ByokSettingsCard({
   const [modalProvider, setModalProvider] = useState<
     LaunchByokProviderOption | null
   >(null);
-  // The platform (credits) OpenRouter model — settable WITHOUT a key. Distinct
-  // from the per-provider BYOK model field (which only governs own-key runs).
-  const [platformModelDraft, setPlatformModelDraft] = useState(
-    live.data.inferenceOptions?.platformModel ?? "",
-  );
+  // The Galactic AI (platform credits) model modal — settable WITHOUT a key,
+  // distinct from the per-provider BYOK key+model modal.
+  const [galacticModelOpen, setGalacticModelOpen] = useState(false);
 
   const runProviderAction = async (
     provider: string,
@@ -5931,51 +5929,31 @@ function ByokSettingsCard({
       subtitle="Bring your own inference key, or let platform runs bill credits. Stored keys are encrypted and never shown again."
       title="BYOK Settings"
     >
-      <ByokBillingBanner
-        inference={live.data.inferenceOptions}
-        navigate={navigate}
-        providers={providers}
-      />
-      {canManageKeys
-        ? (
-          <div className="preference-row byok-platform-model-row">
-            <div>
-              <strong>Platform model (credits)</strong>
-              <span className="settings-help">
-                The OpenRouter model the credit-billed platform path uses. No key
-                required — applies to chat and autonomous runs.
-              </span>
-            </div>
-            <input
-              onChange={(event) =>
-                setPlatformModelDraft(event.currentTarget.value)}
-              placeholder={live.data.inferenceOptions?.platformModel ||
-                "deepseek/deepseek-v4-flash"}
-              value={platformModelDraft}
-            />
-            <Button
-              onClick={() =>
-                runProviderAction("__platform_model__", async () => {
-                  const res = await launchApi.setPlatformModel(
-                    platformModelDraft.trim(),
-                  );
-                  return {
-                    message: `Platform model set to ${
-                      res.platformModel ?? "provider default"
-                    }`,
-                  };
-                })}
-              size="sm"
-              variant="secondary"
-            >
-              {busyProvider === "__platform_model__" ? "Saving" : "Save model"}
-            </Button>
-          </div>
-        )
-        : null}
       {canManageKeys
         ? (
           <div className="byok-provider-list">
+            <div className="preference-row byok-provider-row">
+              <div>
+                <strong>Galactic AI</strong>
+                <span>
+                  Platform credits ·{" "}
+                  {live.data.inferenceOptions?.platformModel ||
+                    "deepseek/deepseek-v4-flash"}{" "}
+                  — the model galactic.ai() uses, no key required
+                </span>
+              </div>
+              <Button
+                onClick={() => {
+                  setFormState("idle");
+                  setFormMessage("");
+                  setGalacticModelOpen(true);
+                }}
+                size="sm"
+                variant="secondary"
+              >
+                Choose model
+              </Button>
+            </div>
             {providers.map((option) => (
               <ByokProviderRow
                 busy={busyProvider === option.id}
@@ -6032,7 +6010,129 @@ function ByokSettingsCard({
           />
         )
         : null}
+      {galacticModelOpen
+        ? (
+          <GalacticModelModal
+            inference={live.data.inferenceOptions}
+            navigate={navigate}
+            onClose={() => setGalacticModelOpen(false)}
+            onSaved={(message) => {
+              setGalacticModelOpen(false);
+              setFormState("idle");
+              setFormMessage(message);
+              live.reload();
+            }}
+          />
+        )
+        : null}
     </SettingsCard>
+  );
+}
+
+// The Galactic AI (platform credits) model picker. No key — sets the OpenRouter
+// model galactic.ai() uses for credit-billed platform runs (chat + autonomous).
+// The wallet/balance line lives here rather than on the card surface.
+function GalacticModelModal({
+  inference,
+  navigate,
+  onClose,
+  onSaved,
+}: {
+  inference?: LaunchInferenceOptionsResponse;
+  navigate: (to: string) => void;
+  onClose: () => void;
+  onSaved: (message: string) => void;
+}): ReactElement {
+  const [modelDraft, setModelDraft] = useState(inference?.platformModel ?? "");
+  const [state, setState] = useState<"idle" | "saving" | "error">("idle");
+  const [message, setMessage] = useState("");
+
+  const save = async () => {
+    if (state === "saving") return;
+    setState("saving");
+    setMessage("");
+    try {
+      const res = await launchApi.setPlatformModel(modelDraft.trim());
+      onSaved(
+        `Galactic AI model set to ${res.platformModel ?? "provider default"}`,
+      );
+    } catch (err) {
+      setState("error");
+      setMessage(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  return (
+    <div
+      className="settings-modal-backdrop"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+      role="presentation"
+    >
+      <Card className="new-key-modal byok-key-modal">
+        <div className="modal-title-row">
+          <span className="target-icon">
+            <Icon name="spark" />
+          </span>
+          <h2>Galactic AI model</h2>
+        </div>
+        <p>
+          The OpenRouter model galactic.ai() uses for credit-billed platform runs
+          (chat and autonomous agent functions). No key required.
+        </p>
+        {inference
+          ? (
+            <p className="settings-help">
+              Billed from your balance ·{" "}
+              {formatCreditFromLight(inference.credits.spendable ?? 0)} spendable
+              {" · "}
+              <RouteLink navigate={navigate} to="/account?tab=balance">
+                Manage wallet
+              </RouteLink>
+            </p>
+          )
+          : null}
+        <form
+          className="byok-modal-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void save();
+          }}
+        >
+          <label>
+            <span>model</span>
+            <input
+              autoFocus
+              onChange={(event) => setModelDraft(event.currentTarget.value)}
+              placeholder={inference?.platformModel || "deepseek/deepseek-v4-flash"}
+              value={modelDraft}
+            />
+          </label>
+        </form>
+        {message
+          ? (
+            <p
+              className={state === "error"
+                ? "settings-help error"
+                : "settings-help"}
+            >
+              {message}
+            </p>
+          )
+          : null}
+        <div className="modal-actions byok-modal-actions">
+          <div className="modal-actions-right">
+            <Button onClick={onClose} size="sm" variant="secondary">
+              Cancel
+            </Button>
+            <Button onClick={() => void save()} size="sm">
+              {state === "saving" ? "Saving" : "Save model"}
+            </Button>
+          </div>
+        </div>
+      </Card>
+    </div>
   );
 }
 
@@ -6239,57 +6339,6 @@ function ByokProviderRow({
       >
         {option.configured ? "Update key" : "Add key"}
       </Button>
-    </div>
-  );
-}
-
-function ByokBillingBanner({
-  inference,
-  navigate,
-  providers,
-}: {
-  inference?: LaunchInferenceOptionsResponse;
-  navigate: (to: string) => void;
-  providers: LaunchByokProviderOption[];
-}): ReactElement {
-  if (!inference) {
-    // Auth-neutral: this branch covers both signed-out visitors and
-    // signed-in users whose inference-options fetch failed.
-    return (
-      <div className="byok-banner">
-        <Icon name="spark" />
-        <span>
-          Runs bill platform credits unless a primary BYOK provider key is
-          configured.
-        </span>
-      </div>
-    );
-  }
-  if (inference.billingMode === "byok") {
-    const primaryName =
-      providers.find((option) => option.id === inference.primaryProvider)
-        ?.name || inference.primaryProvider || "provider";
-    return (
-      <div className="byok-banner">
-        <Icon name="key" />
-        <span>Runs use your {primaryName} key — no credits are charged.</span>
-      </div>
-    );
-  }
-  return (
-    <div className="byok-banner">
-      <Icon name="wallet" />
-      <span>
-        Platform inference is billed from your balance.{" "}
-        {formatCreditFromLight(inference.credits.spendable ?? 0)} spendable
-        {inference.credits.usable
-          ? "."
-          : ` — below the ${
-            formatCreditFromLight(inference.credits.minimumForPlatformInference)
-          } minimum for platform inference.`}
-        {" "}
-        <RouteLink navigate={navigate} to="/account?tab=balance">Manage wallet</RouteLink>
-      </span>
     </div>
   );
 }
