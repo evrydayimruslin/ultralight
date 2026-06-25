@@ -17,6 +17,10 @@ const AI_FETCH_TIMEOUT_MS = 90_000;
 // Platform ceiling on a single completion. Tenant code passes max_tokens
 // straight through otherwise, maximizing both latency and per-call spend.
 const MAX_AI_MAX_TOKENS = 32_768;
+// Final fallback model for galactic.ai(): used when neither the dev's per-call
+// model nor the user's selected model is set, and as the retry model when the
+// chosen model fails on the OpenRouter (credits) path. A valid OpenRouter slug.
+const PLATFORM_FALLBACK_MODEL = 'deepseek/deepseek-v4-flash';
 
 interface AIBindingProps {
   userId: string;
@@ -124,11 +128,13 @@ export class AIBinding extends WorkerEntrypoint<unknown, AIBindingProps> {
       return { role: msg.role, content: msg.content };
     });
 
-    const requestedModel = request.model || defaultModel || 'openai/gpt-4o-mini';
+    // Model precedence: dev's per-call model > user's selected model
+    // (defaultModel) > platform fallback (deepseek-v4).
+    const requestedModel = request.model || defaultModel || PLATFORM_FALLBACK_MODEL;
     const platformModel = provider === 'ultralight'
       ? resolvePlatformInferenceModel(requestedModel)
       : null;
-    const model = platformModel && platformModel.upstreamProvider === upstreamProvider
+    let model = platformModel && platformModel.upstreamProvider === upstreamProvider
       ? platformModel.upstreamModel
       : provider === 'ultralight' && upstreamProvider === 'openrouter' && platformModel
       ? platformModel.aliases.find((alias) => alias.includes('/')) || requestedModel
@@ -140,12 +146,7 @@ export class AIBinding extends WorkerEntrypoint<unknown, AIBindingProps> {
       MAX_AI_MAX_TOKENS,
     );
 
-    // Bound the provider call (and its body read) so a hung endpoint fails
-    // fast instead of idling the execution to its sandbox abort.
-    const abort = new AbortController();
-    const timeoutId = setTimeout(() => abort.abort(), AI_FETCH_TIMEOUT_MS);
-
-    let data: {
+    type CompletionData = {
       choices: Array<{ message: { content: string } }>;
       model: string;
       usage: {
@@ -155,57 +156,81 @@ export class AIBinding extends WorkerEntrypoint<unknown, AIBindingProps> {
         prompt_cache_miss_tokens?: number;
       };
     };
-    try {
-      const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://api.ultralightagent.com',
-          'X-Title': 'Galactic',
-        },
-        body: JSON.stringify({
-          // Spread defaults FIRST so the clamped max_tokens (and explicit
-          // temperature) stay final even if a future platform default carries
-          // those keys. requestDefaults is platform-controlled, never tenant.
-          ...(requestDefaults ?? {}),
-          model,
-          messages,
-          max_tokens: maxTokens,
-          temperature: request.temperature ?? 0.7,
-          // Parity with the in-process path: forward tools to the provider when
-          // present. Response still returns text content only (no tool_calls).
-          ...(Array.isArray(request.tools) && request.tools.length > 0
-            ? { tools: request.tools }
-            : {}),
-        }),
-        signal: abort.signal,
-      });
 
-      if (!response.ok) {
-        const errText = await response.text();
+    // One provider attempt for a given model. Bound independently so a hung
+    // endpoint fails fast instead of idling the execution to its sandbox abort.
+    const attempt = async (
+      modelToUse: string,
+    ): Promise<{ data: CompletionData } | { error: string }> => {
+      const abort = new AbortController();
+      const timeoutId = setTimeout(() => abort.abort(), AI_FETCH_TIMEOUT_MS);
+      try {
+        const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://api.ultralightagent.com',
+            'X-Title': 'Galactic',
+          },
+          body: JSON.stringify({
+            // Spread defaults FIRST so the clamped max_tokens (and explicit
+            // temperature) stay final even if a future platform default carries
+            // those keys. requestDefaults is platform-controlled, never tenant.
+            ...(requestDefaults ?? {}),
+            model: modelToUse,
+            messages,
+            max_tokens: maxTokens,
+            temperature: request.temperature ?? 0.7,
+            // Parity with the in-process path: forward tools to the provider when
+            // present. Response still returns text content only (no tool_calls).
+            ...(Array.isArray(request.tools) && request.tools.length > 0
+              ? { tools: request.tools }
+              : {}),
+          }),
+          signal: abort.signal,
+        });
+        if (!response.ok) {
+          const errText = await response.text();
+          return { error: `AI call failed (${response.status}): ${errText}` };
+        }
+        return { data: await response.json() as CompletionData };
+      } catch (err) {
         return {
-          content: '',
-          model,
-          usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
-          error: `AI call failed (${response.status}): ${errText}`,
+          error: abort.signal.aborted
+            ? `AI call timed out after ${Math.round(AI_FETCH_TIMEOUT_MS / 1000)}s`
+            : `AI call failed: ${err instanceof Error ? err.message : String(err)}`,
         };
+      } finally {
+        clearTimeout(timeoutId);
       }
+    };
 
-      data = await response.json() as typeof data;
-    } catch (err) {
-      const timedOut = abort.signal.aborted;
+    // Attempt the resolved model; if it fails, retry once with the platform
+    // fallback model — but only on the OpenRouter path, where that slug is
+    // valid. A non-OpenRouter BYOK provider can't serve it, so surface the error.
+    let result = await attempt(model);
+    if (
+      'error' in result &&
+      upstreamProvider === 'openrouter' &&
+      model !== PLATFORM_FALLBACK_MODEL
+    ) {
+      const fallback = await attempt(PLATFORM_FALLBACK_MODEL);
+      if ('data' in fallback) {
+        model = PLATFORM_FALLBACK_MODEL;
+        result = fallback;
+      }
+    }
+
+    if ('error' in result) {
       return {
         content: '',
         model,
         usage: { input_tokens: 0, output_tokens: 0, cost_light: 0 },
-        error: timedOut
-          ? `AI call timed out after ${Math.round(AI_FETCH_TIMEOUT_MS / 1000)}s`
-          : `AI call failed: ${err instanceof Error ? err.message : String(err)}`,
+        error: result.error,
       };
-    } finally {
-      clearTimeout(timeoutId);
     }
+    const data = result.data;
     const promptTokens = data.usage?.prompt_tokens || 0;
     const completionTokens = data.usage?.completion_tokens || 0;
     const promptCacheHitTokens = data.usage?.prompt_cache_hit_tokens;
