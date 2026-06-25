@@ -167,5 +167,7 @@ export interface ChatInferenceOptionsResponse {
     providers: ChatInferenceProviderOption[];
     configuredProviderIds: ActiveBYOKProvider[];
 }
-export declare const CHAT_MIN_BALANCE_LIGHT = 50;
-export declare const CHAT_PLATFORM_MARKUP = 1;
+export declare const FREE_MODE_BALANCE_LIGHT = 25;
+/** @deprecated Use FREE_MODE_BALANCE_LIGHT. Kept as the platform-inference-floor name. */
+export declare const CHAT_MIN_BALANCE_LIGHT = 25;
+export declare const CHAT_PLATFORM_MARKUP = 1.1;

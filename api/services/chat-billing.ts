@@ -91,6 +91,11 @@ const MODEL_RATES: Record<
   "openai/gpt-4o-mini": { inputPerMillion: 0.15, outputPerMillion: 0.6 },
   "google/gemini-pro-1.5": { inputPerMillion: 2.5, outputPerMillion: 7.5 },
   "deepseek/deepseek-chat": { inputPerMillion: 0.14, outputPerMillion: 0.28 },
+  // Default platform models, now served via OpenRouter. Accurate rates here keep
+  // the fallback honest when OpenRouter doesn't report total_cost (the runtime-ai
+  // path never passes it), instead of overcharging via DEFAULT_RATES.
+  "deepseek/deepseek-v4-flash": { inputPerMillion: 0.14, outputPerMillion: 0.28 },
+  "deepseek/deepseek-v4-pro": { inputPerMillion: 1.74, outputPerMillion: 3.48 },
 };
 
 /** Conservative default for unknown models */
@@ -100,7 +105,7 @@ const DEFAULT_RATES = { inputPerMillion: 5, outputPerMillion: 15 };
  * Calculate cost in Light from usage data.
  * Prefers OpenRouter's reported total_cost (USD) if available.
  * Falls back to static per-model rate table.
- * Applies platform markup (currently 1.0x pass-through).
+ * Applies the platform markup (CHAT_PLATFORM_MARKUP) for credits-billed routes.
  */
 export function calculateCostLight(
   usage: ChatUsage,

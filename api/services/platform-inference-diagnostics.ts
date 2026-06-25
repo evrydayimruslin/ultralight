@@ -37,20 +37,23 @@ export function buildPlatformInferenceReadiness(
 
   const checks: PlatformInferenceDiagnosticCheck[] = [
     {
-      check: "deepseek_platform_key",
-      ok: deepSeekKeyConfigured,
-      severity: "required",
-      result: deepSeekKeyConfigured
-        ? `Configured for direct ${directModels} routing`
-        : `DEEPSEEK_API_KEY is missing; direct ${directModels} routes will fail closed`,
-    },
-    {
       check: "openrouter_platform_key",
       ok: openRouterKeyConfigured,
       severity: "required",
       result: openRouterKeyConfigured
-        ? "Configured for platform OpenRouter routing and non-DeepSeek Light models"
-        : "OPENROUTER_API_KEY is missing; non-DeepSeek Light models cannot provision platform OpenRouter keys",
+        ? "Configured — all platform (Light) models route through OpenRouter"
+        : "OPENROUTER_API_KEY is missing; platform (Light) inference cannot provision per-user OpenRouter keys and will fail closed",
+    },
+    {
+      // DeepSeek-direct routing is retired: every platform (Light) model now
+      // resolves to an OpenRouter slug, so DEEPSEEK_API_KEY is no longer a
+      // launch-blocking secret. Kept as an informational (optional) check.
+      check: "deepseek_platform_key",
+      ok: true,
+      severity: "optional",
+      result: deepSeekKeyConfigured
+        ? `Present but unused — ${directModels} now route through OpenRouter (DeepSeek-direct retired)`
+        : `Not set (expected) — ${directModels} route through OpenRouter; the direct DeepSeek API path is retired`,
     },
   ];
 

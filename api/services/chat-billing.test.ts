@@ -3,8 +3,8 @@ import { CHAT_PLATFORM_MARKUP } from "../../shared/contracts/ai.ts";
 import { calculateCostLight, deductChatCost } from "./chat-billing.ts";
 import { ULTRALIGHT_DEEPSEEK_V4_PRO_MODEL } from "./platform-inference-models.ts";
 
-Deno.test("chat billing: OpenRouter total_cost is debited at pass-through Light rate", () => {
-  assertEquals(CHAT_PLATFORM_MARKUP, 1.0);
+Deno.test("chat billing: OpenRouter total_cost is debited with the 10% platform markup", () => {
+  assertEquals(CHAT_PLATFORM_MARKUP, 1.1);
 
   const costLight = calculateCostLight(
     { prompt_tokens: 100, completion_tokens: 200, total_tokens: 300 },
@@ -12,7 +12,8 @@ Deno.test("chat billing: OpenRouter total_cost is debited at pass-through Light 
     0.1234,
   );
 
-  assertEquals(costLight, 12.34);
+  // 0.1234 USD × 100 Light/$ × 1.1 markup = 13.574 Light.
+  assertEquals(costLight, 13.574);
 });
 
 Deno.test("chat billing: direct DeepSeek pricing uses cache hit, cache miss, and output tokens", () => {

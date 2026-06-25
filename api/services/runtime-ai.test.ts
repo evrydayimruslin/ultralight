@@ -81,9 +81,9 @@ Deno.test("runtime AI: Light route debits usage after provider response", async 
         debitBody = JSON.parse(String(init?.body));
         return new Response(JSON.stringify([{
           old_balance: 100,
-          new_balance: 99.9865,
+          new_balance: 99.9851,
           was_depleted: false,
-          amount_debited: 0.0135,
+          amount_debited: 0.0149,
         }]), { status: 200, headers: { "Content-Type": "application/json" } });
       }
 
@@ -114,9 +114,10 @@ Deno.test("runtime AI: Light route debits usage after provider response", async 
     });
 
     assertEquals(response.content, "metered");
-    assertEquals(response.usage.cost_light, 0.0135);
+    // gpt-4o-mini fallback rate (0.15/0.6 per M) × 100 Light/$ × 1.1 markup.
+    assertEquals(response.usage.cost_light, 0.0149);
     assertEquals(debitBody?.p_user_id, "user-1");
-    assertEquals(debitBody?.p_amount_light, 0.0135);
+    assertEquals(debitBody?.p_amount_light, 0.0149);
     assertEquals(debitBody?.p_reason, "ai_chat");
   } finally {
     globalThis.fetch = previousFetch;

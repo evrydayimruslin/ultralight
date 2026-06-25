@@ -82,6 +82,7 @@ export interface ManifestFunction {
     examples?: string[];
     annotations?: MCPToolAnnotations;
     generation_hints?: WidgetGenerationHints;
+    uses_inference?: boolean;
     execution?: ManifestFunctionExecution;
 }
 export interface ManifestFunctionExecution {

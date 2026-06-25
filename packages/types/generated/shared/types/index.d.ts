@@ -1604,7 +1604,8 @@ export interface ToolInvocationTelemetryRequest {
     widgetAction?: WidgetToolInvocationTelemetryContext;
     metadata?: Record<string, unknown>;
 }
-/** Minimum balance in Light required to start a chat stream */
-export declare const CHAT_MIN_BALANCE_LIGHT = 50;
-/** Platform markup multiplier on OpenRouter costs */
-export declare const CHAT_PLATFORM_MARKUP = 1;
+/** Minimum balance in Light to start a chat stream. Unified with
+ * FREE_MODE_BALANCE_LIGHT (shared/contracts/ai.ts) — 25 Light = $0.25. */
+export declare const CHAT_MIN_BALANCE_LIGHT = 25;
+/** Platform markup multiplier on OpenRouter costs (10% upcharge on Light-debit credits). */
+export declare const CHAT_PLATFORM_MARKUP = 1.1;

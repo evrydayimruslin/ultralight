@@ -3983,5 +3983,5 @@ export interface ToolInvocationTelemetryRequest {
  * FREE_MODE_BALANCE_LIGHT (shared/contracts/ai.ts) — 25 Light = $0.25. */
 export const CHAT_MIN_BALANCE_LIGHT = 25;
 
-/** Platform markup multiplier on OpenRouter costs */
-export const CHAT_PLATFORM_MARKUP = 1.0; // Pass through OpenRouter cost in Light-debit mode
+/** Platform markup multiplier on OpenRouter costs (10% upcharge on Light-debit credits). */
+export const CHAT_PLATFORM_MARKUP = 1.1; // Mirrors shared/contracts/ai.ts; keep in sync.

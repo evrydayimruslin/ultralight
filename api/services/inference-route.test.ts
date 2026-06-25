@@ -7,9 +7,7 @@ import {
   resolveInferenceRoute,
 } from "./inference-route.ts";
 import {
-  DEEPSEEK_API_BASE_URL,
   ULTRALIGHT_DEEPSEEK_V4_FLASH_MODEL,
-  ULTRALIGHT_DEEPSEEK_V4_PRO_MODEL,
 } from "./platform-inference-models.ts";
 
 type RouteUserService = Pick<UserService, "getUser" | "getDecryptedApiKey">;
@@ -31,7 +29,7 @@ function makeUser(overrides: Partial<UserProfile> = {}): UserProfile {
   };
 }
 
-Deno.test("inference route: Light mode routes DeepSeek platform models directly and requires debit", async () => {
+Deno.test("inference route: Light mode routes DeepSeek platform models through OpenRouter and requires debit", async () => {
   const userService: RouteUserService = {
     getUser: async () => makeUser(),
     getDecryptedApiKey: async () => {
@@ -39,17 +37,12 @@ Deno.test("inference route: Light mode routes DeepSeek platform models directly 
     },
   };
   let openRouterCalled = false;
-  const platformKeys: string[] = [];
 
   const route = await resolveInferenceRoute({
     userId: "user-1",
     userEmail: "auth@example.com",
     requestedModel: "deepseek/deepseek-v4-pro",
     userService,
-    getPlatformApiKey: async (envName) => {
-      platformKeys.push(envName);
-      return "ds-platform-key";
-    },
     getOrCreateOpenRouterKey: async () => {
       openRouterCalled = true;
       return "or-platform-key";
@@ -58,17 +51,15 @@ Deno.test("inference route: Light mode routes DeepSeek platform models directly 
 
   assertEquals(route.billingMode, "light");
   assertEquals(route.provider, "ultralight");
-  assertEquals(route.upstreamProvider, "deepseek");
-  assertEquals(route.baseUrl, DEEPSEEK_API_BASE_URL);
-  assertEquals(route.apiKey, "ds-platform-key");
-  assertEquals(route.model, "deepseek-v4-pro");
-  assertEquals(route.canonicalModelId, ULTRALIGHT_DEEPSEEK_V4_PRO_MODEL);
-  assertEquals(route.keySource, "platform_deepseek");
-  assertEquals(route.billingSource, "platform_deepseek_direct");
+  assertEquals(route.upstreamProvider, "openrouter");
+  assertEquals(route.baseUrl, BYOK_PROVIDERS.openrouter.baseUrl);
+  assertEquals(route.apiKey, "or-platform-key");
+  assertEquals(route.model, "deepseek/deepseek-v4-pro");
+  assertEquals(route.keySource, "platform_openrouter");
+  assertEquals(route.billingSource, "openrouter");
   assertEquals(route.shouldRequireBalance, true);
   assertEquals(route.shouldDebitLight, true);
-  assertEquals(platformKeys, ["DEEPSEEK_API_KEY"]);
-  assertEquals(openRouterCalled, false);
+  assertEquals(openRouterCalled, true);
 });
 
 Deno.test("inference route: Light mode keeps non-platform models on platform OpenRouter", async () => {
@@ -83,9 +74,6 @@ Deno.test("inference route: Light mode keeps non-platform models on platform Ope
       getDecryptedApiKey: async () => {
         throw new Error("BYOK key should not be read");
       },
-    },
-    getPlatformApiKey: async () => {
-      throw new Error("DeepSeek key should not be read");
     },
     getOrCreateOpenRouterKey: async (userId, userEmail) => {
       platformCalls.push({ userId, userEmail });
@@ -200,24 +188,38 @@ Deno.test("inference route: explicit Light selection bypasses configured BYOK", 
     requestedModel: "openai/gpt-4o-mini",
     selection: { billingMode: "light", model: "deepseek/deepseek-v4-flash" },
     userService,
-    getPlatformApiKey: async () => "ds-platform-key",
-    getOrCreateOpenRouterKey: async () => {
-      throw new Error("OpenRouter key should not be provisioned for direct DeepSeek");
-    },
+    getOrCreateOpenRouterKey: async () => "or-platform-key",
   });
 
   assertEquals(route.billingMode, "light");
   assertEquals(route.provider, "ultralight");
-  assertEquals(route.upstreamProvider, "deepseek");
-  assertEquals(route.model, "deepseek-v4-flash");
-  assertEquals(route.canonicalModelId, ULTRALIGHT_DEEPSEEK_V4_FLASH_MODEL);
-  assertEquals(route.keySource, "platform_deepseek");
-  assertEquals(route.billingSource, "platform_deepseek_direct");
+  assertEquals(route.upstreamProvider, "openrouter");
+  assertEquals(route.model, "deepseek/deepseek-v4-flash");
+  assertEquals(route.keySource, "platform_openrouter");
+  assertEquals(route.billingSource, "openrouter");
   assertEquals(route.shouldRequireBalance, true);
   assertEquals(route.shouldDebitLight, true);
 });
 
-Deno.test("inference route: direct DeepSeek Light route fails clearly when platform key is missing", async () => {
+Deno.test("inference route: a legacy platform DeepSeek id maps to its OpenRouter slug", async () => {
+  const route = await resolveInferenceRoute({
+    userId: "user-1",
+    userEmail: "auth@example.com",
+    requestedModel: ULTRALIGHT_DEEPSEEK_V4_FLASH_MODEL,
+    userService: {
+      getUser: async () => makeUser(),
+      getDecryptedApiKey: async () => null,
+    },
+    getOrCreateOpenRouterKey: async () => "or-platform-key",
+  });
+
+  assertEquals(route.upstreamProvider, "openrouter");
+  assertEquals(route.model, "deepseek/deepseek-v4-flash");
+  assertEquals(route.keySource, "platform_openrouter");
+  assertEquals(route.billingSource, "openrouter");
+});
+
+Deno.test("inference route: Light route fails clearly when OpenRouter provisioning fails", async () => {
   const error = await assertRejects(
     () =>
       resolveInferenceRoute({
@@ -228,13 +230,12 @@ Deno.test("inference route: direct DeepSeek Light route fails clearly when platf
           getUser: async () => makeUser(),
           getDecryptedApiKey: async () => null,
         },
-        getPlatformApiKey: async () => "",
         getOrCreateOpenRouterKey: async () => {
-          throw new Error("No silent OpenRouter fallback");
+          throw new Error("OPENROUTER_API_KEY is not configured");
         },
       }),
     InferenceRouteError,
-    "DEEPSEEK_API_KEY is not configured",
+    "OPENROUTER_API_KEY is not configured",
   );
 
   assertEquals(error.code, "platform_key_unavailable");
@@ -375,17 +376,15 @@ Deno.test("inference route: legacy BYOK provider state falls back to Light mode"
     userId: "user-1",
     userEmail: "auth@example.com",
     userService,
-    getPlatformApiKey: async () => "ds-platform-key",
-    getOrCreateOpenRouterKey: async () => {
-      throw new Error("OpenRouter key should not be provisioned for default Galactic route");
-    },
+    getOrCreateOpenRouterKey: async () => "or-platform-key",
   });
 
   assertEquals(route.billingMode, "light");
   assertEquals(route.provider, "ultralight");
-  assertEquals(route.upstreamProvider, "deepseek");
-  assertEquals(route.model, "deepseek-v4-flash");
-  assertEquals(route.canonicalModelId, ULTRALIGHT_DEEPSEEK_V4_FLASH_MODEL);
+  assertEquals(route.upstreamProvider, "openrouter");
+  assertEquals(route.model, BYOK_PROVIDERS.openrouter.defaultModel);
+  assertEquals(route.keySource, "platform_openrouter");
+  assertEquals(route.billingSource, "openrouter");
   assertEquals(route.shouldRequireBalance, true);
   assertEquals(route.shouldDebitLight, true);
 });

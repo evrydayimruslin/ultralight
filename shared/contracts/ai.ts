@@ -201,4 +201,7 @@ export interface ChatInferenceOptionsResponse {
 export const FREE_MODE_BALANCE_LIGHT = 25;
 /** @deprecated Use FREE_MODE_BALANCE_LIGHT. Kept as the platform-inference-floor name. */
 export const CHAT_MIN_BALANCE_LIGHT = FREE_MODE_BALANCE_LIGHT;
-export const CHAT_PLATFORM_MARKUP = 1.0;
+// Platform inference is resold through OpenRouter; users pay the upstream cost
+// plus a 10% platform upcharge when billed in credits (Light). BYOK routes are
+// never marked up (they don't pass through this multiplier).
+export const CHAT_PLATFORM_MARKUP = 1.1;

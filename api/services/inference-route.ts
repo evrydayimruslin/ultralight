@@ -4,10 +4,8 @@ import type {
   InferenceBillingMode,
   InferenceRoutePreference,
 } from "../../shared/contracts/ai.ts";
-import { getEnv } from "../lib/env.ts";
 import { getOrCreateOpenRouterKey } from "./openrouter-keys.ts";
 import {
-  ULTRALIGHT_DEEPSEEK_V4_FLASH_MODEL,
   type PlatformInferenceProvider,
   type PlatformInferenceRequestDefaults,
   type PlatformInferenceUpstreamProvider,
@@ -68,7 +66,6 @@ export interface ResolveInferenceRouteParams {
   selection?: InferenceRoutePreference | null;
   userService?: Pick<UserService, "getUser" | "getDecryptedApiKey">;
   getOrCreateOpenRouterKey?: typeof getOrCreateOpenRouterKey;
-  getPlatformApiKey?: (envName: "DEEPSEEK_API_KEY") => string | Promise<string>;
 }
 
 export class InferenceRouteError extends Error {
@@ -129,24 +126,6 @@ function getRequestedLightModel(params: ResolveInferenceRouteParams): string | n
   return params.selection?.model?.trim() ||
     params.requestedModel?.trim() ||
     null;
-}
-
-async function readPlatformApiKey(
-  params: ResolveInferenceRouteParams,
-  envName: "DEEPSEEK_API_KEY",
-): Promise<string> {
-  const value = await (params.getPlatformApiKey
-    ? params.getPlatformApiKey(envName)
-    : getEnv(envName));
-  const apiKey = value.trim();
-  if (!apiKey) {
-    throw new InferenceRouteError(
-      "platform_key_unavailable",
-      `${envName} is not configured for Galactic platform inference`,
-      503,
-    );
-  }
-  return apiKey;
 }
 
 function isConfiguredByokProvider(
@@ -211,29 +190,19 @@ async function buildLightRoute(
     );
   }
 
+  // Platform (Light) inference routes entirely through OpenRouter, billed in
+  // credits at the platform markup. DeepSeek-direct is retired — DeepSeek and
+  // every other model are reached as OpenRouter model slugs. A legacy platform
+  // model id (e.g. ultralight/deepseek-v4-flash or deepseek-v4-flash) is mapped
+  // to its OpenRouter slug (deepseek/deepseek-v4-flash) so existing callers keep
+  // working; an absent model falls back to the OpenRouter provider default.
   const requestedModel = getRequestedLightModel(params);
-  const platformModel = resolvePlatformInferenceModel(
-    requestedModel ?? ULTRALIGHT_DEEPSEEK_V4_FLASH_MODEL,
-  );
-
-  if (platformModel?.upstreamProvider === "deepseek" && platformModel.apiKeyEnv) {
-    const apiKey = await readPlatformApiKey(params, platformModel.apiKeyEnv);
-    return {
-      billingMode: "light",
-      provider: "ultralight",
-      upstreamProvider: platformModel.upstreamProvider,
-      baseUrl: platformModel.baseUrl,
-      apiKey,
-      model: platformModel.upstreamModel,
-      canonicalModelId: platformModel.id,
-      billingModelId: platformModel.id,
-      keySource: platformModel.keySource,
-      billingSource: "platform_deepseek_direct",
-      requestDefaults: platformModel.requestDefaults,
-      shouldRequireBalance: true,
-      shouldDebitLight: true,
-    };
-  }
+  const platformModel = requestedModel
+    ? resolvePlatformInferenceModel(requestedModel)
+    : null;
+  const openRouterModel = platformModel
+    ? platformModel.aliases.find((alias) => alias.includes("/")) ?? requestedModel
+    : requestedModel;
 
   try {
     const apiKey = await (params.getOrCreateOpenRouterKey ?? getOrCreateOpenRouterKey)(
@@ -248,7 +217,7 @@ async function buildLightRoute(
       upstreamProvider: "openrouter",
       baseUrl: providerInfo.baseUrl,
       apiKey,
-      model: requestedOrDefault(params.selection?.model ?? params.requestedModel, undefined, "openrouter"),
+      model: requestedOrDefault(openRouterModel, undefined, "openrouter"),
       keySource: "platform_openrouter",
       billingSource: "openrouter",
       shouldRequireBalance: true,

@@ -427,7 +427,7 @@ export function getInferenceProviderChoices(
       billingMode: "light",
       provider: "openrouter",
       label: "Light balance",
-      description: "Platform inference through OpenRouter at pass-through cost",
+      description: "Platform inference through OpenRouter (cost + 10% platform fee, billed in credits)",
       usable: settings.light.usable,
       configured: true,
       reason: settings.light.usable ? undefined : lightReason,
