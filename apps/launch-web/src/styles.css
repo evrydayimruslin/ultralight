@@ -3842,8 +3842,11 @@ button {
   inset: 0;
   z-index: 200;
   display: grid;
-  place-items: start center;
-  padding: 56px 20px;
+  /* Vertically + horizontally centered. `safe` falls back to start alignment
+     when the modal is taller than the viewport, so the top is never clipped and
+     it stays scrollable (overflow-y: auto). */
+  place-items: safe center;
+  padding: 40px 20px;
   overflow-y: auto;
   background: rgba(10, 10, 10, 0.28);
   backdrop-filter: blur(6px);
