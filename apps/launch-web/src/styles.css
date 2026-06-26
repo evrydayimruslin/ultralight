@@ -3909,6 +3909,76 @@ button {
   accent-color: var(--ul-text);
 }
 
+/* Payment step: the Stripe Payment Element / Link wallet needs more room than
+   the 320px summary column. Collapse the grid to one centered column so the
+   element renders at a comfortable width instead of cramped. */
+.wallet-topup-grid.is-paying {
+  grid-template-columns: minmax(0, 480px);
+  justify-content: center;
+}
+
+/* Post-payment confirmation / thank-you screen (replaces the checkout form). */
+.topup-confirm {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 24px 8px 8px;
+  text-align: center;
+}
+
+.topup-confirm-badge {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  margin-bottom: 4px;
+  border-radius: 999px;
+  background: rgba(34, 197, 94, 0.14);
+  color: var(--ul-green-deep);
+}
+
+.topup-confirm-badge.is-processing {
+  background: var(--ul-raised);
+  color: var(--ul-secondary);
+}
+
+.topup-confirm-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.topup-confirm-amount {
+  margin: 2px 0 0;
+  font-size: 34px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.topup-confirm-sub {
+  margin: 0;
+  color: var(--ul-secondary);
+  font-size: 14px;
+}
+
+.topup-confirm-note {
+  margin: 8px 0 0;
+  color: var(--ul-muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.topup-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 18px;
+}
+
 .launch-button:disabled {
   opacity: 0.55;
   cursor: not-allowed;

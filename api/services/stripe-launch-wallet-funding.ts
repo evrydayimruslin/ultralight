@@ -92,17 +92,16 @@ export function buildLaunchWalletPaymentIntentParams(
   });
 
   if (input.quote.method === "card") {
-    // Card + Stripe Link only. Use dynamic payment methods restricted to
-    // no-redirect options, and explicitly exclude the Link-bundled bank
-    // (us_bank_account / Instant Bank Payments — the "$5 back" promo) and Klarna
-    // so the Element renders just card and the Link wallet. Link rides card
-    // rails, so the card fee gross-up applies. (excluded_payment_method_types
-    // requires API >= 2025-08-27; the account default version already exceeds it.
-    // Link is a wallet and cannot be excluded — it stays, as intended.)
-    params.set("automatic_payment_methods[enabled]", "true");
-    params.set("automatic_payment_methods[allow_redirects]", "never");
-    params.set("excluded_payment_method_types[0]", "us_bank_account");
-    params.set("excluded_payment_method_types[1]", "klarna");
+    // Card + Stripe Link ONLY, set explicitly. We previously used
+    // automatic_payment_methods + excluded_payment_method_types, but automatic
+    // mode defers to the account's Dashboard payment-method configuration and
+    // kept surfacing Bank (Link instant bank, the "$5 back" promo) and Klarna
+    // in the Payment Element despite the exclusions. Listing the types
+    // explicitly renders exactly card and the Link wallet. Link rides card
+    // rails, so the card fee gross-up still applies. Neither method redirects,
+    // so allow_redirects is moot.
+    params.set("payment_method_types[0]", "card");
+    params.set("payment_method_types[1]", "link");
     params.set(
       "payment_method_options[card][request_three_d_secure]",
       "automatic",

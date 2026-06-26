@@ -4826,6 +4826,7 @@ export function AccountFoundationPage(
                     <WalletTopUpPanel
                       earnedCredits={totals.earned}
                       live={live}
+                      onClose={() => setShowTopUp(false)}
                     />
                   </div>
                 </div>
@@ -5027,9 +5028,10 @@ function writePendingTopUpResult(value: string | null): void {
 
 // Stripe Link mark — green rounded square with the Link chevron.
 function WalletTopUpPanel(
-  { earnedCredits, live }: {
+  { earnedCredits, live, onClose }: {
     earnedCredits: number;
     live: LaunchPageProps["live"];
+    onClose?: () => void;
   },
 ): ReactElement {
   const [method, setMethod] = useState<PaymentMethod>("card");
@@ -5428,8 +5430,70 @@ function WalletTopUpPanel(
     live.reload();
   };
 
+  // Dedicated confirmation screen — replaces the whole checkout form once the
+  // charge is in (card succeeded) or the bank transfer is underway (ACH).
+  if (phase === "succeeded" || phase === "processing") {
+    const isProcessing = phase === "processing";
+    return (
+      <div className="topup-confirm">
+        <div
+          className={`topup-confirm-badge${
+            isProcessing ? " is-processing" : ""
+          }`}
+        >
+          <Icon name={isProcessing ? "shield" : "check"} size={28} />
+        </div>
+        <h2 className="topup-confirm-title">
+          {isProcessing ? "Transfer initiated" : "Thank you!"}
+        </h2>
+        <p className="topup-confirm-amount">
+          {formatCreditFromLight(creditsAmount)}
+        </p>
+        <p className="topup-confirm-sub">
+          {isProcessing
+            ? "is on its way to your Galactic balance"
+            : "added to your Galactic balance"}
+        </p>
+        <p className="topup-confirm-note">
+          {message ||
+            (isProcessing ? TOPUP_PROCESSING_MESSAGE : TOPUP_SUCCESS_MESSAGE)}
+        </p>
+        {verificationUrl
+          ? (
+            <a
+              className="route-link"
+              href={verificationUrl}
+              rel="noreferrer"
+              target="_blank"
+            >
+              Verify your bank account
+            </a>
+          )
+          : null}
+        <div className="topup-confirm-actions">
+          <Button
+            onClick={resetForAnotherTopUp}
+            size="lg"
+            variant="secondary"
+          >
+            Top up again
+          </Button>
+          <Button
+            onClick={() => {
+              live.reload();
+              onClose?.();
+            }}
+            size="lg"
+          >
+            Done
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="wallet-topup-grid">
+    <div className={`wallet-topup-grid${checkout ? " is-paying" : ""}`}>
       <Card className="wallet-topup-card">
         <p className="section-label">Amount</p>
         <div className="light-input-shell">
@@ -5517,8 +5581,7 @@ function WalletTopUpPanel(
             </>
           )
           : null}
-        {method !== "earnings" && phase !== "succeeded" &&
-            phase !== "processing"
+        {method !== "earnings"
           ? (
             <label className="topup-terms">
               <input
@@ -5539,13 +5602,7 @@ function WalletTopUpPanel(
             </label>
           )
           : null}
-        {phase === "succeeded" || phase === "processing"
-          ? (
-            <Button onClick={resetForAnotherTopUp} size="lg" variant="secondary">
-              Top up again
-            </Button>
-          )
-          : checkout
+        {checkout
           ? (
             <Button
               disabled={phase !== "collecting"}

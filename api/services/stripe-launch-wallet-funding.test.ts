@@ -30,14 +30,13 @@ Deno.test("stripe launch wallet funding: card intent params carry gross-up metad
     params.get("description"),
     "Galactic credits funding (✦10.0K)",
   );
-  assertEquals(params.get("automatic_payment_methods[enabled]"), "true");
-  assertEquals(
-    params.get("automatic_payment_methods[allow_redirects]"),
-    "never",
-  );
-  assertEquals(params.get("excluded_payment_method_types[0]"), "us_bank_account");
-  assertEquals(params.get("excluded_payment_method_types[1]"), "klarna");
-  assertEquals(params.get("payment_method_types[0]"), null);
+  // Card + Link explicitly, no automatic_payment_methods / exclusions (those
+  // let the Element surface Bank + Klarna).
+  assertEquals(params.get("payment_method_types[0]"), "card");
+  assertEquals(params.get("payment_method_types[1]"), "link");
+  assertEquals(params.get("automatic_payment_methods[enabled]"), null);
+  assertEquals(params.get("excluded_payment_method_types[0]"), null);
+  assertEquals(params.get("excluded_payment_method_types[1]"), null);
   assertEquals(
     params.get("payment_method_options[card][request_three_d_secure]"),
     "automatic",
