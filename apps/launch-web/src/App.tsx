@@ -134,11 +134,18 @@ export function App(): ReactElement {
     });
   }, [location.pathname, providerCodeMisrouted]);
 
+  // Agent detail pages (public + admin) live under the "Agents" tab, so keep
+  // that top-nav item highlighted while viewing one.
+  const activeNavKey =
+    route.definition.key === "agent" || route.definition.key === "adminAgent"
+      ? "library"
+      : route.definition.key;
+
   return (
     <SignInModalProvider>
       <LaunchShell
         accountRoutes={accountRoutes()}
-        activeRoute={route.definition.key}
+        activeRoute={activeNavKey}
         navigate={navigate}
         primaryRoutes={primaryRoutes()}
         title={routeTitles[route.definition.key]}
