@@ -1787,6 +1787,7 @@ function AgentFunctionsPanel({
   selectedFunction: AgentFunctionFixture | undefined;
   tool: AgentDetailFixture;
 }): ReactElement {
+  const [modal, setModal] = useState<null | "inference" | "settings">(null);
   // Live agents expose only the functions the API reports — none yet means an
   // honest empty state, not a synthesized placeholder function.
   if (!selectedFunction) {
@@ -1800,21 +1801,71 @@ function AgentFunctionsPanel({
     );
   }
 
+  const override = selectedFunction.inferenceOverride;
+  const inferenceSummary = override
+    ? (override.billingMode === "byok"
+      ? `${override.provider} · ${override.model}`
+      : `Galactic AI · ${override.model}`)
+    : `Galactic AI · ${
+      live.data.inferenceOptions?.platformModel || GALACTIC_DEFAULT_MODEL
+    } (default)`;
+
   return (
     <div className="functions-panel">
       <FunctionSandboxCard fn={selectedFunction} live={live} tool={tool} />
-      <PermissionControl fn={selectedFunction} live={live} tool={tool} />
-      {selectedFunction.usesInference
+      <Card className="function-settings-bar">
+        {selectedFunction.usesInference
+          ? (
+            <div className="preference-row">
+              <div>
+                <strong>Galactic AI model</strong>
+                <span>{inferenceSummary}</span>
+              </div>
+              <Button
+                onClick={() => setModal("inference")}
+                size="sm"
+                variant="secondary"
+              >
+                Choose model
+              </Button>
+            </div>
+          )
+          : null}
+        <div className="preference-row">
+          <div>
+            <strong>Permissions &amp; wiring</strong>
+            <span>Connected-agent permission and inbound / outbound calls.</span>
+          </div>
+          <Button
+            onClick={() => setModal("settings")}
+            size="sm"
+            variant="secondary"
+          >
+            Configure
+          </Button>
+        </div>
+      </Card>
+      {modal === "inference"
         ? (
-          <FunctionInferenceControl
+          <FunctionInferenceModal
             fn={selectedFunction}
             key={selectedFunction.name}
             live={live}
+            onClose={() => setModal(null)}
             tool={tool}
           />
         )
         : null}
-      <FunctionWiring fn={selectedFunction} live={live} />
+      {modal === "settings"
+        ? (
+          <FunctionSettingsModal
+            fn={selectedFunction}
+            live={live}
+            onClose={() => setModal(null)}
+            tool={tool}
+          />
+        )
+        : null}
     </div>
   );
 }
@@ -2289,14 +2340,16 @@ function PermissionControl({
 // provider (Galactic AI = credits, or one of their BYOK keys) and model this
 // function's galactic.ai() calls use. Unset => the default fallback chain
 // (dev per-call model > the viewer's global platform model > deepseek-v4).
-function FunctionInferenceControl({
+function FunctionInferenceModal({
   fn,
   live,
   tool,
+  onClose,
 }: {
   fn: AgentFunctionFixture;
   live: LaunchPageProps["live"];
   tool: AgentDetailFixture;
+  onClose: () => void;
 }): ReactElement {
   const byokProviders =
     (live.data.byok ? live.data.byok.providers : byokProviderFixtures)
@@ -2320,78 +2373,154 @@ function FunctionInferenceControl({
       ? (fn.inferenceOverride.provider || "galactic")
       : "galactic")
     : "galactic";
-  const initialModel = fn.inferenceOverride?.model ||
-    defaultModelFor(initialProvider);
   const [provider, setProvider] = useState(initialProvider);
-  const [model, setModel] = useState(initialModel);
-  const [savedProvider, setSavedProvider] = useState(initialProvider);
-  const [savedModel, setSavedModel] = useState(initialModel);
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "error">(
-    "idle",
+  const [model, setModel] = useState(
+    fn.inferenceOverride?.model || defaultModelFor(initialProvider),
   );
-  const dirty = provider !== savedProvider ||
-    model.trim() !== savedModel.trim();
+  const [state, setState] = useState<"idle" | "saving" | "error">("idle");
+  const [message, setMessage] = useState("");
+
+  const save = async () => {
+    if (state === "saving") return;
+    if (!model.trim()) {
+      setState("error");
+      setMessage("Enter a model slug.");
+      return;
+    }
+    setState("saving");
+    setMessage("");
+    try {
+      await launchApi.updateAgentFunctionInference(tool.id, fn.name, {
+        provider,
+        model: model.trim(),
+      });
+      live.reload();
+      onClose();
+    } catch (err) {
+      setState("error");
+      setMessage(err instanceof Error ? err.message : String(err));
+    }
+  };
 
   return (
-    <Card className="permission-control">
-      <div>
-        <strong>Galactic AI model</strong>
-        <span>
+    <div
+      className="settings-modal-backdrop"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+      role="presentation"
+    >
+      <Card className="new-key-modal byok-key-modal">
+        <div className="modal-title-row">
+          <span className="target-icon">
+            <Icon name="spark" />
+          </span>
+          <h2>Galactic AI model</h2>
+        </div>
+        <p>
           Which provider and model galactic.ai() uses for this function. Galactic
           AI bills credits; a BYOK provider uses your own key.
-        </span>
-      </div>
-      <div className="permission-actions">
-        <select
-          onChange={(event) => {
-            const value = event.currentTarget.value;
-            setProvider(value);
-            setModel(defaultModelFor(value));
+        </p>
+        <form
+          className="byok-modal-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void save();
           }}
-          value={provider}
         >
-          {providerOptions.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-        <input
-          onChange={(event) => setModel(event.currentTarget.value)}
-          placeholder={defaultModelFor(provider)}
-          value={model}
-        />
-        <Button
-          onClick={async () => {
-            if (!dirty || !model.trim()) return;
-            setSaveState("saving");
-            try {
-              await launchApi.updateAgentFunctionInference(tool.id, fn.name, {
-                provider,
-                model: model.trim(),
-              });
-              setSavedProvider(provider);
-              setSavedModel(model.trim());
-              setModel(model.trim());
-              setSaveState("idle");
-              live.reload();
-            } catch {
-              setSaveState("error");
-            }
-          }}
-          size="sm"
-          variant={dirty ? "primary" : "secondary"}
-        >
-          {saveState === "saving"
-            ? "Saving"
-            : saveState === "error"
-            ? "Retry"
-            : dirty
-            ? "Save model"
-            : "Saved"}
-        </Button>
-      </div>
-    </Card>
+          <label>
+            <span>provider</span>
+            <select
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                setProvider(value);
+                setModel(defaultModelFor(value));
+              }}
+              value={provider}
+            >
+              {providerOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>model</span>
+            <input
+              autoFocus
+              onChange={(event) => setModel(event.currentTarget.value)}
+              placeholder={defaultModelFor(provider)}
+              value={model}
+            />
+          </label>
+        </form>
+        {message
+          ? (
+            <p
+              className={state === "error"
+                ? "settings-help error"
+                : "settings-help"}
+            >
+              {message}
+            </p>
+          )
+          : null}
+        <div className="modal-actions byok-modal-actions">
+          <div className="modal-actions-right">
+            <Button onClick={onClose} size="sm" variant="secondary">
+              Cancel
+            </Button>
+            <Button onClick={() => void save()} size="sm">
+              {state === "saving" ? "Saving" : "Save model"}
+            </Button>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// All per-function permissions in one modal: the connected-agent permission
+// (Always/Ask/Never) and the inbound/outbound wiring, so the function surface
+// stays clean.
+function FunctionSettingsModal({
+  fn,
+  live,
+  tool,
+  onClose,
+}: {
+  fn: AgentFunctionFixture;
+  live: LaunchPageProps["live"];
+  tool: AgentDetailFixture;
+  onClose: () => void;
+}): ReactElement {
+  return (
+    <div
+      className="settings-modal-backdrop"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+      role="presentation"
+    >
+      <Card className="new-key-modal function-settings-modal">
+        <div className="modal-title-row">
+          <span className="target-icon">
+            <Icon name="shield" />
+          </span>
+          <h2>Permissions &amp; wiring</h2>
+        </div>
+        <PermissionControl fn={fn} live={live} tool={tool} />
+        <FunctionWiring fn={fn} live={live} />
+        <div className="modal-actions byok-modal-actions">
+          <div className="modal-actions-right">
+            <Button onClick={onClose} size="sm" variant="secondary">
+              Done
+            </Button>
+          </div>
+        </div>
+      </Card>
+    </div>
   );
 }
 

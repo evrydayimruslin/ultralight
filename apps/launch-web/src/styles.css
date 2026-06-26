@@ -4557,6 +4557,22 @@ button {
   box-shadow: 0 16px 50px rgba(0, 0, 0, 0.12);
 }
 
+/* The permissions+wiring modal is wider and scrolls — it stacks the existing
+   permission + wiring cards as sections, so strip their standalone chrome. */
+.function-settings-modal {
+  width: min(100%, 560px);
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.function-settings-modal .permission-control,
+.function-settings-modal .function-wiring-card {
+  border: 0;
+  box-shadow: none;
+  padding-left: 0;
+  padding-right: 0;
+}
+
 .modal-title-row {
   display: flex;
   align-items: center;
