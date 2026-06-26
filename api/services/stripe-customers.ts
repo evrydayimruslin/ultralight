@@ -18,34 +18,46 @@ async function readJsonRows<T>(response: Response): Promise<T[]> {
   return Array.isArray(payload) ? payload as T[] : [];
 }
 
-export async function getOrCreateStripeCustomerForUser(
-  userId: string,
+/**
+ * True if a stored customer id resolves to a live, non-deleted customer under
+ * the given key/mode. Only a DEFINITIVE miss — HTTP 404, or a 200 body marked
+ * `deleted` — returns false. Transient/auth/permission errors and network
+ * blips return true so we never orphan-and-duplicate a customer on a blip; the
+ * real error then surfaces from the downstream Stripe call instead.
+ *
+ * This is the guard that self-heals a Stripe TEST->LIVE key cutover: a
+ * customer created under the test key does not exist for the live key, so the
+ * stored id must be discarded and recreated.
+ */
+export async function stripeCustomerExists(
+  stripeCustomerId: string,
   stripeSecretKey: string,
-): Promise<{ stripeCustomerId: string; email: string | null }> {
-  const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } =
-    getSupabaseEnv();
-  const userDataRes = await fetch(
-    `${sbUrl}/rest/v1/users?id=eq.${
-      encodeURIComponent(userId)
-    }&select=stripe_customer_id,email`,
-    {
-      headers: {
-        "apikey": sbKey,
-        "Authorization": `Bearer ${sbKey}`,
-      },
-    },
-  );
-  if (!userDataRes.ok) {
-    throw new Error("Failed to read user");
+): Promise<boolean> {
+  try {
+    const res = await fetch(
+      `https://api.stripe.com/v1/customers/${
+        encodeURIComponent(stripeCustomerId)
+      }`,
+      { headers: { "Authorization": `Bearer ${stripeSecretKey}` } },
+    );
+    if (res.status === 404) return false;
+    if (!res.ok) return true;
+    const body = await res.json().catch(() => null) as
+      | { deleted?: boolean }
+      | null;
+    return body?.deleted !== true;
+  } catch {
+    return true;
   }
-  const [userData] = await readJsonRows<StripeCustomerRow>(userDataRes);
-  let stripeCustomerId = userData?.stripe_customer_id || null;
-  const email = userData?.email || null;
+}
 
-  if (stripeCustomerId) {
-    return { stripeCustomerId, email };
-  }
-
+async function createStripeCustomerForUser(
+  userId: string,
+  email: string | null,
+  stripeSecretKey: string,
+  sbUrl: string,
+  sbKey: string,
+): Promise<string> {
   const custRes = await fetch("https://api.stripe.com/v1/customers", {
     method: "POST",
     headers: {
@@ -68,20 +80,87 @@ export async function getOrCreateStripeCustomerForUser(
   }
 
   const customer = await custRes.json() as { id: string };
-  stripeCustomerId = customer.id;
 
-  await fetch(`${sbUrl}/rest/v1/users?id=eq.${encodeURIComponent(userId)}`, {
-    method: "PATCH",
-    headers: {
-      "apikey": sbKey,
-      "Authorization": `Bearer ${sbKey}`,
-      "Content-Type": "application/json",
-      "Prefer": "return=minimal",
+  const patchRes = await fetch(
+    `${sbUrl}/rest/v1/users?id=eq.${encodeURIComponent(userId)}`,
+    {
+      method: "PATCH",
+      headers: {
+        "apikey": sbKey,
+        "Authorization": `Bearer ${sbKey}`,
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal",
+      },
+      body: JSON.stringify({ stripe_customer_id: customer.id }),
     },
-    body: JSON.stringify({ stripe_customer_id: stripeCustomerId }),
-  });
+  );
+  // If the write-back fails the stale id stays on the row, so the next funding
+  // request would recreate the customer again. The current request still
+  // succeeds (it uses the fresh id in-memory); log loudly so a persistent
+  // persist failure is observable instead of silently spawning duplicates.
+  if (!patchRes.ok) {
+    console.warn(
+      `[STRIPE] Failed to persist customer ${customer.id} for user ${userId} (status ${patchRes.status}); next funding attempt may recreate it.`,
+    );
+  }
 
-  return { stripeCustomerId, email };
+  return customer.id;
+}
+
+export async function getOrCreateStripeCustomerForUser(
+  userId: string,
+  stripeSecretKey: string,
+): Promise<{ stripeCustomerId: string; email: string | null }> {
+  const { SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey } =
+    getSupabaseEnv();
+  const userDataRes = await fetch(
+    `${sbUrl}/rest/v1/users?id=eq.${
+      encodeURIComponent(userId)
+    }&select=stripe_customer_id,email`,
+    {
+      headers: {
+        "apikey": sbKey,
+        "Authorization": `Bearer ${sbKey}`,
+      },
+    },
+  );
+  if (!userDataRes.ok) {
+    throw new Error("Failed to read user");
+  }
+  const [userData] = await readJsonRows<StripeCustomerRow>(userDataRes);
+  const stripeCustomerId = userData?.stripe_customer_id || null;
+  const email = userData?.email || null;
+
+  if (stripeCustomerId) {
+    // Validate the stored id against the active key. A customer created under a
+    // different key/mode (the classic test->live cutover) no longer exists, so
+    // recreate + persist rather than handing a dead id to PaymentIntent /
+    // customer-address calls (which fail with resource_missing "No such
+    // customer"). Self-heals every funding path through this one chokepoint.
+    if (await stripeCustomerExists(stripeCustomerId, stripeSecretKey)) {
+      return { stripeCustomerId, email };
+    }
+    console.warn(
+      `[STRIPE] Stored customer ${stripeCustomerId} for user ${userId} not found under the active key; recreating.`,
+    );
+    const recreated = await createStripeCustomerForUser(
+      userId,
+      email,
+      stripeSecretKey,
+      sbUrl,
+      sbKey,
+    );
+    return { stripeCustomerId: recreated, email };
+  }
+
+  const created = await createStripeCustomerForUser(
+    userId,
+    email,
+    stripeSecretKey,
+    sbUrl,
+    sbKey,
+  );
+  return { stripeCustomerId: created, email };
 }
 
 interface StripeChargeBillingDetails {

@@ -171,13 +171,34 @@ export async function createLaunchWalletPaymentIntent(input: {
   });
 
   if (!intentRes.ok) {
+    const bodyText = await intentRes.text();
     console.error(
       "[STRIPE] Launch wallet PaymentIntent creation failed:",
-      await intentRes.text(),
+      bodyText,
     );
+    let stripeError: { code?: string; message?: string; type?: string } = {};
+    try {
+      stripeError = (JSON.parse(bodyText)?.error ?? {}) as typeof stripeError;
+    } catch {
+      // Non-JSON body (rare) — fall through to the generic message.
+    }
+    // Account not yet activated for live charges: actionable for the operator,
+    // not the buyer's fault — surface as a config (503) error, do not retry.
+    if (stripeError.code === "testmode_charges_only") {
+      throw new LaunchWalletFundingError(
+        "This Stripe account can't accept live charges yet. Finish account activation in the Stripe Dashboard, then try again.",
+        503,
+      );
+    }
+    // Surface Stripe's own message (these are config/validation errors at
+    // create time, never card data) so failures are diagnosable instead of an
+    // opaque 500. Bounded to keep the response tidy.
+    const detail = (stripeError.message || stripeError.code || "")
+      .toString()
+      .slice(0, 300);
     throw new LaunchWalletFundingError(
-      "Failed to create wallet payment intent",
-      500,
+      detail ? `Couldn't start checkout: ${detail}` : "Failed to create wallet payment intent",
+      502,
     );
   }
 

@@ -99,7 +99,10 @@ import {
   upsertCurrentBillingAddress,
   type UserBillingAddressProfile,
 } from "../services/billing-addresses.ts";
-import { captureFundingBillingAddressFromCharge } from "../services/stripe-customers.ts";
+import {
+  captureFundingBillingAddressFromCharge,
+  stripeCustomerExists,
+} from "../services/stripe-customers.ts";
 import { isGpuSupportEnabled } from "../services/gpu/feature-flag.ts";
 
 const stripeLogger = createServerLogger("STRIPE");
@@ -317,7 +320,17 @@ async function getOrCreateStripeCustomerForUser(
   const email = userData?.email || null;
 
   if (stripeCustomerId) {
-    return { stripeCustomerId, email };
+    // Validate against the active key; a customer created under a different
+    // key/mode (test->live cutover) no longer exists. If missing, drop it and
+    // fall through to recreate + persist below so Stripe calls don't fail with
+    // resource_missing "No such customer".
+    if (await stripeCustomerExists(stripeCustomerId, stripeSecretKey)) {
+      return { stripeCustomerId, email };
+    }
+    console.warn(
+      `[STRIPE] Stored customer ${stripeCustomerId} for user ${userId} not found under the active key; recreating.`,
+    );
+    stripeCustomerId = null;
   }
 
   const custRes = await fetch("https://api.stripe.com/v1/customers", {
@@ -344,7 +357,7 @@ async function getOrCreateStripeCustomerForUser(
   const customer = await custRes.json() as { id: string };
   stripeCustomerId = customer.id;
 
-  await fetch(
+  const patchRes = await fetch(
     `${sbUrl}/rest/v1/users?id=eq.${userId}`,
     {
       method: "PATCH",
@@ -357,6 +370,13 @@ async function getOrCreateStripeCustomerForUser(
       body: JSON.stringify({ stripe_customer_id: stripeCustomerId }),
     },
   );
+  // See the twin in services/stripe-customers.ts: a failed write-back leaves the
+  // stale id on the row, so log loudly rather than silently recreate next time.
+  if (!patchRes.ok) {
+    console.warn(
+      `[STRIPE] Failed to persist customer ${stripeCustomerId} for user ${userId} (status ${patchRes.status}); next funding attempt may recreate it.`,
+    );
+  }
 
   return { stripeCustomerId, email };
 }
