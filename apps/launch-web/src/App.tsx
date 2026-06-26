@@ -134,18 +134,24 @@ export function App(): ReactElement {
     });
   }, [location.pathname, providerCodeMisrouted]);
 
-  // Agent detail pages (public + admin) live under the "Agents" tab, so keep
-  // that top-nav item highlighted while viewing one.
-  const activeNavKey =
-    route.definition.key === "agent" || route.definition.key === "adminAgent"
-      ? "library"
-      : route.definition.key;
+  // Keep the top-nav item that LED here highlighted: the last primary/account
+  // section the user visited sticks through detail pages (e.g. arriving at an
+  // agent from "Agents" keeps Agents lit; from "Browse" keeps Browse lit). A
+  // direct URL to a detail page has no prior section, so it defaults to Browse.
+  const [activeSection, setActiveSection] = useState<LaunchRouteKey>(
+    route.definition.nav === "hidden" ? "store" : route.definition.key,
+  );
+  useEffect(() => {
+    if (route.definition.nav !== "hidden") {
+      setActiveSection(route.definition.key);
+    }
+  }, [route.definition.key, route.definition.nav]);
 
   return (
     <SignInModalProvider>
       <LaunchShell
         accountRoutes={accountRoutes()}
-        activeRoute={activeNavKey}
+        activeRoute={activeSection}
         navigate={navigate}
         primaryRoutes={primaryRoutes()}
         title={routeTitles[route.definition.key]}
