@@ -4559,6 +4559,13 @@ button {
 
 /* The permissions+wiring modal is wider and scrolls — it stacks the existing
    permission + wiring cards as sections, so strip their standalone chrome. */
+/* The function-page trigger bar: tighten the card's vertical padding so the two
+   rows don't float in empty space (the rows carry their own 13px separation). */
+.function-settings-bar {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
 .function-settings-modal {
   width: min(100%, 560px);
   max-height: 80vh;

@@ -1802,11 +1802,13 @@ function AgentFunctionsPanel({
   }
 
   const override = selectedFunction.inferenceOverride;
+  // The model this function actually resolves to today (the fallback tree:
+  // per-function override > the account's platform model > deepseek-v4).
   const inferenceSummary = override
     ? (override.billingMode === "byok"
-      ? `${override.provider} · ${override.model}`
-      : `Galactic AI · ${override.model}`)
-    : `Galactic AI · ${
+      ? `${override.model} · ${override.provider} key`
+      : override.model)
+    : `${
       live.data.inferenceOptions?.platformModel || GALACTIC_DEFAULT_MODEL
     } (default)`;
 
@@ -1818,7 +1820,7 @@ function AgentFunctionsPanel({
           ? (
             <div className="preference-row">
               <div>
-                <strong>Galactic AI model</strong>
+                <strong>Function calls AI</strong>
                 <span>{inferenceSummary}</span>
               </div>
               <Button
@@ -2265,77 +2267,6 @@ function FunctionSandboxCard({
   );
 }
 
-function PermissionControl({
-  fn,
-  live,
-  tool,
-}: {
-  fn: AgentFunctionFixture;
-  live: LaunchPageProps["live"];
-  tool: AgentDetailFixture;
-}): ReactElement {
-  const [permission, setPermission] = useState(fn.permission);
-  const [savedPermission, setSavedPermission] = useState(fn.permission);
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "error">(
-    "idle",
-  );
-  const dirty = permission !== savedPermission;
-  const options = [
-    ["always", "Always"],
-    ["ask", "Ask"],
-    ["never", "Never"],
-  ] as const;
-
-  return (
-    <Card className="permission-control">
-      <div>
-        <strong>Connected agent permission</strong>
-        <span>Default is ask. Manual website runs are separate.</span>
-      </div>
-      <div className="permission-actions">
-        <div className="mini-segments">
-          {options.map(([id, label]) => (
-            <button
-              className={permission === id ? "active" : ""}
-              key={id}
-              onClick={() => setPermission(id)}
-              type="button"
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <Button
-          onClick={async () => {
-            if (!dirty) return;
-            setSaveState("saving");
-            try {
-              await launchApi.updateAgentCallerPermissions(tool.id, {
-                permissions: [{ functionName: fn.name, policy: permission }],
-              });
-              setSavedPermission(permission);
-              setSaveState("idle");
-              live.reload();
-            } catch {
-              setSaveState("error");
-            }
-          }}
-          size="sm"
-          variant={dirty ? "primary" : "secondary"}
-        >
-          {saveState === "saving"
-            ? "Saving"
-            : saveState === "error"
-            ? "Retry"
-            : dirty
-            ? "Save"
-            : "Saved"}
-        </Button>
-      </div>
-    </Card>
-  );
-}
-
 // Per-function galactic.ai() provider+model override. The viewer pins which
 // provider (Galactic AI = credits, or one of their BYOK keys) and model this
 // function's galactic.ai() calls use. Unset => the default fallback chain
@@ -2415,11 +2346,11 @@ function FunctionInferenceModal({
           <span className="target-icon">
             <Icon name="spark" />
           </span>
-          <h2>Galactic AI model</h2>
+          <h2>AI model for this function</h2>
         </div>
         <p>
-          Which provider and model galactic.ai() uses for this function. Galactic
-          AI bills credits; a BYOK provider uses your own key.
+          Which provider and model this function's galactic.ai() calls use.
+          Galactic AI bills credits; a BYOK provider uses your own key.
         </p>
         <form
           className="byok-modal-form"
@@ -2495,6 +2426,32 @@ function FunctionSettingsModal({
   tool: AgentDetailFixture;
   onClose: () => void;
 }): ReactElement {
+  const [permission, setPermission] = useState(fn.permission);
+  const [state, setState] = useState<"idle" | "saving" | "error">("idle");
+  const options = [
+    ["always", "Always"],
+    ["ask", "Ask"],
+    ["never", "Never"],
+  ] as const;
+
+  // One unified save for the whole modal. The connected-agent permission is the
+  // only draft state here (the wiring rows act immediately).
+  const save = async () => {
+    if (state === "saving") return;
+    setState("saving");
+    try {
+      if (permission !== fn.permission) {
+        await launchApi.updateAgentCallerPermissions(tool.id, {
+          permissions: [{ functionName: fn.name, policy: permission }],
+        });
+        live.reload();
+      }
+      onClose();
+    } catch {
+      setState("error");
+    }
+  };
+
   return (
     <div
       className="settings-modal-backdrop"
@@ -2510,12 +2467,36 @@ function FunctionSettingsModal({
           </span>
           <h2>Permissions &amp; wiring</h2>
         </div>
-        <PermissionControl fn={fn} live={live} tool={tool} />
+        <div className="preference-row">
+          <div>
+            <strong>Connected agent permission</strong>
+            <span>Default is ask. Manual website runs are separate.</span>
+          </div>
+          <div className="mini-segments">
+            {options.map(([id, label]) => (
+              <button
+                className={permission === id ? "active" : ""}
+                key={id}
+                onClick={() => setPermission(id)}
+                type="button"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
         <FunctionWiring fn={fn} live={live} />
         <div className="modal-actions byok-modal-actions">
           <div className="modal-actions-right">
             <Button onClick={onClose} size="sm" variant="secondary">
-              Done
+              Cancel
+            </Button>
+            <Button onClick={() => void save()} size="sm">
+              {state === "saving"
+                ? "Saving"
+                : state === "error"
+                ? "Retry"
+                : "Save"}
             </Button>
           </div>
         </div>
