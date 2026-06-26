@@ -6615,7 +6615,9 @@ function NewApiKeyModal({
     if (!createOnce.current) {
       createOnce.current = launchApi.createApiKey({
         expiresInDays: 90,
-        name: `Launch web ${new Date().toLocaleDateString()}`,
+        // Include the time so a second key the same day doesn't collide with the
+        // unique per-user token name (date alone caused "already exists").
+        name: `Launch web ${new Date().toLocaleString()}`.slice(0, 50),
         scopes: ["apps:call"],
       });
     }
