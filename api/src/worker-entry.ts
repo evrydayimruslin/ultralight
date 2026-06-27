@@ -16,6 +16,7 @@ import {
   type CloudUsageHoldReleaseJobResult,
 } from '../services/cloud-usage-reconciliation.ts';
 import { runRoutineExecutorCycle } from '../services/routine-executor.ts';
+import { isRoutinesEnabled } from '../services/routines-feature-flag.ts';
 import { dispatchPendingEvents } from '../services/agent-events.ts';
 import { getEnv } from '../lib/env.ts';
 import { applyCorsHeaders, buildCorsPreflightResponse } from '../services/cors.ts';
@@ -255,7 +256,10 @@ async function runMinuteJobs(): Promise<void> {
     releaseExpiredCloudUsageHolds(),
     processNullEmbeddings(),
     processGpuBuilds(),
-    runRoutineExecutorCycle({ baseUrl }), // platform-owned durable routines
+    // Platform-owned durable routines: deferred post-launch capability. Skip when
+    // disabled (e.g. production, which does not ship the routines schema) so the
+    // executor does not query absent tables and error every minute.
+    isRoutinesEnabled() ? runRoutineExecutorCycle({ baseUrl }) : Promise.resolve(null),
     dispatchPendingEvents(), // cross-Agent pub/sub event fan-out
   ]);
 

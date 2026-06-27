@@ -161,6 +161,10 @@ INTERFACE_SANDBOX_BASE_URL = "https://ultralight-interfaces-staging.rgn4jz429m.w
 ENVIRONMENT = "staging"
 CORS_ALLOWED_ORIGINS = "https://ultralight-api-staging.rgn4jz429m.workers.dev,https://staging.ultralight-launch-web.pages.dev,http://localhost:5173,http://127.0.0.1:5173,http://localhost:5178,http://127.0.0.1:5178"
 GPU_SUPPORT_ENABLED = "false"
+# Routines are a deferred capability with no prod schema; staging has the full
+# migration set, so it runs the per-minute executor while prod (top-level [vars],
+# flag unset) skips it. See api/services/routines-feature-flag.ts.
+ROUTINES_ENABLED = "1"
 # Mirror production: Free Mode on in staging so the staging smoke exercises the
 # paid-call/AI-without-BYOK gates before production promotion.
 FREE_MODE = "1"
