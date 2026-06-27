@@ -57,3 +57,9 @@ jobs:
 
       - name: Push production migrations
         run: bash ./scripts/supabase/deploy-linked.sh
+
+      # Confirm the promotion landed clean: prod's live schema must match the
+      # checked-in migrations. Fails the run (alert only — nothing is rolled
+      # back) if prod has drifted from the migration files.
+      - name: Check for production schema drift
+        run: bash ./scripts/supabase/check-drift.sh
