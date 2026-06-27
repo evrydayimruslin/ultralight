@@ -4628,7 +4628,7 @@ export function AccountFoundationPage(
       <div className="account-subtabs" role="tablist" aria-label="Account sections">
         {([
           ["preferences", "Preferences"],
-          ["balance", "Balance"],
+          ["balance", "Billing"],
           ["earnings", "Earnings"],
         ] as const).map(([id, label]) => (
           <button

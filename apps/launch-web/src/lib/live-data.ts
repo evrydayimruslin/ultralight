@@ -87,6 +87,7 @@ export function useLaunchRouteLiveData(
   );
   const reload = useCallback(() => setVersion((value) => value + 1), []);
   const identityRef = useRef("");
+  const identity = `${routeKey}|${paramsKey}|${location.pathname}`;
 
   useEffect(() => {
     let cancelled = false;
@@ -94,7 +95,6 @@ export function useLaunchRouteLiveData(
     // and report "loading" — otherwise pages render stale data (or definitive
     // empty/not-found states) under the new URL while the fetch is in flight.
     // A same-route reload() keeps the current data on screen.
-    const identity = `${routeKey}|${paramsKey}|${location.pathname}`;
     const routeChanged = identity !== identityRef.current;
     identityRef.current = identity;
     // On a route change, paint this route's cached payload immediately if we've
@@ -131,7 +131,21 @@ export function useLaunchRouteLiveData(
     };
   }, [location.pathname, location.search, route, routeKey, paramsKey, version]);
 
-  return { ...state, reload };
+  // Derive the displayed state DURING render, not only in the effect above. On a
+  // route change the committed `state` still holds the PREVIOUS route's payload,
+  // so returning it for one paint makes the new page flash its empty/loader
+  // state before the effect swaps in this route's cached data. When we have a
+  // cached payload for the new identity, surface it immediately (the effect
+  // still revalidates); otherwise show loading. Same-route renders use `state`.
+  let effective = state;
+  if (identity !== identityRef.current) {
+    const cached = routeCache.get(identity);
+    effective = cached
+      ? { data: cached, status: "ready" }
+      : { data: {}, status: "loading" };
+  }
+
+  return { ...effective, reload };
 }
 
 async function loadRouteData(

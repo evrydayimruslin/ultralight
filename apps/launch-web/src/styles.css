@@ -3704,7 +3704,9 @@ button {
 }
 
 .amount-presets button {
-  padding: 6px 13px;
+  /* Asymmetric vertical padding (same total height) nudges the serif glyphs
+     down ~2px so they read centered in the pill. */
+  padding: 8px 13px 4px;
   border: 1px solid var(--ul-border);
   border-radius: 999px;
   background: #fff;
@@ -3715,9 +3717,10 @@ button {
 }
 
 .amount-presets .active {
+  /* Selected = black outline + bolder text, not a filled pill. */
   border-color: var(--ul-text);
-  background: var(--ul-text);
-  color: #fff;
+  color: var(--ul-text);
+  font-weight: 700;
 }
 
 .payment-methods {
