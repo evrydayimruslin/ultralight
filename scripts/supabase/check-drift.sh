@@ -15,6 +15,10 @@
 # Exit codes:
 #   0  - schema matches (or db diff could not run; we never block on a CLI hiccup)
 #   1  - real schema drift detected
+#
+# Set DRIFT_REPORT_ONLY=1 to log any drift as a warning but still exit 0. Used
+# for production while its hand-built schema is being reconciled into the
+# migration files; staging stays strict (blocking).
 
 set -uo pipefail
 
@@ -63,6 +67,10 @@ if printf '%s' "${DIFF}" | grep -qiE 'no schema changes found' || [[ -z "${DIFF/
   exit 0
 fi
 
-echo "::error::${ENV_NAME} schema drift detected — capture it as a migration in supabase/migrations/." >&2
 printf '%s\n' "${DIFF}"
+if [[ "${DRIFT_REPORT_ONLY:-0}" == "1" ]]; then
+  echo "::warning::${ENV_NAME} schema drift detected (report-only) — see diff above; reconcile into supabase/migrations/." >&2
+  exit 0
+fi
+echo "::error::${ENV_NAME} schema drift detected — capture it as a migration in supabase/migrations/." >&2
 exit 1
