@@ -4225,6 +4225,10 @@ async function handleLaunchWallet(request: Request): Promise<Response> {
     // never claims a no-spend mode that isn't in effect (docs/FREE_MODE_DESIGN.md).
     freeMode: isFreeModeEnabled() && balance < FREE_MODE_BALANCE_LIGHT,
     canTopUp: true,
+    // Public values so the top-up modal can mount the Payment Element + Link
+    // wallet immediately (deferred-intent flow) without creating a PaymentIntent.
+    stripePublishableKey: getEnv("STRIPE_PUBLISHABLE_KEY") || undefined,
+    buyerEmail: user.email || undefined,
     publishRequirement: {
       enabled: billingConfig.publishDepositEnabled,
       requiredBalance: money(billingConfig.publisherMinPublishBalanceLight),

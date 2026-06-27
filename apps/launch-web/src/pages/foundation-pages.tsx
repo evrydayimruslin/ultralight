@@ -4831,6 +4831,8 @@ export function AccountFoundationPage(
                     <WalletTopUpPanel
                       earnedCredits={totals.earned}
                       live={live}
+                      publishableKey={wallet?.stripePublishableKey}
+                      buyerEmail={wallet?.buyerEmail}
                       onClose={() => setShowTopUp(false)}
                     />
                   </div>
@@ -5033,9 +5035,11 @@ function writePendingTopUpResult(value: string | null): void {
 
 // Stripe Link mark — green rounded square with the Link chevron.
 function WalletTopUpPanel(
-  { earnedCredits, live, onClose }: {
+  { earnedCredits, live, publishableKey, buyerEmail, onClose }: {
     earnedCredits: number;
     live: LaunchPageProps["live"];
+    publishableKey?: string;
+    buyerEmail?: string;
     onClose?: () => void;
   },
 ): ReactElement {
@@ -5070,53 +5074,40 @@ function WalletTopUpPanel(
     setAmountText(dollarsText(clamped));
   };
   const [phase, setPhase] = useState<TopUpPhase>("idle");
-  // Latest phase, readable from the debounced auto-prepare timer (whose closure
-  // would otherwise see a stale value) so it never recreates a checkout over a
-  // terminal/confirming screen.
+  // Latest phase, readable from async callbacks whose closures would otherwise
+  // see a stale value.
   const phaseRef = useRef(phase);
   phaseRef.current = phase;
-  // Bumped by "Top up again" to re-run the auto-prepare effect even though the
-  // amount is unchanged.
-  const [prepareNonce, setPrepareNonce] = useState(0);
+  // Bumped by "Top up again" to force a fresh Stripe element mount.
+  const [mountNonce, setMountNonce] = useState(0);
   const [message, setMessage] = useState("");
   const [messageIsError, setMessageIsError] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
-  // True from the moment the amount changes until the intent has been re-priced
-  // to match. Blocks Pay so the buyer can never confirm an amount that differs
-  // from what is displayed (the PI amount is mid-transition during this window).
-  const [repricing, setRepricing] = useState(false);
+  // The deferred Payment Element has mounted and reported ready.
+  const [ready, setReady] = useState(false);
   // ACH microdeposit fallback: Stripe's hosted page for verifying the bank.
   const [verificationUrl, setVerificationUrl] = useState<string | null>(null);
   const [redirectOutcome] = useState(readStripeRedirectOutcome);
-  const [checkout, setCheckout] = useState<
-    {
-      clientSecret: string;
-      publishableKey: string;
-      paymentIntentId: string;
-      email?: string;
-      // The server-computed quote locked into the PaymentIntent — the ONLY
-      // amount the Pay button may display once a checkout exists. Updated in
-      // place (same clientSecret) when the amount changes.
-      quote: {
-        baseDollars: number;
-        feeDollars: number;
-        feeNote: string;
-        totalDollars: number;
-      };
-    } | null
-  >(null);
   const [liveQuote, setLiveQuote] = useState<
     {
       baseDollars: number;
       feeDollars: number;
       feeNote: string;
       totalDollars: number;
+      totalCents: number;
     } | null
   >(null);
   const quote = liveQuote || quoteTopUp(creditsAmount, method);
-  // Once an intent exists its server-locked quote is authoritative; before
-  // that, prefer the live server quote over the local-formula fallback.
-  const shownQuote = checkout?.quote ?? quote;
+  const shownQuote = quote;
+  // Exact integer cents for the deferred Elements amount. Prefer the server
+  // quote (authoritative + matches the PaymentIntent created at Pay); fall back
+  // to the local formula before the server quote loads.
+  const amountCents = liveQuote?.totalCents ??
+    Math.round(quoteTopUp(creditsAmount, method).totalDollars * 100);
+  // Live mirror so the (post-await) element mount reads the CURRENT amount, not
+  // a value captured before getStripe() resolved.
+  const amountCentsRef = useRef(amountCents);
+  amountCentsRef.current = amountCents;
   const presets = method === "earnings"
     ? [1000, 2500, 10000, 25000, Math.floor(earnedCredits)]
     : [1000, 2500, 10000, 25000, 50000];
@@ -5130,22 +5121,10 @@ function WalletTopUpPanel(
   const stripeRef = useRef<Stripe | null>(null);
   const elementsRef = useRef<StripeElements | null>(null);
   const reloadTimersRef = useRef<number[]>([]);
-  // Invalidation token: bumped whenever the user abandons/restarts a checkout
-  // so a stale in-flight intent-create or confirm result can't clobber the UI.
+  // Invalidation token so a stale in-flight confirm result can't clobber the UI.
   const seqRef = useRef(0);
-  // The currently-prepared (uncaptured) PaymentIntent id. Set when a checkout
-  // is prepared, cleared on a terminal outcome. Used to cancel the abandoned
-  // intent when the modal closes (see cancel wiring).
-  const preparedPiRef = useRef<string | null>(null);
-  // Live mirrors so the debounced amount effect / in-flight prepare can read the
-  // current checkout + amount without re-subscribing.
-  const checkoutRef = useRef(checkout);
-  checkoutRef.current = checkout;
-  const creditsAmountRef = useRef(creditsAmount);
-  creditsAmountRef.current = creditsAmount;
-  // The PaymentIntent amount is fixed at creation; while a confirm is in
-  // flight the user may already have been charged, so lock the inputs instead
-  // of allowing a reset.
+  // While a confirm is in flight the card may already have been charged — lock
+  // the inputs so the amount can't change mid-charge.
   const inputsLocked = phase === "confirming";
 
   useEffect(() => {
@@ -5162,6 +5141,7 @@ function WalletTopUpPanel(
           feeDollars: response.quote.processingFeeCents / 100,
           feeNote: response.quote.feeFormula,
           totalDollars: response.quote.totalAmountCents / 100,
+          totalCents: response.quote.totalAmountCents,
         });
       })
       .catch(() => {
@@ -5172,83 +5152,53 @@ function WalletTopUpPanel(
     };
   }, [creditsAmount, method]);
 
-  // Prepare the checkout as soon as the modal opens — and re-price it whenever
-  // the amount settles — so the Stripe form and the Link wallet appear
-  // immediately and DON'T reload when the amount changes. The first settle
-  // creates the PaymentIntent; subsequent ones UPDATE its amount in place
-  // (same clientSecret → the mounted element stays put) rather than recreating
-  // it. Debounced so typing doesn't spawn a request per keystroke. Consent
-  // (terms) is enforced at Pay, not here — preparing the intent does not charge
-  // the card. Inputs are locked during confirm, so the amount can't change
-  // mid-charge.
+  // Re-price the already-mounted deferred element when the amount changes — no
+  // remount, no reload of Link, no PaymentIntent (the intent is created only at
+  // Pay). elements.update is the supported way to change a deferred amount.
   useEffect(() => {
-    const terminal = (p: TopUpPhase) =>
-      p === "succeeded" || p === "processing" || p === "confirming";
-    // Don't prepare/re-price over a restored confirmation screen.
-    if (terminal(phaseRef.current)) return;
-    // First prepare (no checkout yet): show a preparing state during the debounce.
-    // Amount changes WITH a checkout leave the phase (and the mounted element)
-    // untouched — we only re-price, but block Pay until the re-price lands so
-    // the displayed amount always matches the intent.
-    if (!checkoutRef.current && phaseRef.current !== "creating") {
-      setMessage("");
-      setMessageIsError(false);
-      setPhase("creating");
-    } else if (checkoutRef.current) {
-      setRepricing(true);
-    }
-    const timer = window.setTimeout(() => {
-      if (terminal(phaseRef.current)) return;
-      const current = checkoutRef.current;
-      if (current) {
-        void updateCheckoutAmount(current.paymentIntentId, creditsAmount);
-      } else if (phaseRef.current !== "creating") {
-        void startCheckout();
-      }
-    }, 450);
-    return () => clearTimeout(timer);
-    // The callbacks read the latest amount/checkout via refs; re-run on amount
-    // change and when "Top up again" bumps the nonce.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [creditsAmount, prepareNonce]);
+    elementsRef.current?.update({ amount: amountCents });
+  }, [amountCents]);
 
-  // Mount the Stripe Payment Element once an intent exists. The container div
-  // renders whenever `checkout` is set, so this effect runs after it exists.
+  // Mount the Stripe Payment Element (+ Link wallet) IMMEDIATELY on open using
+  // the publishable key alone — a deferred PaymentIntent, so there's no intent
+  // round-trip and no "Preparing checkout" wait. The actual PaymentIntent is
+  // created at Pay (confirmTopUpPayment). Re-mounts only when the modal is
+  // re-armed ("Top up again", via mountNonce), never on amount change.
   useEffect(() => {
-    if (!checkout) return;
+    if (!publishableKey) return;
     let cancelled = false;
+    setReady(false);
     (async () => {
       try {
-        const stripe = await getStripe(checkout.publishableKey);
+        const stripe = await getStripe(publishableKey);
         if (cancelled) return;
         if (!stripe) {
           throw new Error(
             "Stripe.js failed to load. Check your network or ad blocker and try again.",
           );
         }
-        if (!paymentElementRef.current) {
-          throw new Error("Payment form failed to initialize.");
-        }
+        if (!paymentElementRef.current) return;
         const elements = stripe.elements({
-          clientSecret: checkout.clientSecret,
+          mode: "payment",
+          // Read the latest amount (the quote may have resolved during the
+          // getStripe await; the closure-captured value could be stale).
+          amount: amountCentsRef.current,
+          currency: "usd",
+          paymentMethodTypes: ["card", "link"],
           appearance: { theme: "stripe" },
         });
         const paymentElement = elements.create("payment", {
           // Pre-fill the buyer's email so Stripe Link recognizes returning
-          // users and offers the one-tap flow instead of the sign-up form.
-          defaultValues: checkout.email
-            ? { billingDetails: { email: checkout.email } }
+          // users and shows the one-tap flow immediately.
+          defaultValues: buyerEmail
+            ? { billingDetails: { email: buyerEmail } }
             : undefined,
         });
-        // Gate "collecting" on the iframe actually rendering: an enabled Pay
-        // button over an empty box (e.g. consumed client secret) is a dead end.
         paymentElement.on("ready", () => {
-          if (!cancelled) setPhase("collecting");
+          if (!cancelled) setReady(true);
         });
         paymentElement.on("loaderror", (event) => {
           if (cancelled) return;
-          setCheckout(null);
-          setPhase("idle");
           setMessageIsError(true);
           setMessage(
             event.error?.message ||
@@ -5257,21 +5207,15 @@ function WalletTopUpPanel(
         });
         paymentElement.mount(paymentElementRef.current);
 
-        // Billing address: collect FULL address for card (non-Link) payers in
+        // Billing address: collect a FULL address for card (non-Link) payers in
         // the UI, but never for Link — Link supplies the address itself, and an
-        // empty mounted address field would block confirm. So we mount the
-        // AddressElement on demand based on the Payment Element's selected
-        // method, defaulting to unmounted (Link confirm is never blocked; the
-        // worst case is a card buyer who provides postal-only, which is safe).
-        // Both Link's autofilled address and the card AddressElement land on
-        // the charge billing_details, captured by the deposit webhook
-        // (captureFundingBillingAddressFromCharge) for consumption-time tax.
-        // Create + mount the address fields ONLY while a non-Link method is
-        // selected, and DESTROY them otherwise. Destroying (not just hiding)
-        // removes the element from the Elements group, so an empty/incomplete
-        // address can never block a Link confirm. Recreated fresh when the
-        // buyer switches back to a card. Default is unmounted, so Link is never
-        // blocked even if no change event fires.
+        // empty mounted address field would block confirm. Create + mount the
+        // address fields ONLY while a non-Link method is selected, and DESTROY
+        // them otherwise (destroying — not hiding — removes the element from the
+        // group so it can't block a Link confirm). Default unmounted, so Link is
+        // never blocked even if no change event fires. Both Link's autofilled
+        // address and the card AddressElement land on the charge billing_details,
+        // captured by the deposit webhook for consumption-time tax.
         let addressElement: StripeAddressElement | null = null;
         const syncAddressVisibility = (methodType?: string) => {
           const showAddress = !!methodType && methodType !== "link";
@@ -5293,10 +5237,11 @@ function WalletTopUpPanel(
 
         stripeRef.current = stripe;
         elementsRef.current = elements;
+        // Re-apply the current amount: the [amountCents] update effect may have
+        // fired while elementsRef was still null (mid-await) and no-op'd.
+        elements.update({ amount: amountCentsRef.current });
       } catch (err) {
         if (cancelled) return;
-        setCheckout(null);
-        setPhase("idle");
         setMessageIsError(true);
         setMessage(err instanceof Error ? err.message : String(err));
       }
@@ -5308,11 +5253,10 @@ function WalletTopUpPanel(
       elementsRef.current = null;
       stripeRef.current = null;
     };
-    // Keyed on clientSecret, NOT the whole checkout object: re-pricing the amount
-    // updates checkout.quote (same clientSecret) and must NOT remount the
-    // element. Only a brand-new intent (new clientSecret) remounts.
+    // Mount once per publishable key / re-arm. amountCents is applied via the
+    // separate elements.update effect, NOT a remount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [checkout?.clientSecret]);
+  }, [publishableKey, mountNonce]);
 
   // Restore an outcome that arrived outside this mount: a redirect return
   // (card/ACH confirm inline under `redirect: "if_required"`, so this is
@@ -5353,15 +5297,6 @@ function WalletTopUpPanel(
 
   useEffect(() => () => {
     for (const timer of reloadTimersRef.current) clearTimeout(timer);
-    // Modal closed/navigated away with a prepared-but-unpaid intent: cancel it.
-    // Never cancel one that is being charged or already terminal.
-    const pi = preparedPiRef.current;
-    if (
-      pi && phaseRef.current !== "confirming" &&
-      phaseRef.current !== "succeeded" && phaseRef.current !== "processing"
-    ) {
-      void launchApi.cancelWalletTopUp(pi).catch(() => {});
-    }
   }, []);
 
   const scheduleWalletReloads = () => {
@@ -5371,111 +5306,9 @@ function WalletTopUpPanel(
     );
   };
 
-  const startCheckout = async () => {
-    seqRef.current += 1;
-    const seq = seqRef.current;
-    const amountAtStart = creditsAmount;
-    setPhase("creating");
-    setMessageIsError(false);
-    setMessage("");
-    setVerificationUrl(null);
-    writePendingTopUpResult(null);
-    try {
-      const response = await launchApi.createWalletTopUpIntent({
-        amountCredits: amountAtStart,
-        // Card-only modal (the method toggle was removed).
-        method: "card",
-        termsAccepted: true,
-      });
-      if (seqRef.current !== seq) {
-        // Superseded while in flight: this intent is now orphaned — cancel it.
-        void launchApi.cancelWalletTopUp(response.paymentIntentId).catch(
-          () => {},
-        );
-        return;
-      }
-      // Track the prepared intent so it can be cancelled if abandoned.
-      preparedPiRef.current = response.paymentIntentId;
-      // A fresh intent matches the current amount — clear any re-pricing block.
-      setRepricing(false);
-      // Phase advances to "collecting" once the Payment Element reports ready.
-      setCheckout({
-        clientSecret: response.clientSecret,
-        publishableKey: response.publishableKey,
-        paymentIntentId: response.paymentIntentId,
-        email: response.email,
-        quote: {
-          baseDollars: response.quote.baseAmountCents / 100,
-          feeDollars: response.quote.processingFeeCents / 100,
-          feeNote: response.quote.feeFormula,
-          totalDollars: response.quote.totalAmountCents / 100,
-        },
-      });
-      // If the amount changed while this intent was being created, re-price it
-      // in place now (no remount) so the PI matches the current amount.
-      if (creditsAmountRef.current !== amountAtStart) {
-        void updateCheckoutAmount(
-          response.paymentIntentId,
-          creditsAmountRef.current,
-        );
-      }
-    } catch (err) {
-      if (seqRef.current !== seq) return;
-      setPhase("idle");
-      setMessageIsError(true);
-      setMessage(err instanceof Error ? err.message : String(err));
-    }
-  };
-
-  // Re-price the existing intent in place when the amount changes — same
-  // clientSecret, so the mounted Payment Element + Link wallet don't reload.
-  // On failure (e.g. the intent is no longer updatable) fall back to creating a
-  // fresh one.
-  const updateCheckoutAmount = async (
-    paymentIntentId: string,
-    credits: number,
-  ) => {
-    const seq = ++seqRef.current;
-    setRepricing(true);
-    try {
-      const response = await launchApi.updateWalletTopUpAmount(
-        paymentIntentId,
-        credits,
-      );
-      if (seqRef.current !== seq) return;
-      setCheckout((current) =>
-        current && current.paymentIntentId === paymentIntentId
-          ? {
-            ...current,
-            quote: {
-              baseDollars: response.quote.baseAmountCents / 100,
-              feeDollars: response.quote.processingFeeCents / 100,
-              feeNote: response.quote.feeFormula,
-              totalDollars: response.quote.totalAmountCents / 100,
-            },
-          }
-          : current
-      );
-      setRepricing(false);
-    } catch {
-      if (seqRef.current !== seq) return;
-      // Couldn't re-price (intent expired/canceled) — cancel the stale intent
-      // (best-effort) and start a fresh checkout. startCheckout flips repricing
-      // off once the new intent is ready.
-      void launchApi.cancelWalletTopUp(paymentIntentId).catch(() => {});
-      preparedPiRef.current = null;
-      setCheckout(null);
-      void startCheckout();
-    }
-  };
-
   const confirmTopUpPayment = async () => {
-    // Never charge while an amount re-price is still settling — the intent may
-    // not yet match the displayed amount.
-    if (repricing) return;
-    // Consent gate lives here (not at intent creation) because the checkout is
-    // prepared automatically on open: the card is only charged once the buyer
-    // has accepted the Terms and clicked Pay.
+    // Consent gate: the card is only charged once the buyer has accepted the
+    // Terms and clicked Pay.
     if (!termsAccepted) {
       setMessageIsError(true);
       setMessage("Accept the Galactic Terms to continue.");
@@ -5484,18 +5317,36 @@ function WalletTopUpPanel(
     const stripe = stripeRef.current;
     const elements = elementsRef.current;
     if (!stripe || !elements) return;
-    const seq = seqRef.current;
+    const seq = ++seqRef.current;
     setPhase("confirming");
     setMessageIsError(false);
     setMessage("");
-    // If the panel unmounts before this resolves, the marker lets the next
-    // mount warn that a charge may have completed. Updated to the terminal
-    // outcome below (the setStates would be silent no-ops on a dead instance,
-    // but these writes still run).
     writePendingTopUpResult("confirming");
     try {
+      // Deferred flow: validate the element, THEN create the PaymentIntent for
+      // the current amount, THEN confirm against it. The intent is created here
+      // (at Pay) — not on open — so there are no abandoned intents.
+      const { error: submitError } = await elements.submit();
+      if (submitError) {
+        if (seqRef.current !== seq) return;
+        writePendingTopUpResult(null);
+        setPhase("idle");
+        setMessageIsError(true);
+        setMessage(
+          submitError.message ||
+            "Please complete the payment details and try again.",
+        );
+        return;
+      }
+      const intent = await launchApi.createWalletTopUpIntent({
+        amountCredits: creditsAmount,
+        method: "card",
+        termsAccepted: true,
+      });
+      if (seqRef.current !== seq) return;
       const result = await stripe.confirmPayment({
         elements,
+        clientSecret: intent.clientSecret,
         confirmParams: {
           return_url: `${window.location.origin}/account?tab=balance`,
         },
@@ -5504,7 +5355,7 @@ function WalletTopUpPanel(
       if (seqRef.current !== seq) return;
       if (result.error) {
         writePendingTopUpResult(null);
-        setPhase("collecting");
+        setPhase("idle");
         setMessageIsError(true);
         setMessage(
           result.error.message ||
@@ -5514,22 +5365,16 @@ function WalletTopUpPanel(
       }
       const status = result.paymentIntent?.status;
       if (status === "succeeded") {
-        // Paid — never cancel this intent.
-        preparedPiRef.current = null;
         writePendingTopUpResult("succeeded");
         setPhase("succeeded");
         setMessageIsError(false);
         setMessage(TOPUP_SUCCESS_MESSAGE);
-        setCheckout(null);
         scheduleWalletReloads();
       } else if (status === "processing") {
-        // In-flight settlement — never cancel this intent.
-        preparedPiRef.current = null;
         writePendingTopUpResult("processing");
         setPhase("processing");
         setMessageIsError(false);
         setMessage(TOPUP_PROCESSING_MESSAGE);
-        setCheckout(null);
         scheduleWalletReloads();
       } else if (status === "requires_action") {
         // ACH microdeposit fallback: the intent is NOT failed — Stripe needs
@@ -5541,8 +5386,6 @@ function WalletTopUpPanel(
           }
           | null;
         if (nextAction?.verify_with_microdeposits) {
-          // Awaiting bank verification — never cancel this intent.
-          preparedPiRef.current = null;
           writePendingTopUpResult("verify");
           setPhase("processing");
           setMessageIsError(false);
@@ -5551,10 +5394,9 @@ function WalletTopUpPanel(
             nextAction.verify_with_microdeposits.hosted_verification_url ??
               null,
           );
-          setCheckout(null);
         } else {
           writePendingTopUpResult(null);
-          setPhase("collecting");
+          setPhase("idle");
           setMessageIsError(true);
           setMessage(
             "Additional verification is required to complete this payment. Please try again or use a different payment method.",
@@ -5562,7 +5404,7 @@ function WalletTopUpPanel(
         }
       } else {
         writePendingTopUpResult(null);
-        setPhase("collecting");
+        setPhase("idle");
         setMessageIsError(true);
         setMessage(
           `Payment not completed (status: ${status ?? "unknown"}). Please try again.`,
@@ -5571,7 +5413,7 @@ function WalletTopUpPanel(
     } catch (err) {
       if (seqRef.current !== seq) return;
       writePendingTopUpResult(null);
-      setPhase("collecting");
+      setPhase("idle");
       setMessageIsError(true);
       setMessage(err instanceof Error ? err.message : String(err));
     }
@@ -5580,19 +5422,14 @@ function WalletTopUpPanel(
   const resetForAnotherTopUp = () => {
     seqRef.current += 1;
     writePendingTopUpResult(null);
-    // The prior intent was paid (we only reach here from the thank-you screen);
-    // drop the ref so re-arming doesn't try to cancel it.
-    preparedPiRef.current = null;
-    setCheckout(null);
     setPhase("idle");
     phaseRef.current = "idle";
     setMessage("");
     setMessageIsError(false);
     setTermsAccepted(false);
     setVerificationUrl(null);
-    // Re-arm the auto-prepare effect (the amount is unchanged) so the form +
-    // Link wallet reappear for another top-up.
-    setPrepareNonce((n) => n + 1);
+    // Re-mount a fresh Stripe element for another top-up.
+    setMountNonce((n) => n + 1);
     live.reload();
   };
 
@@ -5710,15 +5547,10 @@ function WalletTopUpPanel(
           <span>{method === "earnings" ? "Transfer" : "Total"}</span>
           <strong>{formatCurrency(shownQuote.totalDollars)}</strong>
         </div>
-        {checkout
-          ? (
-            <>
-              <div className="topup-payment-element" ref={paymentElementRef} />
-              {/* Mounted only for card (non-Link) payers; see the mount effect. */}
-              <div className="topup-address-element" ref={addressElementRef} />
-            </>
-          )
-          : null}
+        {/* Deferred Payment Element + Link mount here immediately on open. */}
+        <div className="topup-payment-element" ref={paymentElementRef} />
+        {/* Address fields mount only for card (non-Link) payers; see effect. */}
+        <div className="topup-address-element" ref={addressElementRef} />
         {method !== "earnings"
           ? (
             <label className="topup-terms">
@@ -5740,31 +5572,18 @@ function WalletTopUpPanel(
             </label>
           )
           : null}
-        {checkout
-          ? (
-            <Button
-              disabled={phase !== "collecting" || !termsAccepted || repricing}
-              onClick={confirmTopUpPayment}
-              size="lg"
-            >
-              {phase === "confirming"
-                ? "Processing payment…"
-                : repricing
-                ? "Updating amount…"
-                : phase === "collecting"
-                ? `Pay ${formatCurrency(shownQuote.totalDollars)}`
-                : "Preparing checkout…"}
-            </Button>
-          )
-          : (
-            <Button
-              disabled={phase === "creating"}
-              onClick={startCheckout}
-              size="lg"
-            >
-              {phase === "creating" ? "Preparing checkout…" : "Retry"}
-            </Button>
-          )}
+        <Button
+          // Require the server quote (liveQuote) so the element amount at
+          // confirm is the exact server total, never the ~1¢-off local fallback.
+          disabled={!ready || !termsAccepted || !liveQuote ||
+            phase === "confirming"}
+          onClick={confirmTopUpPayment}
+          size="lg"
+        >
+          {phase === "confirming"
+            ? "Processing payment…"
+            : `Pay ${formatCurrency(shownQuote.totalDollars)}`}
+        </Button>
         {message
           ? (
             <p

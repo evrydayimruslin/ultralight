@@ -773,6 +773,13 @@ export interface LaunchWalletSummary {
    */
   freeMode?: boolean;
   canTopUp: boolean;
+  /**
+   * Stripe publishable key + buyer email, so the top-up modal can mount the
+   * Payment Element + Link wallet IMMEDIATELY on open (deferred-intent flow)
+   * without first creating a PaymentIntent. Display-only / public values.
+   */
+  stripePublishableKey?: string;
+  buyerEmail?: string;
   topUpUrl?: string | null;
   transactionsUrl?: string | null;
   receiptsUrl?: string | null;
