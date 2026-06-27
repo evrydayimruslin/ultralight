@@ -1,29 +1,39 @@
-name: Supabase Prod Schema Dump
+name: Supabase Schema Dump
 
-# Manual, read-only capture of production's TRUE schema (DDL) as a build
-# artifact. Used to re-baseline the migration files when prod has drifted from
-# them (the original baseline `db pull` did not capture everything faithfully).
-# Runs `supabase db dump` on the runner (Docker is available there), so no local
+# Manual, read-only capture of a project's TRUE schema (DDL) as a build
+# artifact. Used to reconcile the migration files when a project has drifted
+# from them, and to compare environments (prod vs staging) with one pg_dump
+# format so the diff is free of migra normalization noise.
+# Runs `supabase db dump` on the runner (Docker available there), so no local
 # Docker is required. The artifact is the schema only — no rows, no secrets.
 
 on:
   workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Which project to dump'
+        type: choice
+        options:
+          - production
+          - staging
+        default: production
 
 permissions:
   contents: read
 
 concurrency:
-  group: supabase-prod-schema-dump
+  group: supabase-schema-dump-${{ github.event.inputs.environment }}
   cancel-in-progress: false
+
+env:
+  SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+  SUPABASE_PROJECT_ID: ${{ github.event.inputs.environment == 'staging' && secrets.SUPABASE_STAGING_PROJECT_ID || secrets.SUPABASE_PRODUCTION_PROJECT_ID }}
+  SUPABASE_DB_PASSWORD: ${{ github.event.inputs.environment == 'staging' && secrets.SUPABASE_STAGING_DB_PASSWORD || secrets.SUPABASE_PRODUCTION_DB_PASSWORD }}
 
 jobs:
   dump:
-    name: Dump production schema
+    name: Dump ${{ github.event.inputs.environment }} schema
     runs-on: ubuntu-latest
-    env:
-      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PRODUCTION_PROJECT_ID }}
-      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_PRODUCTION_DB_PASSWORD }}
 
     steps:
       - uses: actions/checkout@v4
@@ -32,23 +42,22 @@ jobs:
         with:
           version: latest
 
-      - name: Link production
+      - name: Link ${{ github.event.inputs.environment }}
         run: supabase link --project-ref "$SUPABASE_PROJECT_ID" -p "$SUPABASE_DB_PASSWORD" --workdir .
 
       - name: Dump schema (DDL) and roles
         run: |
           set -euo pipefail
-          supabase db dump --linked -f prod_schema.sql
-          supabase db dump --linked --role-only -f prod_roles.sql || true
-          echo "prod_schema.sql: $(wc -l < prod_schema.sql) lines"
-          echo "prod_roles.sql:  $(wc -l < prod_roles.sql 2>/dev/null || echo 0) lines"
+          supabase db dump --linked -f schema.sql
+          supabase db dump --linked --role-only -f roles.sql || true
+          echo "schema.sql: $(wc -l < schema.sql) lines"
 
       - name: Upload schema artifact
         uses: actions/upload-artifact@v4
         with:
-          name: prod-schema
+          name: ${{ github.event.inputs.environment }}-schema
           path: |
-            prod_schema.sql
-            prod_roles.sql
+            schema.sql
+            roles.sql
           retention-days: 3
           if-no-files-found: error
