@@ -5,13 +5,13 @@
  * portable MCP server to run locally. This bridge is a thin stdio MCP server
  * that a computer-access agent (Claude Code, Claude Desktop, Cursor, …) mounts,
  * and which forwards every tools/call to the remote platform endpoint
- * (https://api.ultralightagent.com/mcp/platform) with the user's ul_ Bearer
+ * (https://api.connectgalactic.com/mcp/platform) with the user's gx_ Bearer
  * token. It NEVER re-declares the platform's tools — it calls remote tools/list
  * and re-advertises the catalog verbatim, so it can't drift from the platform.
  *
  * On top of the proxied platform tools it adds a small set of `local.*`
  * filesystem tools, scoped to the working directory, so the agent can read
- * source before ul.upload, write source returned by ul.download, and scaffold
+ * source before gx.upload, write source returned by gx.download, and scaffold
  * files — the one genuine "direct computer access" capability the remote MCP
  * can't offer.
  *
@@ -55,12 +55,14 @@ function readVersion() {
 }
 
 // ─── Auth / config resolution ────────────────────────────────────────────
-// Token is read from ~/.ultralight/config.json (written by `setup`) so it is
-// never duplicated into client MCP config files. Env vars override.
-const DEFAULT_API_URL = 'https://api.ultralightagent.com';
+// Token is read from ~/.galactic/config.json (written by `setup`; legacy
+// ~/.ultralight/config.json is read as a fallback) so it is never duplicated
+// into client MCP config files. Env vars override.
+const DEFAULT_API_URL = 'https://api.connectgalactic.com';
 // Old hosts that older CLI configs may still pin — rewrite to the current one
 // (mirrors cli/config.ts LEGACY_API_URLS) so upgraders aren't left on a dead API.
 const LEGACY_API_URLS = new Set([
+  'https://api.ultralightagent.com',
   'https://api.ultralight.dev',
   'https://ultralight-api-iikqz.ondigitalocean.app',
   'https://ultralight-api.rgn4jz429m.workers.dev',
@@ -68,14 +70,17 @@ const LEGACY_API_URLS = new Set([
 
 function loadAuth() {
   let token = process.env.GALACTIC_TOKEN || process.env.ULTRALIGHT_TOKEN ||
-    process.env.ULTRALIGHT_API_TOKEN || null;
-  let apiUrl = process.env.ULTRALIGHT_API_URL || null;
-  try {
-    const cfg = JSON.parse(readFileSync(join(homedir(), '.ultralight', 'config.json'), 'utf-8'));
-    if (!token && cfg?.auth?.token) token = cfg.auth.token;
-    if (!apiUrl && cfg?.api_url) apiUrl = cfg.api_url;
-  } catch {
-    // no config file — fall back to env / defaults
+    process.env.GALACTIC_API_TOKEN || process.env.ULTRALIGHT_API_TOKEN || null;
+  let apiUrl = process.env.GALACTIC_API_URL || process.env.ULTRALIGHT_API_URL || null;
+  for (const dir of ['.galactic', '.ultralight']) {
+    try {
+      const cfg = JSON.parse(readFileSync(join(homedir(), dir, 'config.json'), 'utf-8'));
+      if (!token && cfg?.auth?.token) token = cfg.auth.token;
+      if (!apiUrl && cfg?.api_url) apiUrl = cfg.api_url;
+      if (token) break;
+    } catch {
+      // no config file at this location — try the next / fall back to defaults
+    }
   }
   apiUrl = (apiUrl || DEFAULT_API_URL).replace(/\/+$/, '');
   if (LEGACY_API_URLS.has(apiUrl)) apiUrl = DEFAULT_API_URL;
@@ -85,7 +90,7 @@ function loadAuth() {
 // ─── Filesystem confinement ──────────────────────────────────────────────
 // All local.* tools are rooted at the working directory (where the agent
 // launched the bridge), never allowed to escape it.
-const FS_ROOT = resolve(process.env.ULTRALIGHT_FS_ROOT || process.cwd());
+const FS_ROOT = resolve(process.env.GALACTIC_FS_ROOT || process.env.ULTRALIGHT_FS_ROOT || process.cwd());
 // Canonical (symlink-resolved) root. Containment is checked against this so a
 // symlink can't lexically appear inside the root while pointing outside it.
 let REAL_ROOT = FS_ROOT;
@@ -137,7 +142,7 @@ function relDisplay(abs) {
 
 // ─── Remote JSON-RPC (stateless POST, no session/SSE) ──────────────────────
 let rpcId = 0;
-const RPC_TIMEOUT_MS = Number(process.env.ULTRALIGHT_TIMEOUT_MS) || 30000;
+const RPC_TIMEOUT_MS = Number(process.env.GALACTIC_TIMEOUT_MS || process.env.ULTRALIGHT_TIMEOUT_MS) || 30000;
 
 // Single source of truth: fetch the LIVE platform skills/SDK guide and serve it
 // as the MCP `initialize` instructions, so an Agent connecting through this
@@ -192,7 +197,7 @@ const LOCAL_TOOLS = [
   {
     name: 'local.read_file',
     description:
-      "Read a UTF-8 text file from the agent's working directory. Use to gather source files before deploying with ul.upload, or to inspect files written by ul.download. Paths are relative to the directory where the agent runs.",
+      "Read a UTF-8 text file from the agent's working directory. Use to gather source files before deploying with gx.upload, or to inspect files written by gx.download. Paths are relative to the directory where the agent runs.",
     inputSchema: {
       type: 'object',
       properties: { path: { type: 'string', description: 'File path relative to the working directory.' } },
@@ -202,7 +207,7 @@ const LOCAL_TOOLS = [
   {
     name: 'local.write_file',
     description:
-      'Write a UTF-8 text file under the working directory (parent directories are created). Use to save source returned by ul.download, or to scaffold files you will then deploy with ul.upload.',
+      'Write a UTF-8 text file under the working directory (parent directories are created). Use to save source returned by gx.download, or to scaffold files you will then deploy with gx.upload.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -288,7 +293,7 @@ export async function runMcpBridge() {
   if (!token) {
     process.stderr.write(
       '[galacticconnection] No API token found — serving local filesystem tools only. ' +
-        'Run `galacticconnection setup --token ul_...` (or set ULTRALIGHT_TOKEN) to enable platform tools.\n',
+        'Run `galacticconnection setup --token gx_...` (or set GALACTIC_TOKEN) to enable platform tools.\n',
     );
   }
 

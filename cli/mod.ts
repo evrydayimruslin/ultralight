@@ -16,11 +16,11 @@
  *   login           Authenticate with Galactic
  *   logout          Clear stored credentials
  *   whoami          Show current user
- *   scaffold        Generate a structured app skeleton (ul.download scaffold mode)
- *   upload          Upload a new app or update existing (ul.upload)
- *   test            Test functions without deploying (ul.test)
- *   lint            Validate code against conventions (ul.test lint_only mode)
- *   download        Download app source code (ul.download)
+ *   scaffold        Generate a structured app skeleton (gx.download scaffold mode)
+ *   upload          Upload a new app or update existing (gx.upload)
+ *   test            Test functions without deploying (gx.test)
+ *   lint            Validate code against conventions (gx.test lint_only mode)
+ *   download        Download app source code (gx.download)
  *   apps            App management commands
  *   draft           Draft management commands
  *   docs            Documentation commands
@@ -28,8 +28,8 @@
  *   permissions     Permission management (grant, revoke, list, export)
  *   run             Execute a deployed app function
  *   discover        Search the App Store for MCP tools
- *   logs            View MCP call logs (ul.logs)
- *   health          App health monitoring (ul.health)
+ *   logs            View MCP call logs (gx.logs)
+ *   health          App health monitoring (gx.health)
  *
  * Run `galactic <command> --help` for more information on a command.
  */
@@ -39,7 +39,7 @@ import { ApiClient } from './api.ts';
 import { colors } from './colors.ts';
 import { createCliLogger } from './logging.ts';
 
-const VERSION = '2.2.1';
+const VERSION = '2.3.0';
 const cliLogger = createCliLogger('CLI');
 const writeStderr = (line: string): void => console.error(line);
 
@@ -118,7 +118,7 @@ async function callPlatformDiscover(
   scope: 'desk' | 'inspect' | 'library' | 'appstore',
   args: ToolArgs = {},
 ) {
-  return await client.callTool('ul.discover', { scope, ...args });
+  return await client.callTool('gx.discover', { scope, ...args });
 }
 
 async function callPlatformSet(
@@ -126,7 +126,7 @@ async function callPlatformSet(
   appId: string,
   updates: ToolArgs,
 ) {
-  return await client.callTool('ul.set', { app_id: appId, ...updates });
+  return await client.callTool('gx.set', { app_id: appId, ...updates });
 }
 
 async function callPlatformPermissions(
@@ -134,15 +134,15 @@ async function callPlatformPermissions(
   action: 'grant' | 'revoke' | 'list' | 'export',
   args: ToolArgs,
 ) {
-  return await client.callTool('ul.permissions', { action, ...args });
+  return await client.callTool('gx.permissions', { action, ...args });
 }
 
 async function callPlatformLint(client: ApiClient, args: ToolArgs) {
-  return await client.callTool('ul.test', { ...args, lint_only: true });
+  return await client.callTool('gx.test', { ...args, lint_only: true });
 }
 
 async function callPlatformScaffold(client: ApiClient, args: ToolArgs) {
-  return await client.callTool('ul.download', args);
+  return await client.callTool('gx.download', args);
 }
 
 // ============================================
@@ -163,11 +163,11 @@ ${colors.dim('SETUP')}
   ${colors.cyan('whoami')}             Show current user
 
 ${colors.dim('BUILD')}
-  ${colors.cyan('scaffold')} <name>    Generate a structured app skeleton (ul.download scaffold mode)
-  ${colors.cyan('upload')} [dir]       Upload app or new version (ul.upload)
-  ${colors.cyan('test')} [dir]         Test functions in sandbox (ul.test)
-  ${colors.cyan('lint')} [dir]         Validate against conventions (ul.test lint_only)
-  ${colors.cyan('download')} <app>     Download app source code (ul.download)
+  ${colors.cyan('scaffold')} <name>    Generate a structured app skeleton (gx.download scaffold mode)
+  ${colors.cyan('upload')} [dir]       Upload app or new version (gx.upload)
+  ${colors.cyan('test')} [dir]         Test functions in sandbox (gx.test)
+  ${colors.cyan('lint')} [dir]         Validate against conventions (gx.test lint_only)
+  ${colors.cyan('download')} <app>     Download app source code (gx.download)
 
 ${colors.dim('MANAGE')}
   ${colors.cyan('apps')}               App management (list, get, delete)
@@ -179,8 +179,8 @@ ${colors.dim('MANAGE')}
 ${colors.dim('USE')}
   ${colors.cyan('run')} <app> <fn>     Execute a deployed app function
   ${colors.cyan('discover')} <query>   Search the App Store for MCP tools
-  ${colors.cyan('logs')} <app>         View MCP call logs (ul.logs)
-  ${colors.cyan('health')} [app]       View app health events (ul.health)
+  ${colors.cyan('logs')} <app>         View MCP call logs (gx.logs)
+  ${colors.cyan('health')} [app]       View app health events (gx.health)
 
 ${colors.dim('OTHER')}
   ${colors.cyan('init')} [name]        Create a local app project (offline)
@@ -208,7 +208,7 @@ ${colors.dim('EXAMPLES')}
   galactic permissions grant my-app user@email.com
 
 ${colors.dim('DOCUMENTATION')}
-  https://ultralightagent.com/docs/cli
+  https://connectgalactic.com/docs/cli
 `);
 }
 
@@ -250,7 +250,7 @@ ${colors.dim('WHAT IT CREATES')}
     return;
   }
 
-  const projectName = parsed._[0] as string || 'ultralight-app';
+  const projectName = parsed._[0] as string || 'galactic-app';
   const useReact = parsed.react as boolean;
 
   // Check if directory already exists
@@ -423,8 +423,8 @@ if (galactic.isAuthenticated()) {
 
 ## Learn More
 
-- [Galactic Documentation](https://ultralightagent.com/docs)
-- [SDK Types](https://www.npmjs.com/package/@ultralightpro/types)
+- [Galactic Documentation](https://connectgalactic.com/docs)
+- [SDK Reference](https://connectgalactic.com/docs)
 `;
 
   // Write files
@@ -432,7 +432,7 @@ if (galactic.isAuthenticated()) {
   await Deno.writeTextFile(`${dir}/package.json`, JSON.stringify(packageJson, null, 2));
   await Deno.writeTextFile(`${dir}/tsconfig.json`, JSON.stringify(tsConfig, null, 2));
   await Deno.writeTextFile(`${dir}/README.md`, readme);
-  await Deno.writeTextFile(`${dir}/.gitignore`, 'node_modules/\n.ultralight/\n');
+  await Deno.writeTextFile(`${dir}/.gitignore`, 'node_modules/\n.galactic/\n.ultralight/\n');
 
   console.log(colors.dim(`  Created ${dir}/index.ts`));
   console.log(colors.dim(`  Created ${dir}/package.json`));
@@ -611,8 +611,8 @@ export async function myServerFunction(args: { key: string }) {
 
 ## Learn More
 
-- [Galactic Documentation](https://ultralightagent.com/docs)
-- [SDK Types](https://www.npmjs.com/package/@ultralightpro/types)
+- [Galactic Documentation](https://connectgalactic.com/docs)
+- [SDK Reference](https://connectgalactic.com/docs)
 `;
 
   // Write files
@@ -620,7 +620,7 @@ export async function myServerFunction(args: { key: string }) {
   await Deno.writeTextFile(`${dir}/package.json`, JSON.stringify(packageJson, null, 2));
   await Deno.writeTextFile(`${dir}/tsconfig.json`, JSON.stringify(tsConfig, null, 2));
   await Deno.writeTextFile(`${dir}/README.md`, readme);
-  await Deno.writeTextFile(`${dir}/.gitignore`, 'node_modules/\n.ultralight/\n');
+  await Deno.writeTextFile(`${dir}/.gitignore`, 'node_modules/\n.galactic/\n.ultralight/\n');
 
   console.log(colors.dim(`  Created ${dir}/index.tsx`));
   console.log(colors.dim(`  Created ${dir}/package.json`));
@@ -708,18 +708,18 @@ ${colors.bold('galactic setup')}
 Set up Galactic: authenticate and configure your agent's MCP connection.
 
 ${colors.dim('OPTIONS')}
-  --token, -t <token>   Your API token (starts with ul_)
+  --token, -t <token>   Your API token (starts with gx_)
 
 ${colors.dim('WHAT IT DOES')}
-  1. Saves your token to ~/.ultralight/config.json
+  1. Saves your token to ~/.galactic/config.json
   2. Verifies the token against the Galactic API
   3. Detects MCP client config files (Claude Code, Claude Desktop, Cursor)
   4. Writes the Galactic MCP server entry to each detected config
   5. Your agent can use Galactic immediately after restarting
 
 ${colors.dim('EXAMPLES')}
-  galactic setup --token ul_abc123...
-  galactic setup -t ul_abc123...
+  galactic setup --token gx_abc123...
+  galactic setup -t gx_abc123...
 `);
     return;
   }
@@ -746,9 +746,9 @@ Or get the full setup command from ${colors.cyan(config.api_url)} — click "Con
 
   const token = parsed.token as string;
 
-  // Validate token format
-  if (!token.startsWith('ul_')) {
-    console.log(colors.red('✗ Invalid token format. Galactic API tokens start with ul_'));
+  // Validate token format (gx_ is current; ul_ is the deprecated legacy prefix)
+  if (!token.startsWith('gx_') && !token.startsWith('ul_')) {
+    console.log(colors.red('✗ Invalid token format. Galactic API tokens start with gx_'));
     return;
   }
 
@@ -758,7 +758,7 @@ Or get the full setup command from ${colors.cyan(config.api_url)} — click "Con
     is_api_token: true,
   };
   await saveConfig(config);
-  console.log(colors.green('✓ Token saved to ~/.ultralight/config.json'));
+  console.log(colors.green('✓ Token saved to ~/.galactic/config.json'));
 
   // Step 2: Verify token
   let userInfo: Record<string, unknown> | null = null;
@@ -815,7 +815,8 @@ Or get the full setup command from ${colors.cyan(config.api_url)} — click "Con
 
       // Merge in Galactic server entry
       const servers = (existingConfig[configTarget.key] || {}) as Record<string, unknown>;
-      servers['ultralight'] = mcpEntry;
+      delete servers['ultralight'];  // drop the pre-rebrand entry if present
+      servers['galactic'] = mcpEntry;
       existingConfig[configTarget.key] = servers;
 
       // Write back
@@ -834,7 +835,7 @@ Or get the full setup command from ${colors.cyan(config.api_url)} — click "Con
     console.log(colors.yellow('⚠ No MCP client config files detected.'));
     console.log(colors.dim('  Add this to your MCP client config manually:'));
     console.log('');
-    const manualConfig = JSON.stringify({ mcpServers: { ultralight: mcpEntry } }, null, 2);
+    const manualConfig = JSON.stringify({ mcpServers: { galactic: mcpEntry } }, null, 2);
     console.log(colors.dim(manualConfig));
     console.log('');
     console.log(colors.dim('  Common config file locations:'));
@@ -873,7 +874,7 @@ ${colors.bold('Logged in as:')}
 }
 
 // ============================================
-// UPLOAD COMMAND — uses ul.upload
+// UPLOAD COMMAND — uses gx.upload
 // ============================================
 
 async function upload(args: string[], client: ApiClient, _config: Config) {
@@ -887,7 +888,7 @@ async function upload(args: string[], client: ApiClient, _config: Config) {
     console.log(`
 ${colors.bold('galactic upload')} [directory]
 
-Upload source code to create a new app or update an existing one (ul.upload).
+Upload source code to create a new app or update an existing one (gx.upload).
 No app_id → creates new app (v1.0.0, set live automatically).
 With app_id → creates new version (NOT set live — use: galactic set version).
 
@@ -899,7 +900,7 @@ ${colors.dim('OPTIONS')}
   --description, -d     App description
   --visibility, -v      Visibility: private, unlisted, published (default: private)
   --version             Explicit version (e.g. "2.0.0"). Default: patch bump
-  --app-id, -a          Existing app ID or slug (auto-detected from .ultralightrc.json)
+  --app-id, -a          Existing app ID or slug (auto-detected from .galacticrc.json)
 
 ${colors.dim('EXAMPLES')}
   galactic upload                       # Upload current directory as new app
@@ -918,16 +919,10 @@ ${colors.dim('EXAMPLES')}
   }
   assertInterfaceEntriesPresent(files);
 
-  // Check if this is an existing app (has .ultralightrc.json or --app-id)
+  // Check if this is an existing app (has a project rc file or --app-id)
   let appId: string | undefined = parsed['app-id'] as string | undefined;
   if (!appId) {
-    try {
-      const rcPath = `${dir}/.ultralightrc.json`;
-      const rc = JSON.parse(await Deno.readTextFile(rcPath));
-      appId = rc.app_id;
-    } catch {
-      // No existing app
-    }
+    appId = await readAppId(dir);
   }
 
   console.log(colors.dim(`Uploading ${files.length} files${appId ? ` to ${appId}` : ' (new app)'}...`));
@@ -944,20 +939,15 @@ ${colors.dim('EXAMPLES')}
   if (parsed.visibility) toolArgs.visibility = parsed.visibility;
   if (parsed.version) toolArgs.version = parsed.version;
 
-  const result = await client.callTool('ul.upload', toolArgs);
+  const result = await client.callTool('gx.upload', toolArgs);
 
-  // Save app ID to .ultralightrc.json for future uploads
+  // Save app ID to the project rc file for future uploads
   if (result.app_id) {
-    const rc = {
+    await writeAppRc(dir, {
       app_id: result.app_id,
       slug: result.slug,
       name: parsed.name || result.slug,
-    };
-    try {
-      await Deno.writeTextFile(`${dir}/.ultralightrc.json`, JSON.stringify(rc, null, 2));
-    } catch {
-      // Best-effort — dir may be read-only
-    }
+    });
   }
 
   console.log();
@@ -971,7 +961,7 @@ ${colors.dim('EXAMPLES')}
 }
 
 // ============================================
-// DOWNLOAD COMMAND — uses ul.download
+// DOWNLOAD COMMAND — uses gx.download
 // ============================================
 
 async function downloadCmd(args: string[], client: ApiClient, _config: Config) {
@@ -985,7 +975,7 @@ async function downloadCmd(args: string[], client: ApiClient, _config: Config) {
     console.log(`
 ${colors.bold('galactic download')} <app-id>
 
-Download source code for an app (ul.download). Respects download_access settings.
+Download source code for an app (gx.download). Respects download_access settings.
 
 ${colors.dim('OPTIONS')}
   --version, -v <ver>   Specific version to download (default: live version)
@@ -1009,7 +999,7 @@ ${colors.dim('EXAMPLES')}
 
   console.log(colors.dim(`Downloading ${appId}...`));
 
-  const result = await client.callTool('ul.download', toolArgs);
+  const result = await client.callTool('gx.download', toolArgs);
 
   const downloadFiles = result.files as Array<{ path: string; content: string }>;
   if (!downloadFiles || downloadFiles.length === 0) {
@@ -1038,7 +1028,7 @@ ${colors.dim('EXAMPLES')}
 }
 
 // ============================================
-// TEST COMMAND — uses ul.test
+// TEST COMMAND — uses gx.test
 // ============================================
 
 async function testCmd(args: string[], client: ApiClient, _config: Config) {
@@ -1052,7 +1042,7 @@ async function testCmd(args: string[], client: ApiClient, _config: Config) {
     console.log(`
 ${colors.bold('galactic test')} [directory] [options]
 
-Test your app functions in the Galactic sandbox without deploying (ul.test).
+Test your app functions in the Galactic sandbox without deploying (gx.test).
 Supports all sandbox globals (fetch, crypto, lodash, dateFns, etc).
 
 ${colors.dim('OPTIONS')}
@@ -1096,7 +1086,7 @@ ${colors.dim('EXAMPLES')}
   console.log(colors.dim(`Testing${fnName ? ` ${fnName}()` : ''} from ${dir}...`));
   console.log();
 
-  // ul.test uses function_name and test_args
+  // gx.test uses function_name and test_args
   const toolArgs: Record<string, unknown> = {
     files: files.map(f => ({ path: f.name, content: f.content })),
   };
@@ -1105,7 +1095,7 @@ ${colors.dim('EXAMPLES')}
     if (fnArgs) toolArgs.test_args = fnArgs;
   }
 
-  const result = await client.callTool('ul.test', toolArgs);
+  const result = await client.callTool('gx.test', toolArgs);
 
   if (parsed.json) {
     console.log(JSON.stringify(result, null, 2));
@@ -1140,7 +1130,7 @@ ${colors.dim('EXAMPLES')}
 }
 
 // ============================================
-// LINT COMMAND — uses ul.test({ lint_only: true })
+// LINT COMMAND — uses gx.test({ lint_only: true })
 // ============================================
 
 async function lint(args: string[], client: ApiClient, _config: Config) {
@@ -1153,7 +1143,7 @@ async function lint(args: string[], client: ApiClient, _config: Config) {
     console.log(`
 ${colors.bold('galactic lint')} [directory]
 
-Validate source code and manifest against Galactic conventions via ul.test({ lint_only: true }).
+Validate source code and manifest against Galactic conventions via gx.test({ lint_only: true }).
 Checks: single-args-object, no-shorthand-return, function-count, manifest sync, permissions.
 
 ${colors.dim('OPTIONS')}
@@ -1215,7 +1205,7 @@ ${colors.dim('EXAMPLES')}
 }
 
 // ============================================
-// SCAFFOLD COMMAND — uses ul.download scaffold mode
+// SCAFFOLD COMMAND — uses gx.download scaffold mode
 // ============================================
 
 async function scaffold(args: string[], client: ApiClient, _config: Config) {
@@ -1229,7 +1219,7 @@ async function scaffold(args: string[], client: ApiClient, _config: Config) {
     console.log(`
 ${colors.bold('galactic scaffold')} <name>
 
-Generate a properly structured app skeleton following all Galactic conventions via ul.download.
+Generate a properly structured app skeleton following all Galactic conventions via gx.download.
 Returns index.ts + manifest.json + migrations/001_initial.sql with correct patterns.
 
 ${colors.dim('OPTIONS')}
@@ -1271,7 +1261,7 @@ ${colors.dim('EXAMPLES')}
   const generatedFiles = result.files as Array<{ path: string; content: string }>;
 
   if (!generatedFiles || generatedFiles.length === 0) {
-    throw new Error('No files generated. Check that scaffold mode is available on ul.download.');
+    throw new Error('No files generated. Check that scaffold mode is available on gx.download.');
   }
 
   // Create directory and write files
@@ -1358,7 +1348,7 @@ async function apps(args: string[], client: ApiClient, _config: Config) {
         throw new Error('Usage: galactic apps get <app-id>');
       }
 
-      const result = await client.callTool('ul.download', {
+      const result = await client.callTool('gx.download', {
         app_id: appId,
       });
 
@@ -1396,7 +1386,7 @@ ${colors.bold('galactic apps')} <command>
 Manage your Galactic apps.
 
 ${colors.dim('COMMANDS')}
-  list, ls        List your apps (ul.discover scope=library)
+  list, ls        List your apps (gx.discover scope=library)
   get <app>       Get app details
   delete <app>    Delete an app
 
@@ -1502,12 +1492,12 @@ ${colors.bold('galactic set')} <setting> <app-id> <value>
 Configure app settings.
 
 ${colors.dim('SETTINGS')}
-  version <app> <ver>                  Set the live version (ul.set)
-  visibility <app> <private|unlisted|published>  Change visibility (ul.set)
-  ratelimit <app> [--per-minute N] [--per-day N]  Set rate limits (ul.set)
-  pricing <app> --default <credits>    Set price in credits (✦) per call (ul.set)
-  supabase <app> <server-name|null>    Assign Supabase server (ul.set)
-  download-access <app> <owner|public> Set download access (ul.set)
+  version <app> <ver>                  Set the live version (gx.set)
+  visibility <app> <private|unlisted|published>  Change visibility (gx.set)
+  ratelimit <app> [--per-minute N] [--per-day N]  Set rate limits (gx.set)
+  pricing <app> --default <credits>    Set price in credits (✦) per call (gx.set)
+  supabase <app> <server-name|null>    Assign Supabase server (gx.set)
+  download-access <app> <owner|public> Set download access (gx.set)
 
 ${colors.dim('EXAMPLES')}
   galactic set version my-app 2.0.0
@@ -1521,7 +1511,7 @@ ${colors.dim('EXAMPLES')}
 }
 
 // ============================================
-// PERMISSIONS COMMAND — ul.permissions
+// PERMISSIONS COMMAND — gx.permissions
 // ============================================
 
 async function permissions(args: string[], client: ApiClient, _config: Config) {
@@ -1656,10 +1646,10 @@ ${colors.bold('galactic permissions')} <command>
 Manage app permissions.
 
 ${colors.dim('COMMANDS')}
-  grant <app> <email>   Grant access (ul.permissions)
-  revoke <app> [email]  Revoke access (ul.permissions)
-  list <app>            List granted users (ul.permissions)
-  export <app>          Export audit log (ul.permissions)
+  grant <app> <email>   Grant access (gx.permissions)
+  revoke <app> [email]  Revoke access (gx.permissions)
+  list <app>            List granted users (gx.permissions)
+  export <app>          Export audit log (gx.permissions)
 
 ${colors.dim('OPTIONS (grant)')}
   --functions, -f <fn1,fn2>    Specific functions to grant (default: all)
@@ -1703,19 +1693,13 @@ async function draft(args: string[], client: ApiClient, _config: Config) {
       let appId = parsed['app-id'] as string | undefined;
       const dir = (parsed._[0] as string) || '.';
 
-      // Try to read app_id from .ultralightrc.json
+      // Try to read app_id from the project rc file
       if (!appId) {
-        try {
-          const rcPath = `${dir}/.ultralightrc.json`;
-          const rc = JSON.parse(await Deno.readTextFile(rcPath));
-          appId = rc.app_id;
-        } catch {
-          // No existing app
-        }
+        appId = await readAppId(dir);
       }
 
       if (!appId) {
-        throw new Error('No app_id found. Use --app-id or run from a directory with .ultralightrc.json');
+        throw new Error('No app_id found. Use --app-id or run from a directory with a .galacticrc.json (or legacy .ultralightrc.json)');
       }
 
       const files = await collectFiles(dir);
@@ -1726,8 +1710,8 @@ async function draft(args: string[], client: ApiClient, _config: Config) {
 
       console.log(colors.dim(`Uploading new version for ${appId}...`));
 
-      // ul.upload with app_id creates new version (not set live)
-      const result = await client.callTool('ul.upload', {
+      // gx.upload with app_id creates new version (not set live)
+      const result = await client.callTool('gx.upload', {
         app_id: appId,
         files: files.map(f => ({ path: f.name, content: f.content })),
       });
@@ -1748,7 +1732,7 @@ async function draft(args: string[], client: ApiClient, _config: Config) {
       }
 
       // Show app versions via download info
-      const result = await client.callTool('ul.download', { app_id: appId });
+      const result = await client.callTool('gx.download', { app_id: appId });
       console.log(JSON.stringify(result, null, 2));
       break;
     }
@@ -1782,7 +1766,7 @@ ${colors.dim('COMMANDS')}
   publish <app> <ver> Set a version as live (alias for: set version)
 
 ${colors.dim('OPTIONS (upload)')}
-  --app-id, -a <id>   App ID or slug (auto-detected from .ultralightrc.json)
+  --app-id, -a <id>   App ID or slug (auto-detected from .galacticrc.json)
 
 ${colors.dim('EXAMPLES')}
   galactic draft upload .
@@ -1819,7 +1803,7 @@ async function docs(args: string[], client: ApiClient, _config: Config) {
       }
 
       // Download source to get skills.md
-      const result = await client.callTool('ul.download', { app_id: appId });
+      const result = await client.callTool('gx.download', { app_id: appId });
       const files = result.files as Array<{ path: string; content: string }> || [];
       const skillsFile = files.find(f => f.path === 'skills.md' || f.path === 'Skills.md');
 
@@ -1950,7 +1934,7 @@ ${colors.dim('EXAMPLES')}
 }
 
 // ============================================
-// DISCOVER COMMAND — uses ul.discover
+// DISCOVER COMMAND — uses gx.discover
 // ============================================
 
 async function discover(args: string[], client: ApiClient, _config: Config) {
@@ -1964,14 +1948,14 @@ async function discover(args: string[], client: ApiClient, _config: Config) {
     console.log(`
 ${colors.bold('galactic discover')} [query]
 
-Search the App Store for MCP tools by natural language via ul.discover({ scope: "appstore", ... }).
+Search the App Store for MCP tools by natural language via gx.discover({ scope: "appstore", ... }).
 Uses semantic search with composite ranking (similarity + community signal + native capability).
 
 ${colors.dim('OPTIONS')}
   --limit, -l <n>     Max results (default: 10)
   --featured, -f      Show top-ranked apps (no query needed)
-  --desk              Show last 3 apps you called (ul.discover scope=desk)
-  --library           Search your library instead (ul.discover scope=library)
+  --desk              Show last 3 apps you called (gx.discover scope=desk)
+  --library           Search your library instead (gx.discover scope=library)
 
 ${colors.dim('EXAMPLES')}
   galactic discover "weather API"
@@ -2109,7 +2093,7 @@ ${colors.dim('EXAMPLES')}
 }
 
 // ============================================
-// LOGS COMMAND — uses ul.logs
+// LOGS COMMAND — uses gx.logs
 // ============================================
 
 async function logsCmd(args: string[], client: ApiClient, _config: Config) {
@@ -2124,7 +2108,7 @@ async function logsCmd(args: string[], client: ApiClient, _config: Config) {
     console.log(`
 ${colors.bold('galactic logs')} <app-id>
 
-View MCP call logs for an app you own (ul.logs).
+View MCP call logs for an app you own (gx.logs).
 
 ${colors.dim('OPTIONS')}
   --limit, -l <n>          Max entries (default: 50)
@@ -2153,7 +2137,7 @@ ${colors.dim('EXAMPLES')}
   if (parsed.emails) toolArgs.emails = (parsed.emails as string).split(',');
   if (parsed.functions) toolArgs.functions = (parsed.functions as string).split(',');
 
-  const result = await client.callTool('ul.logs', toolArgs);
+  const result = await client.callTool('gx.logs', toolArgs);
 
   if (parsed.json) {
     console.log(JSON.stringify(result, null, 2));
@@ -2182,7 +2166,7 @@ ${colors.dim('EXAMPLES')}
 }
 
 // ============================================
-// HEALTH COMMAND — uses ul.health
+// HEALTH COMMAND — uses gx.health
 // ============================================
 
 async function health(args: string[], client: ApiClient, _config: Config) {
@@ -2197,7 +2181,7 @@ async function health(args: string[], client: ApiClient, _config: Config) {
     console.log(`
 ${colors.bold('galactic health')} [app-id]
 
-View health events and error reports for your apps (ul.health).
+View health events and error reports for your apps (gx.health).
 The platform auto-detects failing functions (>50% error rate) and records events.
 
 ${colors.dim('OPTIONS')}
@@ -2223,7 +2207,7 @@ ${colors.dim('EXAMPLES')}
   if (parsed.limit) toolArgs.limit = parsed.limit;
   if (parsed.resolve) toolArgs.resolve_event_id = parsed.resolve;
 
-  const result = await client.callTool('ul.health', toolArgs);
+  const result = await client.callTool('gx.health', toolArgs);
 
   if (parsed.json) {
     console.log(JSON.stringify(result, null, 2));
@@ -2318,10 +2302,47 @@ ${colors.dim('EXAMPLES')}
 // HELPERS
 // ============================================
 
+// Project config file written next to an app so `upload` can target the right
+// app on later runs. `.galacticrc.json` is the current name; the legacy
+// `.ultralightrc.json` is still read (and preserved in place when it already
+// exists) so existing projects keep working until the platform scaffolder flips.
+async function readAppId(dir: string): Promise<string | undefined> {
+  for (const name of ['.galacticrc.json', '.ultralightrc.json']) {
+    try {
+      const rc = JSON.parse(await Deno.readTextFile(`${dir}/${name}`));
+      if (rc?.app_id) return rc.app_id as string;
+    } catch {
+      // Try the next candidate file name.
+    }
+  }
+  return undefined;
+}
+
+async function writeAppRc(dir: string, rc: Record<string, unknown>): Promise<void> {
+  // Default to the new name; keep updating a legacy file in place if that's the
+  // only one present, so we don't leave two rc files side by side.
+  let target = `${dir}/.galacticrc.json`;
+  try {
+    await Deno.stat(`${dir}/.ultralightrc.json`);
+    try {
+      await Deno.stat(`${dir}/.galacticrc.json`);
+    } catch {
+      target = `${dir}/.ultralightrc.json`;
+    }
+  } catch {
+    // No legacy file — use the new name.
+  }
+  try {
+    await Deno.writeTextFile(target, JSON.stringify(rc, null, 2));
+  } catch {
+    // Best-effort — dir may be read-only.
+  }
+}
+
 async function collectFiles(dir: string): Promise<Array<{ name: string; content: string; size: number }>> {
   const files: Array<{ name: string; content: string; size: number }> = [];
   const allowedExtensions = ['.ts', '.tsx', '.js', '.jsx', '.json', '.md', '.css', '.html'];
-  const ignoreDirs = ['node_modules', '.git', 'dist', 'build', '.ultralight'];
+  const ignoreDirs = ['node_modules', '.git', 'dist', 'build', '.galactic', '.ultralight'];
 
   async function walk(path: string, base: string) {
     for await (const entry of Deno.readDir(path)) {

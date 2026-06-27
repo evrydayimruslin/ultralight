@@ -7,7 +7,7 @@
  * Other commands delegate to the full Deno CLI if available.
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 import { homedir, platform } from 'os';
 import { spawn } from 'child_process';
@@ -26,7 +26,7 @@ function getVersion() {
 }
 
 const API_URL = process.env.GALACTIC_API_URL || process.env.ULTRALIGHT_API_URL ||
-  'https://api.ultralightagent.com';
+  'https://api.connectgalactic.com';
 const DENO_INSTALL_URL = 'https://raw.githubusercontent.com/evrydayimruslin/ultralight/main/cli/mod.ts';
 const DENO_BIN_NAME = platform() === 'win32' ? 'deno.exe' : 'deno';
 
@@ -44,7 +44,12 @@ const stderr = (line) => console.error(line);
 
 // ─── Config helpers ──────────────────────────────────────────────────
 function getConfigDir() {
-  return join(homedir(), '.ultralight');
+  return join(homedir(), '.galactic');
+}
+
+// Pre-rebrand config location, read as a fallback and removed once migrated.
+function getLegacyConfigPath() {
+  return join(homedir(), '.ultralight', 'config.json');
 }
 
 function readJSON(filePath) {
@@ -87,8 +92,8 @@ const PLUGIN_JSON = {
   name: 'galactic',
   description: 'Galactic — serverless MCP platform. Discover, build, test, and deploy AI agent tools.',
   version: '1.0.0',
-  author: { name: 'Galactic', url: 'https://api.ultralightagent.com' },
-  homepage: 'https://api.ultralightagent.com',
+  author: { name: 'Galactic', url: 'https://connectgalactic.com' },
+  homepage: 'https://connectgalactic.com',
   license: 'MIT',
   keywords: ['galactic', 'mcp', 'serverless', 'ai', 'tools', 'agent'],
 };
@@ -162,7 +167,7 @@ Deploy an app or publish content to the Galactic platform.
 2. Look for source files in the current project:
    - Read index.ts (or src/*.ts) for the app code
    - Read manifest.json for function definitions
-   - Read .ultralightrc.json for app config (app_id for updates)
+   - Read .galacticrc.json (or legacy .ultralightrc.json) for app config (app_id for updates)
 3. Prepare the upload payload with files array
 4. For new apps (no app_id): \`gx.upload({ files, name, description, visibility: "private" })\`
 5. For updates (with app_id): \`gx.upload({ files, app_id })\` — creates new version (NOT auto-live)
@@ -188,7 +193,7 @@ Download source code or scaffold a new app.
    - Parse name, description, and any function specs from arguments
    - Call \`gx.download({ name, description, functions, storage })\`
    - Write the scaffolded files to a new directory
-4. Explain the file structure: index.ts (code), manifest.json (schemas), .ultralightrc.json (config)
+4. Explain the file structure: index.ts (code), manifest.json (schemas), .galacticrc.json (config)
 5. Suggest next steps: implement functions, test with /test, deploy with /upload
 `,
 
@@ -361,7 +366,7 @@ function registerPlugin(token, apiUrl) {
     writeJSON(join(pluginBase, '.claude-plugin', 'plugin.json'), PLUGIN_JSON);
 
     // 2. Write .mcp.json (flat format — standard for external plugins).
-    // stdio entry → launches the local bridge; token comes from ~/.ultralight.
+    // stdio entry → launches the local bridge; token comes from ~/.galactic.
     const mcpConfig = {
       galactic: {
         command: 'npx',
@@ -399,7 +404,7 @@ function registerPlugin(token, apiUrl) {
               description: 'Galactic — serverless MCP platform. Discover, build, test, and deploy AI agent tools instantly.',
               category: 'development',
               source: './external_plugins/galactic',
-              homepage: 'https://api.ultralightagent.com',
+              homepage: 'https://connectgalactic.com',
             });
             writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
           }
@@ -443,10 +448,10 @@ ${c.bold('galactic setup')}
 Set up Galactic: authenticate and configure your agent's MCP connection.
 
 ${c.dim('OPTIONS')}
-  --token, -t <token>   Your API token (starts with ul_)
+  --token, -t <token>   Your API token (starts with gx_)
 
 ${c.dim('WHAT IT DOES')}
-  1. Saves your token to ~/.ultralight/config.json
+  1. Saves your token to ~/.galactic/config.json
   2. Verifies the token against the Galactic API
   3. Detects MCP client config files (Claude Code, Claude Desktop, Cursor)
   4. Writes the Galactic MCP server entry to each detected config
@@ -454,8 +459,8 @@ ${c.dim('WHAT IT DOES')}
   6. Outputs connection info so your agent can use tools immediately
 
 ${c.dim('EXAMPLES')}
-  npx galacticconnection setup --token ul_abc123...
-  galacticconnection setup -t ul_abc123...
+  npx galacticconnection setup --token gx_abc123...
+  galacticconnection setup -t gx_abc123...
 `);
     return;
   }
@@ -478,21 +483,23 @@ ${c.dim('Then run:')}
     return;
   }
 
-  // Validate token format
-  if (!token.startsWith('ul_')) {
-    console.log(c.red('x Invalid token format. Galactic API tokens start with ul_'));
+  // Validate token format (gx_ is current; ul_ is the deprecated legacy prefix)
+  if (!token.startsWith('gx_') && !token.startsWith('ul_')) {
+    console.log(c.red('x Invalid token format. Galactic API tokens start with gx_'));
     process.exit(1);
   }
 
   // Step 1: Save token to config
   const configDir = getConfigDir();
   const configPath = join(configDir, 'config.json');
-  const config = readJSON(configPath) || {};
+  const config = readJSON(configPath) || readJSON(getLegacyConfigPath()) || {};
   config.api_url = API_URL;
   config.auth = { token, is_api_token: true };
   if (!config.defaults) config.defaults = { visibility: 'private', auto_docs: true };
   writeJSON(configPath, config);
-  console.log(c.green('✓ Token saved to ~/.ultralight/config.json'));
+  // Migrate forward: drop any stale legacy copy so it can't shadow the new one.
+  try { rmSync(getLegacyConfigPath()); } catch { /* no legacy file */ }
+  console.log(c.green('✓ Token saved to ~/.galactic/config.json'));
 
   // Step 2: Verify token
   let userInfo = null;
@@ -523,7 +530,7 @@ ${c.dim('Then run:')}
   // Write a STDIO entry: clients launch the local bridge (`galacticconnection mcp`),
   // which proxies to the remote platform MCP. stdio works in every desktop MCP
   // client (unlike the bare HTTP-POST endpoint), and the token is NOT embedded
-  // here — the bridge reads it from ~/.ultralight/config.json (written above).
+  // here — the bridge reads it from ~/.galactic/config.json (written above).
   const mcpEntry = {
     command: 'npx',
     args: ['-y', `galacticconnection@${getVersion()}`, 'mcp'],
@@ -545,7 +552,8 @@ ${c.dim('Then run:')}
     try {
       const existing = readJSON(target.path) || {};
       const servers = existing[target.key] || {};
-      servers['ultralight'] = mcpEntry;
+      delete servers['ultralight'];  // drop the pre-rebrand entry if present
+      servers['galactic'] = mcpEntry;
       existing[target.key] = servers;
       writeFileSync(target.path, JSON.stringify(existing, null, 2));
       console.log(c.green(`✓ MCP config written to ${c.dim(target.path)} (${target.name})`));
@@ -560,7 +568,7 @@ ${c.dim('Then run:')}
     console.log(c.yellow('⚠ No MCP client config files detected.'));
     console.log(c.dim('  Add this to your MCP client config manually:'));
     console.log('');
-    console.log(c.dim(JSON.stringify({ mcpServers: { ultralight: mcpEntry } }, null, 2)));
+    console.log(c.dim(JSON.stringify({ mcpServers: { galactic: mcpEntry } }, null, 2)));
     console.log('');
     console.log(c.dim('  Common config file locations:'));
     console.log(c.dim('    Claude Code:    ~/.claude.json'));
@@ -588,12 +596,12 @@ ${c.dim('Then run:')}
   // Agent bridge — structured output so the running agent can use tools
   // immediately. The token is deliberately NOT printed (it would land in
   // terminal scrollback / captured CI logs); the curl examples read it from
-  // ~/.ultralight/config.json at call time via Node (guaranteed available).
+  // ~/.galactic/config.json at call time via Node (guaranteed available).
   const tokenFromConfig =
-    '$(node -e "process.stdout.write(JSON.parse(require(\'fs\').readFileSync(require(\'os\').homedir()+\'/.ultralight/config.json\',\'utf8\')).auth.token)")';
-  console.log(`--- ULTRALIGHT AGENT BRIDGE ---
+    '$(node -e "process.stdout.write(JSON.parse(require(\'fs\').readFileSync(require(\'os\').homedir()+\'/.galactic/config.json\',\'utf8\')).auth.token)")';
+  console.log(`--- GALACTIC AGENT BRIDGE ---
 MCP_ENDPOINT=${mcpEndpoint}
-Your API token is saved in ~/.ultralight/config.json (not printed here).
+Your API token is saved in ~/.galactic/config.json (not printed here).
 
 To call Galactic tools in this session, POST JSON-RPC 2.0 to the endpoint above.
 
@@ -604,7 +612,7 @@ Call a tool (example — discover apps):
 curl -s -X POST "${mcpEndpoint}" -H "Authorization: Bearer ${tokenFromConfig}" -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"gx.discover","arguments":{"scope":"appstore","query":"hello"}}}'
 
 MCP is configured for future sessions. Tools activate natively on next agent restart.
---- END ULTRALIGHT AGENT BRIDGE ---`);
+--- END GALACTIC AGENT BRIDGE ---`);
 }
 
 // ─── main router ─────────────────────────────────────────────────────

@@ -19,7 +19,7 @@
  * Environment:
  *   UL_TOKEN       — API token for authenticated tests (optional, tests skip if not set)
  *   UL_TEST_APP    — A known public app ID for per-app tests (optional)
- *   UL_API_URL     — Override API URL (default: https://api.ultralightagent.com)
+ *   UL_API_URL     — Override API URL (default: https://api.connectgalactic.com)
  *   UL_LIVE_API_TESTS=1 — Run live API specs against UL_API_URL
  */
 
@@ -30,7 +30,7 @@ import {
   assertStringIncludes,
 } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 
-const API = Deno.env.get('UL_API_URL') || 'https://api.ultralightagent.com';
+const API = Deno.env.get('UL_API_URL') || 'https://api.connectgalactic.com';
 const TOKEN = Deno.env.get('UL_TOKEN');
 const TEST_APP = Deno.env.get('UL_TEST_APP') || 'cd118f84-fbca-4cb3-a680-3974585bc319';
 const LIVE_API_TESTS = Deno.env.get('UL_LIVE_API_TESTS') === '1';
@@ -40,7 +40,7 @@ const LIVE_API_TESTS = Deno.env.get('UL_LIVE_API_TESTS') === '1';
 //    These are correctness guards — all should pass.
 // ============================================
 
-Deno.test('CLI: all callTool() calls use ul.* prefix, not platform.*', async () => {
+Deno.test('CLI: all callTool() calls use gx.* prefix, not platform.*', async () => {
   const cliSource = await Deno.readTextFile('./cli/mod.ts');
 
   const platformCalls = cliSource.match(/callTool\(\s*['"]platform\./g);
@@ -51,10 +51,10 @@ Deno.test('CLI: all callTool() calls use ul.* prefix, not platform.*', async () 
     `Matches: ${platformCalls?.join(', ')}`
   );
 
-  const ulCalls = cliSource.match(/callTool\(\s*['"]ul\./g);
+  const gxCalls = cliSource.match(/callTool\(\s*['"]gx\./g);
   assert(
-    ulCalls !== null && ulCalls.length >= 10,
-    `Expected 10+ callTool('ul.*') calls, found ${ulCalls?.length || 0}`
+    gxCalls !== null && gxCalls.length >= 10,
+    `Expected 10+ callTool('gx.*') calls, found ${gxCalls?.length || 0}`
   );
 });
 
@@ -88,15 +88,15 @@ Deno.test('CLI: init template uses single-args-object pattern', async () => {
   );
 });
 
-Deno.test('CLI: upload calls ul.upload, not platform.apps.create', async () => {
+Deno.test('CLI: upload calls gx.upload, not platform.apps.create', async () => {
   const cliSource = await Deno.readTextFile('./cli/mod.ts');
 
   assert(
     !cliSource.includes('platform.apps.create'),
-    'Found old platform.apps.create reference — should use ul.upload'
+    'Found old platform.apps.create reference — should use gx.upload'
   );
 
-  assertStringIncludes(cliSource, "'ul.upload'", 'Missing ul.upload call in upload command');
+  assertStringIncludes(cliSource, "'gx.upload'", 'Missing gx.upload call in upload command');
 });
 
 Deno.test('CLI: run command uses per-app MCP endpoint via callAppTool', async () => {

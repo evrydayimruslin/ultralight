@@ -53,7 +53,8 @@ export function createCliLogger(
   options: CreateCliLoggerOptions = {},
 ) {
   const sink = options.sink ?? console;
-  const debugEnabled = options.debugEnabled ?? (Deno.env.get('ULTRALIGHT_CLI_DEBUG') === '1');
+  const debugEnabled = options.debugEnabled ??
+    (Deno.env.get('GALACTIC_CLI_DEBUG') === '1' || Deno.env.get('ULTRALIGHT_CLI_DEBUG') === '1');
 
   const emit = (level: LogLevel, message: string, context?: Record<string, unknown>): void => {
     if (level === 'debug' && !debugEnabled) return;

@@ -1,7 +1,9 @@
 /**
  * CLI Configuration Management
  *
- * Config file location: ~/.ultralight/config.json
+ * Config file location: ~/.galactic/config.json
+ * (the legacy ~/.ultralight/config.json is read as a fallback for upgraders and
+ *  migrated forward on the next save)
  */
 
 import { join } from 'https://deno.land/std@0.208.0/path/mod.ts';
@@ -12,7 +14,7 @@ export interface Config {
     token: string;
     expires_at?: string;  // Optional - API tokens may not have expiry
     refresh_token?: string;
-    is_api_token?: boolean;  // True for ul_xxx tokens
+    is_api_token?: boolean;  // True for gx_xxx (or legacy ul_xxx) tokens
   };
   defaults?: {
     visibility?: 'private' | 'unlisted' | 'public';
@@ -20,8 +22,9 @@ export interface Config {
   };
 }
 
-const DEFAULT_API_URL = 'https://api.ultralightagent.com';
+const DEFAULT_API_URL = 'https://api.connectgalactic.com';
 const LEGACY_API_URLS = new Set([
+  'https://api.ultralightagent.com',
   'https://api.ultralight.dev',
   'https://ultralight-api-iikqz.ondigitalocean.app',
   'https://ultralight-api.rgn4jz429m.workers.dev',
@@ -52,24 +55,37 @@ function normalizeConfig(config: Config): Config {
   return normalized;
 }
 
+function getHome(): string {
+  return Deno.env.get('HOME') || Deno.env.get('USERPROFILE') || '.';
+}
+
 function getConfigDir(): string {
-  const home = Deno.env.get('HOME') || Deno.env.get('USERPROFILE') || '.';
-  return join(home, '.ultralight');
+  return join(getHome(), '.galactic');
 }
 
 function getConfigPath(): string {
   return join(getConfigDir(), 'config.json');
 }
 
+// Pre-rebrand location; read as a fallback and removed once migrated forward.
+function getLegacyConfigPath(): string {
+  return join(getHome(), '.ultralight', 'config.json');
+}
+
 export async function getConfig(): Promise<Config> {
-  try {
-    const configPath = getConfigPath();
-    const content = await Deno.readTextFile(configPath);
-    const config = JSON.parse(content) as Config;
-    return normalizeConfig(config);
-  } catch {
-    return DEFAULT_CONFIG;
+  // Prefer the current ~/.galactic location, then fall back to the legacy
+  // ~/.ultralight location so upgraders keep their saved token until the next
+  // saveConfig() migrates it forward.
+  for (const path of [getConfigPath(), getLegacyConfigPath()]) {
+    try {
+      const content = await Deno.readTextFile(path);
+      const config = JSON.parse(content) as Config;
+      return normalizeConfig(config);
+    } catch {
+      // Try the next candidate location.
+    }
   }
+  return DEFAULT_CONFIG;
 }
 
 export async function saveConfig(config: Config): Promise<void> {
@@ -84,6 +100,14 @@ export async function saveConfig(config: Config): Promise<void> {
   }
 
   await Deno.writeTextFile(configPath, JSON.stringify(config, null, 2));
+
+  // Migrate forward: once the token lives in ~/.galactic, drop the stale legacy
+  // copy so `logout` can't leave a usable token behind in ~/.ultralight.
+  try {
+    await Deno.remove(getLegacyConfigPath());
+  } catch {
+    // No legacy file (already migrated, or fresh install) — nothing to clean up.
+  }
 }
 
 export async function clearConfig(): Promise<void> {
