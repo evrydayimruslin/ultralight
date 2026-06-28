@@ -29,6 +29,92 @@ interface Env {
   ENVIRONMENT: string;
   CF_ACCOUNT_ID: string;
   CF_API_TOKEN: string;
+  // Per-tenant proof (defense-in-depth on top of X-Worker-Secret). MUST match
+  // the API worker's DATA_TENANT_SECRET. Deliberately NOT WORKER_SECRET.
+  DATA_TENANT_SECRET?: string;
+  // "1"/"true" → reject any request lacking a valid tenant token. Default off
+  // (observe-only) for safe rollout: deploy both workers, confirm tokens
+  // validate in logs, then flip this to close the legacy unproven path.
+  DATA_TENANT_ENFORCE?: string;
+}
+
+// Per-tenant proof verification — MUST stay algorithm-identical to the API
+// worker's api/services/data-tenant-token.ts (mintDataTenantToken).
+const DATA_TENANT_DEV_SECRET = 'galactic-dev-data-tenant-secret';
+
+interface TenantClaims {
+  v: number;
+  appId: string;
+  userId: string | null;
+  iat: number;
+  exp: number;
+}
+
+interface TenantVerifyResult {
+  valid: boolean;
+  claims?: TenantClaims;
+  reason?: string;
+}
+
+function base64UrlToBytes(value: string): Uint8Array {
+  const pad = value.length % 4 === 0 ? '' : '='.repeat(4 - (value.length % 4));
+  const binary = atob(value.replace(/-/g, '+').replace(/_/g, '/') + pad);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+  return out;
+}
+
+function toHex(buffer: ArrayBuffer): string {
+  return Array.from(new Uint8Array(buffer))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return result === 0;
+}
+
+async function verifyTenantToken(
+  token: string | null,
+  secret: string,
+  nowMs = Date.now(),
+): Promise<TenantVerifyResult> {
+  if (!token || !token.startsWith('gxd1.')) return { valid: false, reason: 'absent' };
+  const body = token.slice('gxd1.'.length);
+  const dot = body.indexOf('.');
+  if (dot <= 0) return { valid: false, reason: 'malformed' };
+  const encoded = body.slice(0, dot);
+  const signature = body.slice(dot + 1);
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const expected = toHex(
+    await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(encoded)),
+  );
+  if (!timingSafeEqual(signature, expected)) return { valid: false, reason: 'bad_signature' };
+  let claims: TenantClaims;
+  try {
+    claims = JSON.parse(new TextDecoder().decode(base64UrlToBytes(encoded)));
+  } catch {
+    return { valid: false, reason: 'malformed' };
+  }
+  if (claims.v !== 1 || typeof claims.appId !== 'string') {
+    return { valid: false, reason: 'malformed' };
+  }
+  if (typeof claims.exp !== 'number' || Math.floor(nowMs / 1000) > claims.exp) {
+    return { valid: false, reason: 'expired' };
+  }
+  if (claims.userId !== null && typeof claims.userId !== 'string') {
+    return { valid: false, reason: 'malformed' };
+  }
+  return { valid: true, claims };
 }
 
 export default {
@@ -44,6 +130,33 @@ export default {
     const secret = request.headers.get('X-Worker-Secret');
     if (!secret || secret !== env.WORKER_SECRET) {
       return json({ error: 'Unauthorized' }, 401);
+    }
+
+    // Per-tenant proof (defense-in-depth). X-Worker-Secret proves "an internal
+    // caller"; the tenant token proves "authorized for THIS appId/userId" via a
+    // secret that is not sandbox-exposed. When enforcing, a request without a
+    // valid token is rejected — so a WORKER_SECRET leak alone cannot cross
+    // tenants. Default observe-only: validate-if-present, warn, allow.
+    const tenantSecret = env.DATA_TENANT_SECRET || DATA_TENANT_DEV_SECRET;
+    const tenantEnforce = env.DATA_TENANT_ENFORCE === '1' ||
+      env.DATA_TENANT_ENFORCE === 'true';
+    // Footgun guard: enforcing with the publicly-known dev default in production
+    // is FALSE security (anyone could forge a token). Fail closed loudly instead
+    // of pretending to be protected — forces a real DATA_TENANT_SECRET to be set.
+    const usingDevTenantSecret = !env.DATA_TENANT_SECRET ||
+      env.DATA_TENANT_SECRET === DATA_TENANT_DEV_SECRET;
+    if (tenantEnforce && env.ENVIRONMENT === 'production' && usingDevTenantSecret) {
+      console.error('[WORKER] DATA_TENANT_ENFORCE set but DATA_TENANT_SECRET is unset/default in production — refusing to serve');
+      return json({
+        error: 'tenant enforcement misconfigured: set a non-default DATA_TENANT_SECRET',
+      }, 503);
+    }
+    const tenant = await verifyTenantToken(
+      request.headers.get('X-Tenant-Token'),
+      tenantSecret,
+    );
+    if (!tenant.valid && tenantEnforce) {
+      return json({ error: 'tenant proof required', reason: tenant.reason }, 403);
     }
 
     try {
@@ -94,10 +207,33 @@ export default {
       if (request.method === 'POST' && url.pathname.startsWith('/data/')) {
         const op = url.pathname.replace('/data/', '');
         const body = await request.json() as Record<string, unknown>;
-        const appId = body.appId as string;
-        const userId = body.userId as string | undefined;
+        const bodyAppId = body.appId as string;
+        const bodyUserId = body.userId as string | undefined;
 
-        if (!appId) return json({ error: 'Missing appId' }, 400);
+        if (!bodyAppId) return json({ error: 'Missing appId' }, 400);
+
+        // The tenant token is authoritative for WHICH tenant this touches. When
+        // present it MUST match the requested appId/userId (so a forged body
+        // can't redirect a valid token at another tenant), and we then build the
+        // R2 path from the SIGNED identity — never from the (untrusted) body.
+        // When absent/invalid we are in observe mode (enforce already rejected
+        // above) — warn so the rollout is visible before flipping enforce.
+        let appId = bodyAppId;
+        let userId = bodyUserId;
+        if (tenant.valid) {
+          const claimUser = tenant.claims!.userId ?? null;
+          if (tenant.claims!.appId !== bodyAppId || claimUser !== (bodyUserId ?? null)) {
+            return json({ error: 'tenant token mismatch' }, 403);
+          }
+          appId = tenant.claims!.appId;
+          userId = tenant.claims!.userId ?? undefined;
+        } else {
+          console.warn('[WORKER] /data tenant proof missing/invalid (observe mode)', {
+            op: op,
+            appId: bodyAppId,
+            reason: tenant.reason,
+          });
+        }
 
         const dataPrefix = userId
           ? `apps/${appId}/users/${userId}/data/`

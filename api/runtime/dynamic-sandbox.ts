@@ -73,6 +73,23 @@ interface DynamicWorkerEntrypointExports {
       unavailableReason?: string | null;
     };
   }): unknown;
+  NetworkBinding(input: {
+    props: {
+      userId: string;
+      appId: string;
+    };
+  }): unknown;
+  EventsBinding(input: {
+    props: {
+      callerContextToken: string;
+    };
+  }): unknown;
+  OutboundBinding(input: {
+    props: {
+      appId: string;
+      userId: string;
+    };
+  }): unknown;
 }
 
 type DynamicWorkerExecutionContext = ExecutionContext & {
@@ -138,10 +155,6 @@ export async function executeInDynamicSandbox(
     // User context and env vars are baked in as literals (they're per-request constants)
     const userJson = config.user ? JSON.stringify(config.user) : "null";
     const envVarsJson = JSON.stringify(config.envVars || {});
-    const netBaseUrl = JSON.stringify(
-      config.workerBaseUrl || config.baseUrl || "",
-    );
-    const netWorkerSecret = JSON.stringify(config.workerSecret || "");
     const callBaseUrl = JSON.stringify(
       config.baseUrl || config.workerBaseUrl || "",
     );
@@ -281,28 +294,20 @@ globalThis.ultralight = {
     return result;
   },
   // Publish a pub/sub event. Unprivileged — a subscriber only receives it if
-  // the USER wired a subscribe grant. The signed caller context (asserting this
-  // app + user, unforgeably) identifies the emitter; the worker secret gates
-  // the internal endpoint. Capped per execution to bound emit storms.
+  // the USER wired a subscribe grant. Routed through the EVENTS RPC binding,
+  // which verifies the signed caller context host-side to fix the emitter app +
+  // user + hop unforgeably. The platform worker secret never enters the sandbox.
+  // Capped per execution to bound emit storms.
   async emit(topic, payload) {
     if (!topic || typeof topic !== 'string') throw new Error('emit requires a topic string');
-    var __ctx = ${callerContextToken};
-    if (!__ctx) throw new Error('emit requires an authenticated user context');
+    var e = globalThis.__rpcEnv;
+    if (!e || !e.EVENTS) throw new Error('emit requires an authenticated user context');
     globalThis.__emitCount = (globalThis.__emitCount || 0) + 1;
     if (globalThis.__emitCount > 50) throw new Error('emit limit reached for this execution');
-    var __body = JSON.stringify({ topic: topic, payload: payload || {} });
     // Fail fast on an oversized payload (the server enforces a 32KB payload cap
-    // authoritatively; this just avoids a wasted round-trip with a clearer error).
-    if (__body.length > 64 * 1024) throw new Error('emit payload too large (max 32KB)');
-    var e = globalThis.__rpcEnv;
-    var fetchFn = (e && e.SELF) ? e.SELF.fetch.bind(e.SELF) : fetch;
-    var resp = await fetchFn('https://internal/api/events/emit', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Worker-Secret': ${netWorkerSecret}, 'X-Galactic-Caller': __ctx },
-      body: __body
-    });
-    if (!resp.ok) { var t = await resp.text().catch(function() { return resp.statusText; }); throw new Error('emit failed (' + resp.status + '): ' + t); }
-    return await resp.json();
+    // authoritatively; this just avoids a wasted RPC with a clearer error).
+    if (JSON.stringify(payload || {}).length > 64 * 1024) throw new Error('emit payload too large (max 32KB)');
+    return await e.EVENTS.emit(topic, payload || {});
   },
   // Resolve a logical slot (declared in this Agent's manifest imports) to the
   // concrete target the user wired it to. Only the granted functions are
@@ -319,31 +324,20 @@ globalThis.ultralight = {
     });
     return api;
   },
-  // net:connect — high-level protocol methods via internal HTTP (gated by permission)
+  // net:connect — high-level protocol methods run host-side in the NET RPC
+  // binding (cloudflare:sockets). No worker secret is exposed to app code.
   net: ${
       config.permissions.includes("net:connect")
         ? `{
     async imapFetchUnseen(host, port, user, pass, lastUid, businessEmail, processedFlag, limit) {
       var e = globalThis.__rpcEnv;
-      var fetchFn = (e && e.SELF) ? e.SELF.fetch.bind(e.SELF) : fetch;
-      var resp = await fetchFn('https://internal/api/net/imap-fetch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Worker-Secret': ${netWorkerSecret} },
-        body: JSON.stringify({ host: host, port: port, user: user, pass: pass, lastUid: lastUid || 0, businessEmail: businessEmail || '', processedFlag: processedFlag || '$ULProcessed', limit: limit || 20 }),
-      });
-      if (!resp.ok) { var err = await resp.text(); throw new Error('IMAP fetch failed: ' + err); }
-      return await resp.json();
+      if (!e || !e.NET) throw new Error('net:connect not available');
+      return await e.NET.imapFetchUnseen(host, port, user, pass, lastUid || 0, businessEmail || '', processedFlag || '$ULProcessed', limit || 20);
     },
     async smtpSend(host, port, user, pass, from, fromName, to, subject, body, inReplyTo) {
       var e = globalThis.__rpcEnv;
-      var fetchFn = (e && e.SELF) ? e.SELF.fetch.bind(e.SELF) : fetch;
-      var resp = await fetchFn('https://internal/api/net/smtp-send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Worker-Secret': ${netWorkerSecret} },
-        body: JSON.stringify({ host: host, port: port, user: user, pass: pass, from: from, fromName: fromName || '', to: to, subject: subject, body: body, inReplyTo: inReplyTo || '' }),
-      });
-      if (!resp.ok) { var err = await resp.text(); throw new Error('SMTP send failed: ' + err); }
-      return await resp.json();
+      if (!e || !e.NET) throw new Error('net:connect not available');
+      return await e.NET.smtpSend(host, port, user, pass, from, fromName || '', to, subject, body, inReplyTo || '');
     },
     connectTls() { throw new Error('Low-level sockets not available. Use ultralight.net.imapFetchUnseen() or .smtpSend().'); },
   }`
@@ -495,15 +489,35 @@ export default {
       });
     }
 
-    // Network: pass SELF binding so Dynamic Worker can call /api/net/* internally
-    // (Direct fetch() to Worker URL goes through CDN which blocks it)
+    // Events (pub/sub emit): host-side RPC binding. The signed caller-context
+    // token (emitter app + user + hop, unforgeable) is passed as a prop and
+    // verified inside the binding — the platform WORKER_SECRET never enters the
+    // sandbox isolate. Only present for authenticated executions (the token is
+    // minted only for a real user), matching the prior emit auth requirement.
+    if (config.callerContextToken && ctx?.exports?.EventsBinding) {
+      bindings.EVENTS = ctx.exports.EventsBinding({
+        props: { callerContextToken: config.callerContextToken },
+      });
+    }
+
+    // Network (net:connect): IMAP/SMTP sessions run entirely host-side in the
+    // NetworkBinding via cloudflare:sockets — no worker secret in app code.
+    if (
+      config.permissions.includes("net:connect") && ctx?.exports?.NetworkBinding
+    ) {
+      bindings.NET = ctx.exports.NetworkBinding({
+        props: { userId: config.userId, appId: config.appId },
+      });
+    }
+
+    // SELF binding: only inter-app calls (ultralight.call) still route through
+    // the parent worker via SELF.fetch (a direct fetch to the Worker URL goes
+    // through the CDN, which blocks it). emit + net.* now use dedicated RPC
+    // bindings, so net-only apps no longer receive SELF.
     const env = globalThis.__env;
     const hasInterAppCall = config.permissions.includes("app:call") ||
       !!config.appCallDependencies?.length;
-    if (
-      (config.permissions.includes("net:connect") || hasInterAppCall) &&
-      env?.SELF
-    ) {
+    if (hasInterAppCall && env?.SELF) {
       bindings.SELF = env.SELF;
     }
 
@@ -531,8 +545,19 @@ export default {
       // make direct outbound fetches; batch/async jobs make many SDK calls).
       limits: { cpuMs: 10_000, subRequests: 512 },
     };
-    // Network-capable apps need outbound fetch() for external APIs and internal TCP endpoints.
-    if (hasOutboundNetwork) loadConfig.globalOutbound = undefined;
+    // Network-capable apps get raw outbound fetch() — but routed through the
+    // egress interceptor (OutboundBinding), which enforces an SSRF / private-
+    // network block host-side so a tenant cannot pivot to loopback / RFC1918 /
+    // link-local / cloud-metadata addresses. FAIL CLOSED: if the binding is
+    // somehow absent, globalOutbound stays null (no raw outbound) rather than
+    // falling back to `undefined`, which would restore unrestricted egress.
+    // (Inter-app calls via SELF and net.* via the NET binding do NOT use raw
+    // fetch, so they are unaffected by this.)
+    if (hasOutboundNetwork && ctx?.exports?.OutboundBinding) {
+      loadConfig.globalOutbound = ctx.exports.OutboundBinding({
+        props: { appId: config.appId, userId: config.userId },
+      });
+    }
     const worker = loader.load(loadConfig);
 
     // 6. Execute with timeout

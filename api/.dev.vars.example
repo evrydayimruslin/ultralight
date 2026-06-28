@@ -71,6 +71,11 @@ AGENT_CALLER_SECRET=
 # ROUTINE_ACTOR_TOKEN_SECRET falls back to WORKER_SECRET when unset.
 ROUTINE_ACTOR_TOKEN_SECRET=
 WORKER_SECRET=
+# Per-tenant proof for data-worker (R2) access. MUST be identical to the data
+# worker's DATA_TENANT_SECRET. Deliberately distinct from WORKER_SECRET (which is
+# sandbox-exposed) so a WORKER_SECRET leak alone can't reach another tenant's
+# data. Falls back to a dev-only default when unset; set it in prod + staging.
+DATA_TENANT_SECRET=
 
 # Cloudflare Queues (durable execution + event bus) are BINDINGS, not vars —
 # provision once per account before the first deploy:

@@ -5,6 +5,7 @@
 
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { connect } from 'cloudflare:sockets';
+import { isBlockedHost } from './outbound-policy.ts';
 
 interface NetworkBindingProps {
   userId: string;
@@ -23,6 +24,19 @@ interface FetchedEmail {
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
+
+// ── Security ──
+// host/port are sandbox-supplied, so block connections to internal/private
+// networks and the bare SMTP port before opening a socket. Reuses the shared
+// egress policy (outbound-policy.ts) so the IMAP/SMTP socket path gets the SAME
+// coverage as raw fetch — loopback/RFC1918/CGNAT/link-local/metadata + IPv6 +
+// integer/hex encodings — instead of the old weaker prefix check.
+function validateTarget(hostname: string, port: number): void {
+  if (isBlockedHost(hostname)) {
+    throw new Error("Connections to internal/private networks are not allowed");
+  }
+  if (port === 25) throw new Error("Port 25 blocked. Use 465 or 587.");
+}
 
 // ── IMAP Protocol Helpers ──
 
@@ -149,6 +163,7 @@ export class NetworkBinding extends WorkerEntrypoint<unknown, NetworkBindingProp
     host: string, port: number, user: string, pass: string,
     lastUid: number, businessEmail: string, processedFlag: string, limit: number,
   ): Promise<{ emails: FetchedEmail[]; maxUid: number; hasMore: boolean }> {
+    validateTarget(host, port);
     const socket = connect({ hostname: host, port }, { secureTransport: 'on', allowHalfOpen: false });
     const lr = new LineReader(socket.readable);
     const writer = socket.writable.getWriter();
@@ -264,6 +279,7 @@ export class NetworkBinding extends WorkerEntrypoint<unknown, NetworkBindingProp
     host: string, port: number, user: string, pass: string,
     from: string, fromName: string, to: string, subject: string, body: string, inReplyTo?: string,
   ): Promise<{ success: boolean; error?: string }> {
+    validateTarget(host, port);
     const socket = connect({ hostname: host, port }, { secureTransport: 'on', allowHalfOpen: false });
     const lr = new LineReader(socket.readable);
     const writer = socket.writable.getWriter();

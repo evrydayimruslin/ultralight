@@ -29,6 +29,8 @@ export { AppDataBinding } from './bindings/appdata-binding.ts';
 export { AIBinding } from './bindings/ai-binding.ts';
 export { MemoryBinding } from './bindings/memory-binding.ts';
 export { NetworkBinding } from './bindings/network-binding.ts';
+export { EventsBinding } from './bindings/events-binding.ts';
+export { OutboundBinding } from './bindings/outbound-binding.ts';
 
 // ============================================
 // SECURITY & CORS HEADERS

@@ -8,6 +8,7 @@ import {
   debitCloudOperation,
 } from "./cloud-usage.ts";
 import { createR2Service } from "./storage.ts";
+import { mintDataTenantToken } from "./data-tenant-token.ts";
 
 // ============================================
 // DATA CACHE (shared singleton)
@@ -481,6 +482,16 @@ export function createWorkerAppDataService(
     }, { fetchFn: options.fetchFn });
   }
 
+  // Mint the per-tenant proof once per service instance (short-lived; one
+  // instance is per-request). Memoized so every /data/* call reuses it.
+  let tenantTokenPromise: Promise<string> | null = null;
+  function tenantToken(): Promise<string> {
+    if (!tenantTokenPromise) {
+      tenantTokenPromise = mintDataTenantToken({ appId, userId });
+    }
+    return tenantTokenPromise;
+  }
+
   async function workerFetch(
     path: string,
     body: Record<string, unknown>,
@@ -490,6 +501,9 @@ export function createWorkerAppDataService(
       headers: {
         "Content-Type": "application/json",
         "X-Worker-Secret": workerSecret,
+        // Binds this call to {appId, userId} so a WORKER_SECRET leak alone
+        // cannot reach another tenant's data (verified host-side in the worker).
+        "X-Tenant-Token": await tenantToken(),
       },
       body: JSON.stringify({ appId: appId, userId: userId, ...body }),
     });

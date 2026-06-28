@@ -13,9 +13,16 @@ binding = "CODE_CACHE"
 id = "d348ee797036460faf4b3e014921f0b0"
 
 # Secrets (set via: wrangler secret put <NAME>):
-#   WORKER_SECRET    — shared secret for DO API → Worker auth
-#   CF_ACCOUNT_ID    — Cloudflare account ID for D1 API access
-#   CF_API_TOKEN     — Cloudflare API token with D1 read/write permissions
+#   WORKER_SECRET       — shared secret for DO API → Worker auth
+#   CF_ACCOUNT_ID       — Cloudflare account ID for D1 API access
+#   CF_API_TOKEN        — Cloudflare API token with D1 read/write permissions
+#   DATA_TENANT_SECRET  — per-tenant proof signing secret. MUST be identical to
+#                         the API worker's DATA_TENANT_SECRET. Deliberately
+#                         distinct from WORKER_SECRET (which is sandbox-exposed),
+#                         so a WORKER_SECRET leak can't forge cross-tenant access.
 
 [vars]
 ENVIRONMENT = "production"
+# Set DATA_TENANT_ENFORCE = "1" to require a valid tenant token on every data
+# call (reject if absent/invalid). Leave unset during rollout; flip to "1" once
+# logs confirm tokens validate end-to-end.
