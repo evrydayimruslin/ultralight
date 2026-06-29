@@ -94,6 +94,7 @@ import {
   buildVersionTrustMetadata,
   diffManifests,
 } from "../services/trust.ts";
+import { putLiveExecutedBundle } from "../services/executed-bundle.ts";
 import {
   buildPerUserSettingsStatus,
   type UserAppSecretStatusRow as SharedUserAppSecretStatusRow,
@@ -3515,10 +3516,11 @@ async function handlePublishDraft(
             await r2Service.uploadFiles(newStorageKey, builtFiles);
             // Cache ESM in KV for Dynamic Worker loading
             if (bundleResult.esmCode && globalThis.__env?.CODE_CACHE) {
-              await globalThis.__env.CODE_CACHE.put(
-                `esm:${appId}:latest`,
-                bundleResult.esmCode,
-              );
+              await putLiveExecutedBundle({
+                appId,
+                version: newVersion,
+                esmCode: bundleResult.esmCode,
+              });
             }
             publishLogger.info("Rebuilt and cached ESM bundle during publish", {
               app_id: appId,
@@ -3855,10 +3857,11 @@ async function handleRebuild(
     // Store ESM bundle in KV for Dynamic Worker loading
     if (bundleResult.esmCode && globalThis.__env?.CODE_CACHE) {
       try {
-        await globalThis.__env.CODE_CACHE.put(
-          `esm:${appId}:latest`,
-          bundleResult.esmCode,
-        );
+        await putLiveExecutedBundle({
+          appId,
+          version: app.current_version || "latest",
+          esmCode: bundleResult.esmCode,
+        });
         rebuildLogger.info("Cached rebuilt ESM bundle in KV", {
           app_id: appId,
           esm_length: bundleResult.esmCode.length,

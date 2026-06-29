@@ -702,7 +702,11 @@ export interface LaunchTrustCard {
   version: string | null;
   runtime: string;
   manifest_hash: string | null;
+  description_hash: string | null;
   artifact_hash: string | null;
+  // Per-file SHA256 map for open-code verification (a downloading agent
+  // recomputes each file's hash and matches it against this).
+  artifact_hashes: Record<string, string>;
   artifact_count: number;
   permissions: string[];
   capability_summary: {

@@ -21,6 +21,10 @@ import {
   type SystemAgentState,
 } from "./flash-broker.ts";
 import { executeDynamicCodeMode } from "../runtime/dynamic-executor.ts";
+import {
+  type BundleAttestation,
+  loadLiveExecutedBundle,
+} from "./executed-bundle.ts";
 import { getD1DatabaseId } from "./d1-provisioning.ts";
 import { createAppsService } from "./apps.ts";
 import { registerExecutionPlanGate } from "./plan-gate.ts";
@@ -1540,18 +1544,21 @@ async function executeRecipe(
     new Set(Object.values(toolMap).map((t) => t.appId)),
   );
 
-  // Load ESM bundles from KV (parallel)
+  // Load ESM bundles + signed attestations from KV (atomically, in parallel) so
+  // the orchestrator runs the same integrity check as the direct gx.call path.
   const bundleEntries = await Promise.all(
     appIds.map(async (appId) => {
-      const bundle = await globalThis.__env.CODE_CACHE.get(
-        `esm:${appId}:latest`,
-      );
-      return [appId, bundle] as const;
+      const loaded = await loadLiveExecutedBundle(appId);
+      return [appId, loaded] as const;
     }),
   );
   const appBundles: Record<string, string> = {};
-  for (const [appId, bundle] of bundleEntries) {
-    if (bundle) appBundles[appId] = bundle as string;
+  const appAttestations: Record<string, BundleAttestation | null> = {};
+  for (const [appId, loaded] of bundleEntries) {
+    if (loaded.code) {
+      appBundles[appId] = loaded.code;
+      appAttestations[appId] = loaded.attestation;
+    }
   }
 
   // Create RPC bindings (parallel)
@@ -1586,6 +1593,7 @@ async function executeRecipe(
     code,
     toolMap,
     appBundles,
+    appAttestations,
     bindings,
     userContext: { id: userId, email: userEmail },
     timeoutMs: 60_000,

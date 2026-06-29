@@ -34,7 +34,11 @@ export interface TrustCard {
   version: string | null;
   runtime: string;
   manifest_hash: string | null;
+  description_hash: string | null;
   artifact_hash: string | null;
+  // Per-file SHA256 map, so a downloading agent can recompute each file's hash
+  // and confirm the code it read is the code that was published.
+  artifact_hashes: Record<string, string>;
   artifact_count: number;
   permissions: string[];
   capability_summary: {
@@ -98,10 +102,22 @@ export async function sha256Hex(content: Uint8Array | string): Promise<string> {
 }
 
 function resolveTrustSigningSecret(): string {
-  return getEnv("LIGHT_TRUST_SIGNING_SECRET") ||
-    getEnv("TRUST_SIGNING_SECRET") ||
-    getEnv("SUPABASE_SERVICE_ROLE_KEY") ||
-    "development-trust-signing-secret";
+  const dedicated = getEnv("LIGHT_TRUST_SIGNING_SECRET") ||
+    getEnv("TRUST_SIGNING_SECRET");
+  if (dedicated) return dedicated;
+  // Fail closed in EVERY deployed environment (production, staging, …): never
+  // sign trust artifacts with the DB service-role key (the old fallback —
+  // key-reuse with the god key) or a public dev constant. A dedicated
+  // TRUST_SIGNING_SECRET MUST be set before deploy; the dev default is only for
+  // local/test (ENVIRONMENT unset, "development", or "test").
+  const environment = getEnv("ENVIRONMENT");
+  if (environment && environment !== "development" && environment !== "test") {
+    throw new Error(
+      "TRUST_SIGNING_SECRET (or LIGHT_TRUST_SIGNING_SECRET) must be set in " +
+        `non-development environments (ENVIRONMENT=${environment})`,
+    );
+  }
+  return "development-trust-signing-secret";
 }
 
 async function hmacSha256Hex(content: string): Promise<string> {
@@ -113,6 +129,13 @@ async function hmacSha256Hex(content: string): Promise<string> {
     ["sign"],
   );
   return toHex(await crypto.subtle.sign("HMAC", key, encoder.encode(content)));
+}
+
+// Sign a message with the platform trust secret (HMAC-SHA256). Exported so the
+// executed-bundle attestation reuses the SAME secret resolution + fail-closed
+// behavior as the version trust signature.
+export function signWithTrustSecret(message: string): Promise<string> {
+  return hmacSha256Hex(message);
 }
 
 export function getManifestPermissions(manifest: AppManifest | string | null | undefined): string[] {
@@ -186,6 +209,23 @@ export function generateGpuManifest(input: {
   };
 }
 
+// Canonical subject for the description hash: the app description + every
+// function's description. Binding this into the signed block lets attestations
+// be scoped to the exact descriptions a caller saw, and makes a description
+// edit (a rug-pull/tool-poisoning vector) detectable as a hash change.
+export function buildDescriptionHashInput(
+  manifest: AppManifest | null,
+): { app: string; functions: Record<string, string> } {
+  const functions: Record<string, string> = {};
+  for (const [name, fn] of Object.entries(manifest?.functions || {})) {
+    functions[name] = typeof fn?.description === "string" ? fn.description : "";
+  }
+  return {
+    app: typeof manifest?.description === "string" ? manifest.description : "",
+    functions,
+  };
+}
+
 export async function buildVersionTrustMetadata(input: {
   appId: string;
   version: string;
@@ -197,6 +237,9 @@ export async function buildVersionTrustMetadata(input: {
   const manifest = parseAppManifest(input.manifest);
   const manifestJson = manifest ? canonicalJson(manifest) : null;
   const manifestHash = manifestJson ? await sha256Hex(manifestJson) : null;
+  const descriptionHash = await sha256Hex(
+    canonicalJson(buildDescriptionHashInput(manifest)),
+  );
 
   const artifactHashes: Record<string, string> = {};
   for (const file of [...input.files].sort((a, b) => a.name.localeCompare(b.name))) {
@@ -211,6 +254,7 @@ export async function buildVersionTrustMetadata(input: {
     version: input.version,
     runtime: input.runtime,
     manifest_hash: manifestHash,
+    description_hash: descriptionHash,
     artifact_hash: artifactHash,
     artifact_hashes: artifactHashes,
     storage_key: input.storageKey,
@@ -288,7 +332,9 @@ export function buildAppTrustCard(
     version: app.current_version || trust?.version || null,
     runtime: app.runtime || "deno",
     manifest_hash: trust?.manifest_hash || null,
+    description_hash: trust?.description_hash || null,
     artifact_hash: trust?.artifact_hash || null,
+    artifact_hashes: trust?.artifact_hashes || {},
     artifact_count: trust ? Object.keys(trust.artifact_hashes).length : 0,
     permissions,
     capability_summary: {

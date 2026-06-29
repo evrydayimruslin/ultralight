@@ -73,6 +73,7 @@ import {
   buildVersionMetadataEntry,
   buildVersionTrustMetadata,
 } from "../services/trust.ts";
+import { putLiveExecutedBundle } from "../services/executed-bundle.ts";
 import { createServerLogger } from "../services/logging.ts";
 
 // Export file type for programmatic uploads
@@ -1063,10 +1064,7 @@ export async function handleUpload(request: Request): Promise<Response> {
               `esm:${appId}:${version}`,
               esmBundledCode,
             );
-            await globalThis.__env.CODE_CACHE.put(
-              `esm:${appId}:latest`,
-              esmBundledCode,
-            );
+            await putLiveExecutedBundle({ appId, version, esmCode: esmBundledCode });
             log("info", "ESM bundle cached in KV for Dynamic Workers");
           } catch (kvErr) {
             log(
@@ -1866,10 +1864,11 @@ export async function handleUploadFiles(
       `esm:${appId}:${version}`,
       pipeline.esmBundledCode,
     );
-    await globalThis.__env.CODE_CACHE.put(
-      `esm:${appId}:latest`,
-      pipeline.esmBundledCode,
-    );
+    await putLiveExecutedBundle({
+      appId,
+      version,
+      esmCode: pipeline.esmBundledCode,
+    });
   }
 
   // Compute source fingerprint

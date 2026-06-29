@@ -2785,6 +2785,7 @@ async function executeAppFunction(
       appId: app.id,
       userId,
       ownerId: app.owner_id,
+      expectedVersion: app.current_version || undefined,
       executionId,
       // Unused by the dynamic sandbox (it executes the KV ESM bundle); kept
       // only to satisfy RuntimeConfig until the legacy Deno path is removed.

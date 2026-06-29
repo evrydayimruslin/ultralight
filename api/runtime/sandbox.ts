@@ -29,6 +29,10 @@ export interface RuntimeConfig {
   appId: string;
   userId: string;
   ownerId: string;
+  // The app's DB current_version. When set, the executed-bundle verify rejects a
+  // live bundle whose signed attestation is for a different (e.g. downgraded)
+  // version. Optional: paths that don't supply it skip the version check.
+  expectedVersion?: string;
   executionId: string;
   code: string;
   permissions: string[];

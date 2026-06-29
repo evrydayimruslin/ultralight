@@ -197,6 +197,11 @@ import {
   generateGpuManifest,
 } from "../services/trust.ts";
 import {
+  type BundleAttestation,
+  loadLiveExecutedBundle,
+  putLiveExecutedBundle,
+} from "../services/executed-bundle.ts";
+import {
   buildMarketplaceListingSummary,
   type MarketplaceListingSummary,
   type MarketplaceListingSummaryListing,
@@ -6183,17 +6188,21 @@ async function handleToolsCall(
             );
           }
 
-          // Load pre-compiled ESM bundles from KV (parallel)
+          // Load pre-compiled ESM bundles + their signed attestations from KV
+          // (atomically, in parallel) so codemode runs the same integrity check
+          // as the direct gx.call path.
           const bundlePromises = appIds.map(async (appId) => {
-            const bundle = await globalThis.__env.CODE_CACHE.get(
-              `esm:${appId}:latest`,
-            );
-            return [appId, bundle] as const;
+            const loaded = await loadLiveExecutedBundle(appId);
+            return [appId, loaded] as const;
           });
           const bundleEntries = await Promise.all(bundlePromises);
           const appBundles: Record<string, string> = {};
-          for (const [appId, bundle] of bundleEntries) {
-            if (bundle) appBundles[appId] = bundle;
+          const appAttestations: Record<string, BundleAttestation | null> = {};
+          for (const [appId, loaded] of bundleEntries) {
+            if (loaded.code) {
+              appBundles[appId] = loaded.code;
+              appAttestations[appId] = loaded.attestation;
+            }
           }
 
           // Create RPC bindings for each app's DB and data (parallel)
@@ -6225,6 +6234,7 @@ async function handleToolsCall(
             code: recipeCode,
             toolMap,
             appBundles,
+            appAttestations,
             bindings,
             userContext: user,
             timeoutMs: 60_000,
@@ -7051,7 +7061,11 @@ async function executeUpload(
       // A non-live version upload (existing app, no _auto_live) must NOT silently
       // become the running bundle — promotion happens via gx.set (executeSetVersion).
       if (autoLive) {
-        await globalThis.__env.CODE_CACHE.put(`esm:${app.id}:latest`, kvBundle);
+        await putLiveExecutedBundle({
+          appId: app.id,
+          version: newVersion,
+          esmCode: kvBundle,
+        });
       }
       platformUploadLogger.info("Updated KV cache for uploaded version", {
         app_id: app.id,
@@ -8058,11 +8072,12 @@ async function executeTest(
     };
   }
 
-  if (globalThis.__env?.CODE_CACHE?.put) {
-    await globalThis.__env.CODE_CACHE.put(
-      `esm:${testAppId}:latest`,
-      esmBundledCode,
-    );
+  if (globalThis.__env?.CODE_CACHE) {
+    await putLiveExecutedBundle({
+      appId: testAppId,
+      version: "test",
+      esmCode: esmBundledCode,
+    });
   }
 
   // Execute in Dynamic Worker sandbox — avoids `new Function()` restriction on CF Workers
@@ -9733,7 +9748,11 @@ async function executeSetVersion(
     }
 
     // Repoint the live pointer. Fatal: if this fails we must NOT advance the DB.
-    await globalThis.__env.CODE_CACHE.put(`esm:${app.id}:latest`, esmBundle);
+    await putLiveExecutedBundle({
+      appId: app.id,
+      version,
+      esmCode: esmBundle,
+    });
   }
 
   // Update app

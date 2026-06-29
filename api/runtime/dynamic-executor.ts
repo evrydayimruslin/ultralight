@@ -8,6 +8,12 @@
 // Falls back to the existing HTTP-based executor if LOADER binding is unavailable.
 
 import type { ExecuteResult } from './codemode-executor.ts';
+import {
+  type BundleAttestation,
+  executedBundleVerifyMode,
+  handleExecutedBundleVerdict,
+  verifyExecutedBundle,
+} from '../services/executed-bundle.ts';
 
 // ============================================
 // TYPES
@@ -20,6 +26,8 @@ export interface DynamicExecuteOptions {
   toolMap: Record<string, { appId: string; fnName: string }>;
   /** Pre-compiled ESM bundles: appId → ESM code string */
   appBundles: Record<string, string>;
+  /** Signed integrity attestations per appBundle (from loadLiveExecutedBundle). */
+  appAttestations?: Record<string, BundleAttestation | null>;
   /** RPC binding stubs (DB, DATA, AI, MEMORY per app) */
   bindings: Record<string, unknown>;
   /** User context (id, email, etc.) — needed by app code that accesses ultralight.user */
@@ -50,7 +58,7 @@ export interface DynamicExecuteOptions {
 export async function executeDynamicCodeMode(
   options: DynamicExecuteOptions,
 ): Promise<ExecuteResult> {
-  const { code, toolMap, appBundles, bindings, userContext, envVars, timeoutMs = 60_000, files } = options;
+  const { code, toolMap, appBundles, appAttestations, bindings, userContext, envVars, timeoutMs = 60_000, files } = options;
   const loader = globalThis.__env?.LOADER;
 
   if (!loader) {
@@ -71,6 +79,32 @@ export async function executeDynamicCodeMode(
       };
     }
     return await executeCodeMode(code, fns, timeoutMs);
+  }
+
+  // Executed-bundle integrity: each appBundle here is the live esm:{appId}:latest
+  // pointer; verify every one against its atomically-loaded attestation so
+  // codemode and the Flash orchestrator can't run a tampered bundle that the
+  // direct gx.call path would refuse — same observe -> enforce policy. No
+  // expectedVersion is threaded here (would need a per-app DB read on a multi-app
+  // hot path), so the non-blocking version-skew DETECTION is direct-path-only;
+  // sig + hash (the hard blocks) are enforced on every path.
+  const bundleVerifyMode = executedBundleVerifyMode();
+  if (bundleVerifyMode !== 'off') {
+    for (const [appId, bundle] of Object.entries(appBundles)) {
+      const verdict = await verifyExecutedBundle({
+        appId,
+        esmCode: bundle,
+        attestation: appAttestations?.[appId] ?? null,
+      });
+      if (handleExecutedBundleVerdict(appId, verdict, bundleVerifyMode)) {
+        return {
+          result: undefined,
+          error:
+            `Executed bundle failed integrity verification for ${appId} (${verdict.status})`,
+          logs: [],
+        };
+      }
+    }
   }
 
   // Build the recipe modules (entry + isolated user-recipe module)

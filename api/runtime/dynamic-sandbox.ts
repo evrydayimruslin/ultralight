@@ -15,6 +15,12 @@ import type { ExecutionResult, RuntimeConfig } from "./sandbox.ts";
 import { consumeAiSpend } from "../services/ai-spend-tracker.ts";
 import { debitCloudOperation } from "../services/cloud-usage.ts";
 import { mintSandboxAuthToken } from "../services/sandbox-actor.ts";
+import {
+  executedBundleVerifyMode,
+  handleExecutedBundleVerdict,
+  loadLiveExecutedBundle,
+  verifyExecutedBundle,
+} from "../services/executed-bundle.ts";
 
 interface DynamicWorkerEntrypointExports {
   DatabaseBinding(
@@ -134,7 +140,11 @@ export async function executeInDynamicSandbox(
         },
       });
     }
-    let esmCode = await globalThis.__env?.CODE_CACHE?.get(codeCacheKey);
+    // Fetch the live bundle + its signed attestation atomically (one read), so
+    // the bytes that run are exactly the bytes that get verified.
+    const { code: esmCode, attestation } = await loadLiveExecutedBundle(
+      config.appId,
+    );
     if (!esmCode) {
       // No ESM bundle — app hasn't been rebuilt. Can't execute without it.
       return {
@@ -149,6 +159,35 @@ export async function executeInDynamicSandbox(
             `No ESM bundle found for app ${config.appId}. Run rebuild first.`,
         },
       };
+    }
+
+    // 1b. Executed-bundle integrity: the bytes we're about to run must match the
+    // attestation written atomically with them, and must not be a downgrade to an
+    // old version. EXECUTED_BUNDLE_VERIFY=enforce refuses a violating bundle;
+    // observe (default) only warns. Legacy (no attestation) + infra/secret errors
+    // never block.
+    const bundleVerifyMode = executedBundleVerifyMode();
+    if (bundleVerifyMode !== "off") {
+      const verdict = await verifyExecutedBundle({
+        appId: config.appId,
+        esmCode,
+        attestation,
+        expectedVersion: config.expectedVersion,
+      });
+      if (handleExecutedBundleVerdict(config.appId, verdict, bundleVerifyMode)) {
+        return {
+          success: false,
+          result: null,
+          logs: [],
+          durationMs: Date.now() - startTime,
+          aiCostLight: 0,
+          error: {
+            type: "IntegrityError",
+            message:
+              `Executed bundle failed integrity verification (${verdict.status})`,
+          },
+        };
+      }
     }
 
     // 2. Build setup module — sets globalThis.ultralight with lazy getters

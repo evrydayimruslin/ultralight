@@ -543,6 +543,7 @@ export async function handleRun(
         appId: app.id,
         userId,
         ownerId: app.owner_id,
+        expectedVersion: app.current_version || undefined,
         executionId: crypto.randomUUID(),
         code,
         permissions,

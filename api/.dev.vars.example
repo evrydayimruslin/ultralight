@@ -76,6 +76,18 @@ WORKER_SECRET=
 # sandbox-exposed) so a WORKER_SECRET leak alone can't reach another tenant's
 # data. Falls back to a dev-only default when unset; set it in prod + staging.
 DATA_TENANT_SECRET=
+# Signs version trust metadata AND the executed-bundle attestation. FAIL-CLOSED
+# in every deployed environment (production AND staging): if neither
+# LIGHT_TRUST_SIGNING_SECRET nor TRUST_SIGNING_SECRET is set when ENVIRONMENT is
+# anything other than unset/"development"/"test", publishing THROWS (no more
+# silent fallback to the Supabase service-role key or a public constant).
+# DEPLOY GATE: set this (32+ random bytes) in prod AND staging BEFORE deploying
+# this branch, or all publishing/gx.set/upload will 500.
+TRUST_SIGNING_SECRET=
+# Executed-bundle integrity verification mode: off | observe | enforce.
+# Default observe (warn on bundle != signed-attestation). Flip to enforce after
+# logs are clean to refuse running a bundle that contradicts its attestation.
+EXECUTED_BUNDLE_VERIFY=observe
 
 # Cloudflare Queues (durable execution + event bus) are BINDINGS, not vars —
 # provision once per account before the first deploy:

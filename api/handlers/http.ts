@@ -694,6 +694,7 @@ export async function handleHttpEndpoint(
         appId: app.id,
         userId: httpRuntime.sandboxUserId,
         ownerId: app.owner_id,
+        expectedVersion: app.current_version || undefined,
         executionId: crypto.randomUUID(),
         code,
         permissions: httpPermissions,
