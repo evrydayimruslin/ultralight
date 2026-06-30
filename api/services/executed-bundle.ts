@@ -26,6 +26,40 @@ function liveKey(appId: string): string {
   return `esm:${appId}:latest`;
 }
 
+// ── Integrity-secret alarm ───────────────────────────────────────────────────
+// If the trust signing secret can't be resolved, signing AND verification both
+// fail with status "error" — which never blocks — so `enforce` silently degrades
+// to `off`. That must NOT be invisible. We fire a single loud alarm per worker
+// instance from the hot paths (per-call spam is pointless once it's known) and a
+// re-armed alarm from the hourly self-check so ops sees it every hour until fixed.
+let integritySecretAlarmed = false;
+function alarmIntegritySecretOnce(context: string, detail?: string): void {
+  if (integritySecretAlarmed) return;
+  integritySecretAlarmed = true;
+  console.error(
+    "[BUNDLE-INTEGRITY][ALARM] trust signing secret unresolvable — executed-bundle " +
+      "integrity is NOT being enforced (verification returns error, which never blocks)",
+    { context, detail },
+  );
+}
+
+// Ops/startup self-check: confirms the trust secret resolves so `enforce` is
+// actually enforcing. Logs an alarm on every failure (intended to be called from
+// the hourly cron, so it re-surfaces until fixed). Returns true iff signing works.
+export async function assertTrustSecretResolvable(): Promise<boolean> {
+  try {
+    await signWithTrustSecret("integrity-selfcheck");
+    return true;
+  } catch (err) {
+    console.error(
+      "[BUNDLE-INTEGRITY][ALARM] trust signing secret self-check FAILED — " +
+        "set TRUST_SIGNING_SECRET (or LIGHT_TRUST_SIGNING_SECRET); enforce is inert until then",
+      { detail: err instanceof Error ? err.message : String(err) },
+    );
+    return false;
+  }
+}
+
 interface AttestationBody {
   v: 1;
   app_id: string;
@@ -84,9 +118,15 @@ export async function putLiveExecutedBundle(input: {
     };
     attestation = { ...body, sig: await signAttestationBody(body) };
   } catch (err) {
-    console.warn("[BUNDLE-ATTEST] sign failed; writing bundle unattested", {
+    // Writing the bundle unattested must not brick the live deploy, but a
+    // sign-failure here means a freshly-published app will run as no_attestation
+    // — invisible if it stays a debug warn. Escalate to the integrity alarm so a
+    // misconfigured/rotated trust secret surfaces at publish time, not silently.
+    const detail = err instanceof Error ? err.message : String(err);
+    alarmIntegritySecretOnce("putLiveExecutedBundle", detail);
+    console.error("[BUNDLE-ATTEST][ALARM] sign failed; writing bundle UNATTESTED", {
       appId: input.appId,
-      error: err instanceof Error ? err.message : String(err),
+      error: detail,
     });
   }
   await cache.put(
@@ -136,6 +176,20 @@ export function executedBundleVerifyMode(): ExecutedBundleVerifyMode {
   return raw === "off" || raw === "enforce" ? raw : "observe";
 }
 
+// Second-stage rollout knob for the "strip-the-sidecar" defense. By default a
+// bundle with NO attestation is grandfathered (legacy apps published before the
+// attestation existed). But once every live bundle has been backfilled with an
+// attestation (backfillExecutedBundleAttestations), a NEW no_attestation bundle
+// can only mean someone wrote the live KV pointer WITHOUT a sidecar — the cheap
+// way to dodge enforcement (stripping is easier than forging). Flip this to "1"
+// AFTER the backfill confirms zero legitimate no_attestation bundles remain;
+// then no_attestation becomes a hard block under enforce. Mirrors the
+// observe->enforce rollout of EXECUTED_BUNDLE_VERIFY itself.
+export function executedBundleRequireAttestation(): boolean {
+  const raw = (getEnv("EXECUTED_BUNDLE_REQUIRE_ATTESTATION") || "").toLowerCase();
+  return raw === "1" || raw === "true";
+}
+
 // The states that BLOCK execution under enforce: only signature + content
 // mismatches, which prove the executed bytes are not what was signed.
 //
@@ -148,8 +202,15 @@ export function executedBundleVerifyMode(): ExecutedBundleVerifyMode {
 // mismatch indicates a real downgrade/replay; a transient one is a benign deploy
 // window), while sig+hash do the hard blocking. A fully-blocking downgrade
 // defense needs atomic version tracking (a deferred enhancement).
-export function isExecutedBundleViolation(status: BundleVerifyStatus): boolean {
-  return status === "bad_signature" || status === "hash_mismatch";
+export function isExecutedBundleViolation(
+  status: BundleVerifyStatus,
+  requireAttestation = false,
+): boolean {
+  if (status === "bad_signature" || status === "hash_mismatch") return true;
+  // When attestation is required (post-backfill), an unattested live bundle is a
+  // stripped sidecar, not a benign legacy bundle — block it.
+  if (requireAttestation && status === "no_attestation") return true;
+  return false;
 }
 
 // Memoize verdicts within a worker instance. The attestation is written
@@ -200,8 +261,13 @@ async function computeVerdict(
   let expectedSig: string;
   try {
     expectedSig = await signAttestationBody(body);
-  } catch {
+  } catch (err) {
     // Trust secret unavailable — cannot verify, but must not brick execution.
+    // This is the silent-degrade-to-off condition: alarm once so it's visible.
+    alarmIntegritySecretOnce(
+      "verifyExecutedBundle",
+      err instanceof Error ? err.message : String(err),
+    );
     return { status: "error", detail: "signing unavailable" };
   }
   if (!timingSafeEqual(sig, expectedSig)) return { status: "bad_signature" };
@@ -241,7 +307,9 @@ export function handleExecutedBundleVerdict(
   mode: ExecutedBundleVerifyMode,
 ): boolean {
   if (verdict.status === "ok") return false;
-  const block = mode === "enforce" && isExecutedBundleViolation(verdict.status);
+  const requireAttestation = executedBundleRequireAttestation();
+  const block = mode === "enforce" &&
+    isExecutedBundleViolation(verdict.status, requireAttestation);
   if (verdict.status !== "no_attestation" || mode === "enforce") {
     console.warn("[BUNDLE-VERIFY] executed bundle not verified-ok", {
       appId,
@@ -252,6 +320,140 @@ export function handleExecutedBundleVerdict(
     });
   }
   return block;
+}
+
+// ── Trust-card integrity signal ──────────────────────────────────────────────
+// Tri-state runtime-integrity result for a single app, surfaced on trust cards
+// so a green chip reflects the EXECUTING bundle, not just the presence of a
+// publish-time source signature.
+export type ExecutedIntegrity = "verified" | "unverified" | "unknown";
+
+// Affordable one-app runtime-integrity check, used by surfaces that build a
+// trust card for a SINGLE app (the public Agent page) and can pay one KV read.
+// Loads the live bundle + attestation and verifies the bytes against their
+// signature. "verified" only when the running bytes match their signed
+// attestation; "unverified" when they don't (unattested / mismatch / error);
+// "unknown" when there's no live bundle or no KV to read (no claim either way).
+//
+// Integrity, NOT freshness: we deliberately omit expectedVersion so a benign
+// deploy-window version skew never downgrades the chip — the card claims "the
+// running bytes are signed + intact"; gx.verify gives the version-anchored verdict.
+export async function resolveExecutedIntegrity(
+  appId: string,
+): Promise<ExecutedIntegrity> {
+  const cache = codeCache();
+  if (!cache?.getWithMetadata && !cache?.get) return "unknown";
+  try {
+    const { code, attestation } = await loadLiveExecutedBundle(appId);
+    if (code === null) return "unknown";
+    const verdict = await verifyExecutedBundle({ appId, esmCode: code, attestation });
+    return verdict.status === "ok" ? "verified" : "unverified";
+  } catch {
+    return "unknown";
+  }
+}
+
+// ── One-time backfill: attest existing live bundles ──────────────────────────
+export interface ExecutedBundleBackfillResult {
+  scanned: number;
+  attested: number;
+  alreadyAttested: number;
+  missingBundle: number;
+  errors: number;
+}
+
+interface BackfillAppRow {
+  id: string;
+  current_version: string | null;
+}
+
+// Re-attest every live bundle that is currently UNATTESTED (the pre-Phase-0
+// legacy cohort, and any bundle written while signing was failing). For each
+// such app it re-signs the CURRENT live bytes under the app's current_version,
+// so going forward they are protected by enforce and — once
+// EXECUTED_BUNDLE_REQUIRE_ATTESTATION is flipped on — a later no_attestation can
+// only mean a stripped sidecar.
+//
+// CAVEAT (documented, intentional): this is trust-on-first-attestation of
+// whatever is live NOW. It cannot distinguish legit legacy bytes from bytes an
+// attacker already swapped, because the executed ESM bundle has no
+// independently-recomputable source hash. Run it from a known-good state, soon
+// after shipping integrity, before any KV tamper is plausible. Idempotent:
+// already-attested bundles are skipped, so it is safe to run repeatedly.
+export async function backfillExecutedBundleAttestations(
+  opts: { limit?: number } = {},
+): Promise<ExecutedBundleBackfillResult> {
+  const result: ExecutedBundleBackfillResult = {
+    scanned: 0,
+    attested: 0,
+    alreadyAttested: 0,
+    missingBundle: 0,
+    errors: 0,
+  };
+  const cache = codeCache();
+  if (!cache?.getWithMetadata) {
+    console.warn("[BUNDLE-BACKFILL] CODE_CACHE unavailable; nothing to do");
+    return result;
+  }
+
+  const url = getEnv("SUPABASE_URL");
+  const key = getEnv("SUPABASE_SERVICE_ROLE_KEY");
+  if (!url || !key) {
+    console.warn("[BUNDLE-BACKFILL] Supabase not configured; nothing to do");
+    return result;
+  }
+
+  const limit = Math.max(1, Math.min(opts.limit ?? 1000, 5000));
+  let apps: BackfillAppRow[] = [];
+  try {
+    const res = await fetch(
+      `${url}/rest/v1/apps?select=id,current_version&current_version=not.is.null&limit=${limit}`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` } },
+    );
+    if (!res.ok) {
+      console.error("[BUNDLE-BACKFILL] apps query failed", { status: res.status });
+      result.errors++;
+      return result;
+    }
+    apps = (await res.json()) as BackfillAppRow[];
+  } catch (err) {
+    console.error("[BUNDLE-BACKFILL] apps query error", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    result.errors++;
+    return result;
+  }
+
+  for (const app of apps) {
+    if (!app?.id || !app.current_version) continue;
+    result.scanned++;
+    try {
+      const { code, attestation } = await loadLiveExecutedBundle(app.id);
+      if (code === null) {
+        result.missingBundle++;
+        continue;
+      }
+      if (attestation) {
+        result.alreadyAttested++;
+        continue;
+      }
+      await putLiveExecutedBundle({
+        appId: app.id,
+        version: app.current_version,
+        esmCode: code,
+      });
+      result.attested++;
+    } catch (err) {
+      result.errors++;
+      console.error("[BUNDLE-BACKFILL] failed to attest app", {
+        appId: app.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  console.log("[BUNDLE-BACKFILL] complete", result);
+  return result;
 }
 
 // Test-only: reset the perf cache between cases.

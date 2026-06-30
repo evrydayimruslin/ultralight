@@ -20,6 +20,10 @@ import { isRoutinesEnabled } from '../services/routines-feature-flag.ts';
 import { dispatchPendingEvents } from '../services/agent-events.ts';
 import { refreshAppHealthView } from '../services/app-health.ts';
 import { reconcileConnectVerification } from '../services/connect-verification.ts';
+import {
+  assertTrustSecretResolvable,
+  backfillExecutedBundleAttestations,
+} from '../services/executed-bundle.ts';
 import { getEnv } from '../lib/env.ts';
 import { applyCorsHeaders, buildCorsPreflightResponse } from '../services/cors.ts';
 import { createServerLogger } from '../services/logging.ts';
@@ -335,16 +339,28 @@ async function runHourlyJobs(): Promise<void> {
     // connected sellers whose snapshot has gone stale, so a "verified" badge
     // can't strand true after Stripe disables payouts with no fresh webhook.
     reconcileConnectVerification(),
+    // Executed-bundle integrity ops: (1) re-arm the alarm every hour if the
+    // trust signing secret can't resolve (enforce would silently degrade to off);
+    // (2) when EXECUTED_BUNDLE_BACKFILL=1, attest any still-unattested live
+    // bundles so the legacy cohort becomes enforce-protected (idempotent — safe
+    // to leave on, flip off once it reports 0 attested).
+    (async () => {
+      await assertTrustSecretResolvable();
+      const backfillFlag = (getEnv('EXECUTED_BUNDLE_BACKFILL') || '').toLowerCase();
+      if (backfillFlag === '1' || backfillFlag === 'true') {
+        await backfillExecutedBundleAttestations();
+      }
+    })(),
   ]);
 
   for (const [i, result] of results.entries()) {
     if (result.status === 'rejected') {
-      const names = ['hostingBilling', 'payoutProcessor', 'marketplaceBidExpiry', 'connectVerificationReconcile'];
+      const names = ['hostingBilling', 'payoutProcessor', 'marketplaceBidExpiry', 'connectVerificationReconcile', 'executedBundleIntegrity'];
       cronLogger.error('Hourly cron job failed', {
         job: names[i],
         error: result.reason,
       });
-    } else if (i === 0 && 'degraded' in result.value && (result.value.degraded || result.value.errors.length > 0)) {
+    } else if (i === 0 && typeof result.value === 'object' && result.value !== null && 'degraded' in result.value && (result.value.degraded || result.value.errors.length > 0)) {
       cronLogger.warn('Hosting billing completed in degraded mode', {
         job: 'hostingBilling',
         errors: result.value.errors,

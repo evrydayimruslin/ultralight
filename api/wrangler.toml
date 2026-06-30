@@ -87,6 +87,15 @@ ENVIRONMENT = "production"
 # does not match its signed attestation (bad_signature / hash_mismatch only;
 # legacy unsigned + deploy-skew never block). observe = log only; off = skip.
 EXECUTED_BUNDLE_VERIFY = "enforce"
+# Strip-the-sidecar defense — second-stage rollout (default OFF). When "1",
+# no_attestation also blocks under enforce, closing the "write the live bundle
+# WITHOUT a sidecar to dodge verification" path. Flip ON only AFTER the backfill
+# below reports zero legitimately-unattested bundles, else legacy apps break.
+# EXECUTED_BUNDLE_REQUIRE_ATTESTATION = "1"
+# One-shot backfill (default OFF). When "1", the hourly cron re-attests any
+# still-unattested live bundle (idempotent). Set "1", deploy, watch the
+# [BUNDLE-BACKFILL] log report attested=0, then unset and flip require-attestation.
+# EXECUTED_BUNDLE_BACKFILL = "1"
 # New primary domain is connectgalactic.com; the old ultralightagent.com origins
 # stay listed so they keep working during the cutover (remove later).
 CORS_ALLOWED_ORIGINS = "https://api.connectgalactic.com,https://connectgalactic.com,https://api.ultralightagent.com,https://ultralightagent.com"
