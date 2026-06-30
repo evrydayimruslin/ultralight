@@ -75,6 +75,10 @@ export const LAUNCH_API_ROUTES = [
   "PUT /api/launch/platform-model",
   "GET /api/launch/inference-options",
   "GET /api/launch/library",
+  "POST /api/launch/folders",
+  "PATCH /api/launch/folders/:id",
+  "DELETE /api/launch/folders/:id",
+  "PUT /api/launch/folders/members",
   "GET /api/launch/store",
   "GET /api/launch/discover",
   "GET /api/launch/agents/:id",
@@ -675,6 +679,10 @@ export interface LaunchAgentSummary {
   pricing?: LaunchPricingSummary;
   tags?: string[];
   updatedAt?: string | null;
+  // The folder this Agent is filed under within its tab on the library page, or
+  // null for "Uncategorized". The tab (owned/installed) is implied by which list
+  // the Agent appears in.
+  folderId?: string | null;
   relevance?: LaunchRelevanceSummary;
   // Present only on the agent detail response, and only for interfaces with
   // a server-stamped artifact hash (renderable by the sandbox worker).
@@ -769,9 +777,34 @@ export interface LaunchDiscoveryResponse {
 export type LaunchStoreRequest = LaunchDiscoveryRequest;
 export type LaunchStoreResponse = LaunchDiscoveryResponse;
 
+// A desktop-style, free-form folder on the library page, scoped to one tab
+// ('owned' or 'installed'). Agents are assigned via LaunchAgentSummary.folderId.
+export interface LaunchFolder {
+  id: string;
+  name: string;
+  position: number;
+}
+
 export interface LaunchLibraryResponse {
   owned: LaunchAgentSummary[];
   installed: LaunchAgentSummary[];
+  // Free-form folders per tab; an Agent's membership is carried on its folderId.
+  folders: {
+    owned: LaunchFolder[];
+    installed: LaunchFolder[];
+  };
+  generatedAt: string;
+}
+
+export interface LaunchFolderMutationResponse {
+  folder: LaunchFolder;
+  generatedAt: string;
+}
+
+export interface LaunchFolderMemberMutationResponse {
+  appId: string;
+  scope: "owned" | "installed";
+  folderId: string | null;
   generatedAt: string;
 }
 

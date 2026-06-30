@@ -75,6 +75,7 @@ import {
   type LaunchAgentOwnerSummary,
   type LaunchAgentRelationship,
   type LaunchAgentSummary,
+  type LaunchFolder,
   type LaunchInterfaceSummary,
   type LaunchAgentVisibility,
   type LaunchTrustCard,
@@ -532,6 +533,13 @@ export async function handleLaunch(request: Request): Promise<Response> {
       path.startsWith("/api/launch/grants/")
     ) {
       return await handleLaunchGrants(request, path, method);
+    }
+
+    if (
+      path === "/api/launch/folders" ||
+      path.startsWith("/api/launch/folders/")
+    ) {
+      return await handleLaunchFolders(request, path, method);
     }
 
     if (path === "/api/launch/wiring/targets") {
@@ -3789,9 +3797,20 @@ async function handleLaunchDiscover(
 
 async function handleLaunchLibrary(request: Request): Promise<Response> {
   const user = await requireLaunchUser(request);
-  const [ownedRows, installedIds] = await Promise.all([
+  const [
+    ownedRows,
+    installedIds,
+    ownedFolders,
+    installedFolders,
+    ownedMembers,
+    installedMembers,
+  ] = await Promise.all([
     fetchOwnedApps(user.id),
     fetchInstalledIds(user.id),
+    fetchFolders(user.id, "owned"),
+    fetchFolders(user.id, "installed"),
+    fetchFolderMembers(user.id, "owned"),
+    fetchFolderMembers(user.id, "installed"),
   ]);
   const installedRows = await fetchAppsByIds(
     Array.from(installedIds).filter((appId) =>
@@ -3803,21 +3822,304 @@ async function handleLaunchLibrary(request: Request): Promise<Response> {
     ...installedRows.map((row) => row.owner_id),
   ]);
 
+  // Valid folder-id sets per tab. A membership pointing at a folder that no
+  // longer exists is ignored (defense-in-depth — the composite FK already
+  // cascades members on folder delete). Memberships for Agents not in the live
+  // owned/installed set are never read here, so an uninstalled Agent leaves no
+  // visible orphan.
+  const ownedFolderIds = new Set(ownedFolders.map((f) => f.id));
+  const installedFolderIds = new Set(installedFolders.map((f) => f.id));
+  const folderIdFor = (
+    appId: string,
+    members: Map<string, string>,
+    valid: Set<string>,
+  ): string | null => {
+    const fid = members.get(appId);
+    return fid && valid.has(fid) ? fid : null;
+  };
+
+  const owned = ownedRows.map((row) => {
+    const summary = toLaunchAgentSummary(row, {
+      owners,
+      viewerId: user.id,
+      installedIds,
+    });
+    summary.folderId = folderIdFor(row.id, ownedMembers, ownedFolderIds);
+    return summary;
+  });
+  const installed = installedRows.map((row) => {
+    const summary = toLaunchAgentSummary(row, {
+      owners,
+      viewerId: user.id,
+      installedIds,
+    });
+    summary.folderId = folderIdFor(row.id, installedMembers, installedFolderIds);
+    return summary;
+  });
+
   return json({
-    owned: ownedRows.map((row) =>
-      toLaunchAgentSummary(row, {
-        owners,
-        viewerId: user.id,
-        installedIds,
-      })
-    ),
-    installed: installedRows.map((row) =>
-      toLaunchAgentSummary(row, {
-        owners,
-        viewerId: user.id,
-        installedIds,
-      })
-    ),
+    owned,
+    installed,
+    folders: {
+      owned: ownedFolders.map(toLaunchFolder),
+      installed: installedFolders.map(toLaunchFolder),
+    },
+    generatedAt: new Date().toISOString(),
+  });
+}
+
+// ── Library folders (launch-web "Agents" page) ──────────────────────────────
+// Browser-only, per-user organization of the library. CRITICAL: every read and
+// write filters owner_user_id = the session user EXPLICITLY — getDbConfig() uses
+// the service role, which bypasses RLS, so the RLS policies on these tables are
+// defense-in-depth only, never the tenant boundary.
+
+type LaunchFolderScope = "owned" | "installed";
+
+interface LaunchFolderRow {
+  id: string;
+  name: string;
+  position: number;
+}
+
+interface LaunchFolderMemberRow {
+  app_id: string;
+  folder_id: string;
+}
+
+const FOLDER_NAME_MAX = 60;
+const MAX_FOLDERS_PER_SCOPE = 100;
+
+function requireAccountSessionForFolders(user: AuthUser): void {
+  if (
+    user.authSource === "api_token" ||
+    user.authSource === "routine_actor" ||
+    user.authSource === "sandbox_actor"
+  ) {
+    throw new RequestValidationError(
+      "Organizing library folders requires an account session",
+      403,
+    );
+  }
+}
+
+function parseFolderScope(value: unknown): LaunchFolderScope | null {
+  return value === "owned" || value === "installed" ? value : null;
+}
+
+function parseFolderName(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const name = value.trim();
+  if (!name || name.length > FOLDER_NAME_MAX) return null;
+  return name;
+}
+
+function toLaunchFolder(row: LaunchFolderRow): LaunchFolder {
+  return { id: row.id, name: row.name, position: row.position };
+}
+
+async function fetchFolders(
+  userId: string,
+  scope: LaunchFolderScope,
+): Promise<LaunchFolderRow[]> {
+  const db = getDbConfig();
+  return await dbGet<LaunchFolderRow>(db, "library_folders", {
+    owner_user_id: `eq.${userId}`,
+    scope: `eq.${scope}`,
+    select: "id,name,position",
+    order: "position.asc,created_at.asc",
+    limit: "500",
+  });
+}
+
+async function fetchFolderMembers(
+  userId: string,
+  scope: LaunchFolderScope,
+): Promise<Map<string, string>> {
+  const db = getDbConfig();
+  const rows = await dbGet<LaunchFolderMemberRow>(
+    db,
+    "library_folder_members",
+    {
+      owner_user_id: `eq.${userId}`,
+      scope: `eq.${scope}`,
+      select: "app_id,folder_id",
+      limit: "5000",
+    },
+  );
+  return new Map(rows.map((r) => [r.app_id, r.folder_id]));
+}
+
+async function handleLaunchFolders(
+  request: Request,
+  path: string,
+  method: string,
+): Promise<Response> {
+  const user = await requireLaunchUser(request);
+  requireAccountSessionForFolders(user);
+
+  // Move an Agent into a folder, or out (folder_id: null).
+  if (path === "/api/launch/folders/members") {
+    if (method !== "PUT") {
+      return error("Method not allowed for folder membership", 405);
+    }
+    return await setFolderMember(request, user.id);
+  }
+
+  // Create.
+  if (path === "/api/launch/folders") {
+    if (method !== "POST") {
+      return error("Method not allowed for launch folders", 405);
+    }
+    return await createFolder(request, user.id);
+  }
+
+  // Rename / delete.
+  const itemMatch = path.match(/^\/api\/launch\/folders\/([^/]+)$/);
+  if (itemMatch) {
+    const folderId = decodeURIComponent(itemMatch[1]);
+    if (!isUuid(folderId)) return error("Folder not found", 404);
+    if (method === "PATCH") return await renameFolder(request, user.id, folderId);
+    if (method === "DELETE") return await deleteFolder(user.id, folderId);
+    return error("Method not allowed for launch folder", 405);
+  }
+
+  return error("Launch folder endpoint not found", 404);
+}
+
+async function createFolder(
+  request: Request,
+  userId: string,
+): Promise<Response> {
+  const body = asRecord(await readJsonBody<unknown>(request)) || {};
+  const scope = parseFolderScope(body.scope);
+  const name = parseFolderName(body.name);
+  if (!scope) return error("scope must be 'owned' or 'installed'", 400);
+  if (!name) return error(`name is required (1-${FOLDER_NAME_MAX} chars)`, 400);
+
+  const existing = await fetchFolders(userId, scope);
+  if (existing.length >= MAX_FOLDERS_PER_SCOPE) {
+    return error("Folder limit reached for this tab", 409);
+  }
+  const position = existing.reduce((m, f) => Math.max(m, f.position), -1) + 1;
+
+  const db = getDbConfig();
+  const res = await fetch(`${db.baseUrl}/rest/v1/library_folders`, {
+    method: "POST",
+    headers: { ...db.headers, Prefer: "return=representation" },
+    body: JSON.stringify({ owner_user_id: userId, scope, name, position }),
+  });
+  if (res.status === 409) {
+    return error("A folder with that name already exists", 409);
+  }
+  if (!res.ok) return error("Couldn't create the folder", 502);
+  const row = (await res.json() as LaunchFolderRow[])[0];
+  return json(
+    { folder: toLaunchFolder(row), generatedAt: new Date().toISOString() },
+    201,
+  );
+}
+
+async function renameFolder(
+  request: Request,
+  userId: string,
+  folderId: string,
+): Promise<Response> {
+  const body = asRecord(await readJsonBody<unknown>(request)) || {};
+  const name = parseFolderName(body.name);
+  if (!name) return error(`name is required (1-${FOLDER_NAME_MAX} chars)`, 400);
+
+  const db = getDbConfig();
+  // Owner filter is the tenant boundary (service role bypasses RLS).
+  const res = await fetch(
+    `${db.baseUrl}/rest/v1/library_folders?id=eq.${folderId}&owner_user_id=eq.${userId}`,
+    {
+      method: "PATCH",
+      headers: { ...db.headers, Prefer: "return=representation" },
+      body: JSON.stringify({ name, updated_at: new Date().toISOString() }),
+    },
+  );
+  if (res.status === 409) {
+    return error("A folder with that name already exists", 409);
+  }
+  if (!res.ok) return error("Couldn't rename the folder", 502);
+  const rows = await res.json() as LaunchFolderRow[];
+  if (rows.length === 0) return error("Folder not found", 404);
+  return json({
+    folder: toLaunchFolder(rows[0]),
+    generatedAt: new Date().toISOString(),
+  });
+}
+
+async function deleteFolder(
+  userId: string,
+  folderId: string,
+): Promise<Response> {
+  const db = getDbConfig();
+  const res = await fetch(
+    `${db.baseUrl}/rest/v1/library_folders?id=eq.${folderId}&owner_user_id=eq.${userId}`,
+    { method: "DELETE", headers: { ...db.headers, Prefer: "return=representation" } },
+  );
+  if (!res.ok) return error("Couldn't delete the folder", 502);
+  const rows = await res.json() as Array<{ id: string }>;
+  if (rows.length === 0) return error("Folder not found", 404);
+  // library_folder_members rows cascade-delete via the composite FK.
+  return json({ ok: true, generatedAt: new Date().toISOString() });
+}
+
+async function setFolderMember(
+  request: Request,
+  userId: string,
+): Promise<Response> {
+  const body = asRecord(await readJsonBody<unknown>(request)) || {};
+  const scope = parseFolderScope(body.scope);
+  const appId = typeof body.app_id === "string" ? body.app_id.trim() : "";
+  const rawFolderId = body.folder_id;
+  if (!scope) return error("scope must be 'owned' or 'installed'", 400);
+  if (!isUuid(appId)) return error("app_id must be a valid id", 400);
+
+  const db = getDbConfig();
+
+  // null folder_id => uncategorize (remove the membership row).
+  if (rawFolderId === null || rawFolderId === undefined) {
+    const res = await fetch(
+      `${db.baseUrl}/rest/v1/library_folder_members` +
+        `?owner_user_id=eq.${userId}&scope=eq.${scope}&app_id=eq.${appId}`,
+      { method: "DELETE", headers: db.headers },
+    );
+    if (!res.ok) return error("Couldn't update the folder", 502);
+    return json({
+      appId,
+      scope,
+      folderId: null,
+      generatedAt: new Date().toISOString(),
+    });
+  }
+
+  if (typeof rawFolderId !== "string" || !isUuid(rawFolderId)) {
+    return error("folder_id must be a valid id or null", 400);
+  }
+  // Upsert on (owner, scope, app_id). The composite FK
+  // (folder_id, owner_user_id, scope) -> library_folders guarantees the target
+  // folder exists, is owned by THIS user, and is on the SAME tab — so a
+  // forged/foreign/mismatched folder_id is rejected by the database itself.
+  const res = await fetch(`${db.baseUrl}/rest/v1/library_folder_members`, {
+    method: "POST",
+    headers: { ...db.headers, Prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify({
+      owner_user_id: userId,
+      scope,
+      app_id: appId,
+      folder_id: rawFolderId,
+    }),
+  });
+  if (!res.ok) {
+    return error("Folder not found for this tab", 404);
+  }
+  return json({
+    appId,
+    scope,
+    folderId: rawFolderId,
     generatedAt: new Date().toISOString(),
   });
 }
