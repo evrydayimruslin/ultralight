@@ -1,0 +1,86 @@
+name: Supabase Prod — one-shot apply
+
+# Deliberate, manual prod migration apply. Run "dryrun" first to see exactly
+# which migrations are pending on prod (Local vs Remote), then re-run "apply"
+# with confirm=APPLY to push them. Uses the GitHub prod secrets — no credentials
+# are ever pasted anywhere. The branch you dispatch this from supplies the
+# migration files (so you can apply a feature branch's migrations to prod without
+# merging to main first).
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'dryrun = list pending only (no changes); apply = push migrations to prod'
+        required: true
+        default: dryrun
+        type: choice
+        options:
+          - dryrun
+          - apply
+      confirm:
+        description: 'Type APPLY to confirm a real production migration push (apply mode only)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate local migration set
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Validate migrations locally (Docker pg + reset + lint)
+        run: bash ./scripts/supabase/validate-local.sh
+
+  run:
+    name: ${{ inputs.mode == 'apply' && 'Apply to production' || 'Dry run (production)' }}
+    needs: validate
+    runs-on: ubuntu-latest
+    # Scopes the prod secrets to this job + lets you require a reviewer on the
+    # "production" environment (Settings → Environments) as a second gate.
+    environment: production
+    concurrency:
+      group: supabase-production-db
+      cancel-in-progress: false
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PRODUCTION_PROJECT_ID }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_PRODUCTION_DB_PASSWORD }}
+      SUPABASE_ENV_NAME: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      # Apply mode is a real prod mutation — refuse unless the operator typed
+      # APPLY, so a mis-click on "apply" with an empty confirm box does nothing.
+      - name: Guard — apply requires confirm=APPLY
+        if: ${{ inputs.mode == 'apply' && inputs.confirm != 'APPLY' }}
+        run: |
+          echo "::error::Apply mode requires the confirm input to be exactly 'APPLY'. Re-run with confirm=APPLY."
+          exit 1
+
+      - name: Dry run — list pending production migrations (no changes)
+        if: ${{ inputs.mode == 'dryrun' }}
+        env:
+          DRY_RUN: "1"
+        run: bash ./scripts/supabase/deploy-linked.sh
+
+      - name: Apply — push migrations to production
+        if: ${{ inputs.mode == 'apply' }}
+        run: bash ./scripts/supabase/deploy-linked.sh
+
+      # Report-only: prod intentionally runs a curated subset, so a diff is
+      # expected and must not fail the run — it's logged for visibility.
+      - name: Check production schema drift (report only)
+        if: ${{ inputs.mode == 'apply' }}
+        env:
+          DRIFT_REPORT_ONLY: "1"
+        run: bash ./scripts/supabase/check-drift.sh

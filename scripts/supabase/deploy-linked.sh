@@ -26,6 +26,18 @@ supabase_cli link \
   --workdir "${ROOT}" \
   --yes
 
+# DRY_RUN=1 only lists what WOULD apply (Local vs Remote in the migration
+# history) and pushes nothing — used by the one-shot dispatch workflow's
+# "dryrun" mode to preview a prod migration before applying it.
+if [[ "${DRY_RUN:-0}" == "1" ]]; then
+  echo "[supabase] DRY RUN — pending migrations for ${ENV_NAME} (no push):"
+  supabase_cli migration list \
+    --linked \
+    -p "${SUPABASE_DB_PASSWORD}" \
+    --workdir "${ROOT}"
+  exit 0
+fi
+
 echo "[supabase] Pushing migrations to ${ENV_NAME}"
 supabase_cli db push \
   --linked \
