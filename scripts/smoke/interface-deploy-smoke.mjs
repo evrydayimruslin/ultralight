@@ -125,10 +125,18 @@ async function callTool(name, toolArgs) {
 }
 
 // 1. Upload (private). Exercises bundle parse (__filename) + interface stamping.
+// Re-versioning a FIXED app needs a fresh, monotonic version each run, or the
+// server rejects the duplicate ("Version X already exists"). A wall-clock base
+// gives both uniqueness and monotonicity; the create path (no app_id) leaves the
+// initial version to the server.
+const verBase = Date.now();
 let result = null;
 try {
   const uploadArgs = { files, name: 'Interface Demo (smoke)', visibility: 'private' };
-  if (appId) uploadArgs.app_id = appId;
+  if (appId) {
+    uploadArgs.app_id = appId;
+    uploadArgs.version = `1.0.${verBase}`;
+  }
   result = await callTool('ul.upload', uploadArgs);
   check('ul.upload', true);
 } catch (err) {
@@ -177,7 +185,7 @@ if (iface?.url) {
 // manifest and drop the interface — this is the regression that bug fixed.
 if (id) {
   try {
-    await callTool('ul.upload', { files, name: 'Interface Demo (smoke)', visibility: 'private', app_id: id });
+    await callTool('ul.upload', { files, name: 'Interface Demo (smoke)', visibility: 'private', app_id: id, version: `1.0.${verBase + 1}` });
     const after = await fetch(`${apiBase}/api/launch/agents/${id}`, {
       headers: { Authorization: `Bearer ${token}` },
     }).then((r) => r.json());
