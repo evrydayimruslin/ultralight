@@ -70,6 +70,7 @@ export interface VersionTrustMetadata {
     version: string;
     runtime: "deno" | "gpu" | string;
     manifest_hash: string | null;
+    description_hash?: string;
     artifact_hash: string;
     artifact_hashes: Record<string, string>;
     storage_key?: string;
@@ -78,6 +79,13 @@ export interface VersionTrustMetadata {
     required_secrets: string[];
     per_user_secrets: string[];
     signature: VersionTrustSignature;
+}
+export type HealthStatus = "green" | "red" | "no_data";
+export interface HealthWindows {
+    "1h": HealthStatus;
+    "24h": HealthStatus;
+    "7d": HealthStatus;
+    "30d": HealthStatus;
 }
 export type AppGpuStatus = "building" | "benchmarking" | "live" | "build_failed" | "benchmark_failed" | "build_config_invalid";
 export interface App {
