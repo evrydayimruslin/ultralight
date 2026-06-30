@@ -348,16 +348,13 @@ export async function ensureUserExists(
   );
 }
 
-const DEFAULT_APP_NAMES = [
-  "Memory Wiki",
-  "email-ops",
-  "Private Tutor",
-  "Smart Budget",
-  "Recipe Box",
-  "Reading List",
-];
-
-async function provisionDefaultApps(userId: string): Promise<void> {
+// Seed a brand-new account's library from the id-keyed platform default-install
+// registry (platform_default_apps). FORWARD-ONLY: this runs once, at account
+// creation (see ensureUserExists), and only ever writes the NEW user's rows —
+// there is no backfill/broadcast into existing users anywhere. Keyed on app_id
+// (stable across versions), so it can't silently shrink on a rename the way the
+// old name-matched constant did. Exported for direct testing.
+export async function provisionDefaultApps(userId: string): Promise<void> {
   const supabaseUrl = getEnv("SUPABASE_URL");
   const serviceKey = getEnv("SUPABASE_SERVICE_ROLE_KEY");
   const headers = {
@@ -366,30 +363,53 @@ async function provisionDefaultApps(userId: string): Promise<void> {
     "Content-Type": "application/json",
   };
 
-  const namesFilter = DEFAULT_APP_NAMES.map((name) => `"${name}"`).join(",");
+  // 1. Active registry entries (enabled, not retired), in display order.
+  const registryRes = await fetch(
+    `${supabaseUrl}/rest/v1/platform_default_apps` +
+      `?enabled=eq.true&removed_at=is.null&select=app_id&order=position.asc`,
+    { headers },
+  );
+  if (!registryRes.ok) return;
+  const registry = await registryRes.json() as Array<{ app_id: string }>;
+  const registryIds = registry.map((r) => r.app_id).filter(Boolean);
+  if (registryIds.length === 0) return;
+
+  // 2. Validate each is still a live, installable (public/unlisted) Agent.
+  // Guards against an app unpublished or deleted after being added: seeding a
+  // private/deleted app would drop an unusable row into the new user's library.
   const appsRes = await fetch(
-    `${supabaseUrl}/rest/v1/apps?name=in.(${namesFilter})&deleted_at=is.null&select=id,name`,
+    `${supabaseUrl}/rest/v1/apps` +
+      `?id=in.(${registryIds.join(",")})` +
+      `&deleted_at=is.null&visibility=in.(public,unlisted)&select=id`,
     { headers },
   );
   if (!appsRes.ok) return;
-  const apps = await appsRes.json() as Array<{ id: string; name: string }>;
-  if (apps.length === 0) return;
+  const liveApps = await appsRes.json() as Array<{ id: string }>;
+  const liveIds = new Set(liveApps.map((a) => a.id));
+  // Preserve registry (position) order; keep only the still-installable ones.
+  const seedIds = registryIds.filter((id) => liveIds.has(id));
+  if (seedIds.length === 0) return;
 
-  for (const app of apps) {
-    await fetch(`${supabaseUrl}/rest/v1/app_likes`, {
-      method: "POST",
-      headers: { ...headers, "Prefer": "resolution=merge-duplicates" },
-      body: JSON.stringify({ user_id: userId, app_id: app.id, positive: true }),
-    });
-    await fetch(`${supabaseUrl}/rest/v1/user_app_library`, {
-      method: "POST",
-      headers: { ...headers, "Prefer": "resolution=merge-duplicates" },
-      body: JSON.stringify({
-        user_id: userId,
-        app_id: app.id,
-        source: "default",
-      }),
-    });
+  // 3. One batched, idempotent upsert into the user's library. source='default'.
+  // NO app_likes write — that fabricated a positive like on every signup,
+  // inflating each default's like-count. The installed signal is
+  // user_app_library; likes are earned, not seeded.
+  const rows = seedIds.map((appId) => ({
+    user_id: userId,
+    app_id: appId,
+    source: "default",
+  }));
+  const insertRes = await fetch(`${supabaseUrl}/rest/v1/user_app_library`, {
+    method: "POST",
+    headers: { ...headers, "Prefer": "resolution=merge-duplicates" },
+    body: JSON.stringify(rows),
+  });
+  if (!insertRes.ok) {
+    console.error(
+      "[AUTH] Default-app seeding upsert failed:",
+      insertRes.status,
+      (await insertRes.text()).slice(0, 200),
+    );
   }
 }
 
