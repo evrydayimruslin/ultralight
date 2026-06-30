@@ -28,6 +28,12 @@ import { checkRateLimit } from "../services/ratelimit.ts";
 import { resolveAppEnvSchema } from "../services/app-settings.ts";
 import { buildAppTrustCard } from "../services/trust.ts";
 import {
+  aggregateTrustSignals,
+  type TrustSummary,
+  trustRankDelta,
+  trustSummary,
+} from "../services/trust-ranking.ts";
+import {
   buildMarketplaceListingSummary,
   buildPublicAcquisitionReceipt,
   type MarketplaceListingSummary,
@@ -216,6 +222,8 @@ interface ScoredApp {
   runtime?: string;
   gpu_type?: string | null;
   trust_card?: unknown;
+  // Phase 4: agent-readable trust summary (signals + composite score).
+  trust?: TrustSummary;
   matched_subject?: DiscoveryMatchedSubject;
 }
 
@@ -1516,52 +1524,47 @@ async function executeSearch(
     // Fetch env schemas for native_boost calculation
     const appIds = filteredResults.map((r) => r.id);
 
+    // One apps read covers env_schema (native_boost), likes/runs metadata, and
+    // the fields trust ranking needs (owner_id for publisher_verified,
+    // download_access for open_code).
     let envSchemas = new Map<string, Record<string, EnvSchemaEntry>>();
+    let appMeta = new Map<
+      string,
+      {
+        weighted_likes: number;
+        weighted_dislikes: number;
+        runs_30d: number;
+        owner_id: string | null;
+        download_access: string | null;
+      }
+    >();
     if (appIds.length > 0) {
       try {
         const schemaRes = await fetch(
           `${supabaseUrl}/rest/v1/apps?id=in.(${
             appIds.join(",")
-          })&select=id,env_schema,manifest,likes,dislikes,weighted_likes,weighted_dislikes,runs_30d`,
+          })&select=id,owner_id,download_access,env_schema,manifest,likes,dislikes,weighted_likes,weighted_dislikes,runs_30d`,
           { headers: dbHeaders },
         );
         if (schemaRes.ok) {
-          const rows = await schemaRes.json() as AppRow[];
-          for (const row of rows) {
-            const schema = resolveAppEnvSchema(row);
-            if (Object.keys(schema).length > 0) envSchemas.set(row.id, schema);
-          }
-        }
-      } catch { /* best effort */ }
-    }
-
-    // Fetch app metadata for likes/runs (from the env_schema query above, we already have it)
-    let appMeta = new Map<
-      string,
-      { weighted_likes: number; weighted_dislikes: number; runs_30d: number }
-    >();
-    if (appIds.length > 0) {
-      try {
-        const metaRes = await fetch(
-          `${supabaseUrl}/rest/v1/apps?id=in.(${
-            appIds.join(",")
-          })&select=id,weighted_likes,weighted_dislikes,runs_30d`,
-          { headers: dbHeaders },
-        );
-        if (metaRes.ok) {
-          const rows = await metaRes.json() as Array<
-            {
-              id: string;
+          const rows = await schemaRes.json() as Array<
+            AppRow & {
+              owner_id: string | null;
+              download_access: string | null;
               weighted_likes: number;
               weighted_dislikes: number;
               runs_30d: number;
             }
           >;
           for (const row of rows) {
+            const schema = resolveAppEnvSchema(row);
+            if (Object.keys(schema).length > 0) envSchemas.set(row.id, schema);
             appMeta.set(row.id, {
               weighted_likes: row.weighted_likes ?? 0,
               weighted_dislikes: row.weighted_dislikes ?? 0,
               runs_30d: row.runs_30d ?? 0,
+              owner_id: row.owner_id ?? null,
+              download_access: row.download_access ?? null,
             });
           }
         }
@@ -1621,6 +1624,29 @@ async function executeSearch(
         }),
       };
     });
+
+    // Phase 4: fold the earned trust signals into the score (a bounded ±delta
+    // that orders comparably-relevant Agents, never overrides relevance) and
+    // expose them in the agent-readable payload. Batched: one health read + one
+    // owners read + one aggregate RPC for ALL candidates.
+    try {
+      const trustSignals = await aggregateTrustSignals(
+        scored.map((item) => {
+          const m = appMeta.get(item.id);
+          return { id: item.id, owner_id: m?.owner_id ?? null, download_access: m?.download_access ?? null };
+        }),
+      );
+      for (const item of scored) {
+        const sig = trustSignals.get(item.id);
+        if (!sig) continue;
+        item.final_score = Math.round(
+          (item.final_score + trustRankDelta(sig, item.runs_30d ?? 0)) * 10000,
+        ) / 10000;
+        item.trust = trustSummary(sig);
+      }
+    } catch (err) {
+      console.warn("[DISCOVER] trust ranking skipped:", err);
+    }
 
     // Sort by final_score DESC
     scored.sort((a, b) => b.final_score - a.final_score);

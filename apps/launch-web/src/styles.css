@@ -2625,6 +2625,13 @@ button {
   margin-top: 14px;
 }
 
+.trust-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 14px;
+}
+
 .manifest-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }

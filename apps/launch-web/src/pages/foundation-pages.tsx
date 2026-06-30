@@ -155,6 +155,11 @@ interface AgentDetailFixture extends AgentFixture {
   // Trust fields are null until the Agent publishes a signed trust card.
   runtime: string | null;
   signer: string | null;
+  // Phase 4 trust chips — derived from the signed trust card (default off).
+  publisherVerified: boolean;
+  openCode: boolean;
+  signedManifest: boolean;
+  health: LaunchTrustCard["health"] | null;
   title: string;
   updatedAt: string | null;
   version: string | null;
@@ -576,6 +581,10 @@ function liveAgentFixture(
     relationship: tool.relationship,
     runtime: trust?.runtime || null,
     signer: trust?.signer || null,
+    publisherVerified: trust?.publisher_verified ?? false,
+    openCode: trust?.open_code ?? false,
+    signedManifest: trust?.signed_manifest ?? false,
+    health: trust?.health ?? null,
     slug: tool.slug,
     spark: null,
     summary: tool.description || "Agent published on Galactic.",
@@ -584,6 +593,22 @@ function liveAgentFixture(
     version: trust?.version || null,
     visibility: tool.visibility,
   };
+}
+
+// Collapse the 1h/24h/7d/30d windows into one binary chip (green/red), or
+// neutral when there isn't enough paid, non-self traffic to judge. No amber —
+// "no data" is shown as neutral, never an ambiguous warning colour.
+function overallHealthTone(
+  health: LaunchTrustCard["health"] | null,
+): { tone: "green" | "red" | "default"; label: string } {
+  if (!health) return { tone: "default", label: "Health: no data" };
+  // Prefer the freshest window with a verdict so a now-broken Agent (24h red)
+  // never reads "Healthy" on a stale 7d green.
+  for (const window of ["24h", "7d"] as const) {
+    if (health[window] === "green") return { tone: "green", label: "Healthy" };
+    if (health[window] === "red") return { tone: "red", label: "Unhealthy" };
+  }
+  return { tone: "default", label: "Health: no data" };
 }
 
 // Declared permissions from the signed trust card — the only honest source
@@ -3610,7 +3635,9 @@ function AgentDetailsPanel({ tool }: { tool: AgentDetailFixture }): ReactElement
   const minPrice = paidFunctions.length > 0
     ? Math.min(...paidFunctions.map((fn) => fn.price))
     : 0;
-  const signed = tool.signer !== null;
+  // Drive the headline from the same signal as the Integrity chip so they can't
+  // contradict (a signed manifest is what "Ready to call" actually means).
+  const signed = tool.signedManifest;
 
   return (
     <div className="details-panel">
@@ -3632,6 +3659,21 @@ function AgentDetailsPanel({ tool }: { tool: AgentDetailFixture }): ReactElement
           <MetaPair label="runtime" value={tool.runtime ?? "—"} />
           <MetaPair label="receipts" value="enabled" />
           <MetaPair label="visibility" value={tool.visibility} />
+        </div>
+        <div className="trust-chips">
+          <Pill tone={tool.publisherVerified ? "green" : "default"}>
+            {tool.publisherVerified ? "Verified publisher" : "Publisher unverified"}
+          </Pill>
+          <Pill tone={tool.signedManifest ? "green" : "default"}>
+            {tool.signedManifest ? "Integrity signed" : "Unsigned"}
+          </Pill>
+          <Pill tone={tool.openCode ? "green" : "default"}>
+            {tool.openCode ? "Open code" : "Closed source"}
+          </Pill>
+          {(() => {
+            const h = overallHealthTone(tool.health);
+            return <Pill tone={h.tone}>{h.label}</Pill>;
+          })()}
         </div>
       </Card>
       <Card>
