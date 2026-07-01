@@ -8,6 +8,8 @@
 import { error, json } from "./response.ts";
 import { authenticate } from "./auth.ts";
 import { isApiToken, validateToken } from "../services/tokens.ts";
+import { renderAgentOgCard } from "../services/og-card.ts";
+import { scheduleCaptureTask } from "../services/chat-capture.ts";
 import { createUserService } from "../services/user.ts";
 import { deriveCallerEconomicState } from "../services/request-caller-context.ts";
 import {
@@ -7519,9 +7521,10 @@ async function executeUpload(
       // when declared (parity with a Deno app's manifest.json), else 1.0.0.
       const appId = crypto.randomUUID();
       const version = gpuConfig?.version || "1.0.0";
-      const { generateSlug } = await import("./upload.ts");
-      const slug = generateSlug();
-      const appName = (args.name as string) || slug;
+      const { generateUniqueSlug } = await import("./upload.ts");
+      const resolvedName = (args.name as string) || null;
+      const slug = await generateUniqueSlug(resolvedName);
+      const appName = resolvedName || slug;
       const appDescription = (args.description as string) || null;
       const gpuManifest = generateGpuManifest({
         name: appName,
@@ -10187,6 +10190,15 @@ async function executeSetVisibility(
   await appsService.update(
     app.id,
     updatePayload as { visibility: "private" | "unlisted" | "public" },
+  );
+
+  // Re-render the OG share card on a visibility change (e.g. private->public).
+  // No-op for non-public agents (gated in the renderer).
+  scheduleCaptureTask(
+    renderAgentOgCard(
+      { ...app, visibility: dbVisibility },
+      { reason: "set-visibility" },
+    ),
   );
 
   // If going TO published for the first time: set first_published_at

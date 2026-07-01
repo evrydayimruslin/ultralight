@@ -6,7 +6,7 @@ import { handleRun } from "./run.ts";
 import { handleAuth } from "./auth.ts";
 import { authenticate } from "./auth.ts";
 import { appStoreUrl, deepLinkAppUrl, downloadUrl } from "../lib/urls.ts";
-import { handleApps } from "./apps.ts";
+import { handleApps, handleOgCard } from "./apps.ts";
 import { handleUser } from "./user.ts";
 import { handleLaunch } from "./launch.ts";
 import { handleMcp, handleMcpDiscovery } from "./mcp.ts";
@@ -75,6 +75,7 @@ import {
 } from "../services/billing-config.ts";
 import {
   createReferralClaimToken,
+  fetchActiveReferralLinkBySlug,
   recordReferralLanding,
   REFERRAL_VISITOR_COOKIE_MAX_AGE_SECONDS,
   REFERRAL_VISITOR_COOKIE_NAME,
@@ -1313,6 +1314,15 @@ export function createApp() {
         const appId = path.slice(5); // Remove '/app/'
         if (appId && !appId.includes("/")) {
           return handlePublicAppPage(request, appId);
+        }
+      }
+
+      // Rendered OG share card image - GET /og/:appId.png (public agents only)
+      if (path.startsWith("/og/") && method === "GET") {
+        const file = path.slice(4); // Remove '/og/'
+        const appId = file.endsWith(".png") ? file.slice(0, -4) : file;
+        if (appId && !appId.includes("/")) {
+          return handleOgCard(request, appId);
         }
       }
 
@@ -2629,9 +2639,12 @@ function getPublicAppPageHTML(
   `
     : "";
 
-  // OpenGraph prefers the first screenshot over the icon — richer previews
-  // in Slack/iMessage/Twitter when apps have visual content.
-  const ogImage = hasScreenshots
+  // Public agents get the rendered share card (swirl + name + description);
+  // others fall back to the first screenshot, then the icon. handleOgCard 302s
+  // to the icon if the card hasn't been rendered yet, so this always resolves.
+  const ogImage = app.visibility === "public"
+    ? `${baseUrl}/og/${app.id}.png`
+    : hasScreenshots
     ? `${baseUrl}/api/apps/${app.id}/screenshots/0`
     : `${baseUrl}/api/apps/${app.id}/icon`;
 
@@ -2677,7 +2690,7 @@ function getPublicAppPageHTML(
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${appName} — Galactic</title>
 <meta name="description" content="${metaDescEscaped}">
-${isEmbed ? '<meta name="robots" content="noindex">' : ""}
+${isEmbed || isUnlisted ? '<meta name="robots" content="noindex">' : ""}
 
 <!-- OpenGraph / social share previews -->
 <meta property="og:type" content="website">
@@ -2686,7 +2699,7 @@ ${isEmbed ? '<meta name="robots" content="noindex">' : ""}
 <meta property="og:description" content="${metaDescEscaped}">
 <meta property="og:url" content="${escapeHtml(shareUrl)}">
 <meta property="og:image" content="${escapeHtml(ogImage)}">
-<meta name="twitter:card" content="summary">
+<meta name="twitter:card" content="${app.visibility === "public" ? "summary_large_image" : "summary"}">
 <meta name="twitter:title" content="${appName}">
 <meta name="twitter:description" content="${metaDescEscaped}">
 <meta name="twitter:image" content="${escapeHtml(ogImage)}">
@@ -5465,6 +5478,13 @@ async function handleReferralLanding(
   request: Request,
   slug: string,
 ): Promise<Response> {
+  // Social crawlers must NOT record a landing — recordReferralLanding mints
+  // attribution and, for known users, a fee-waiver grant. Serve a no-side-effect
+  // OG preview to bots so the share card renders without phantom attributions.
+  if (BOT_UA_PATTERN.test(request.headers.get("user-agent") || "")) {
+    return handleReferralBotPreview(request, slug);
+  }
+
   const visitorId = getCookieValueFromRequest(
     request,
     REFERRAL_VISITOR_COOKIE_NAME,
@@ -5514,6 +5534,78 @@ async function handleReferralLanding(
   }
 
   return new Response(null, { status: 302, headers });
+}
+
+/**
+ * Social-crawler preview for a referral link — GET /r/:slug with a bot UA.
+ * Renders the target agent's OG card WITHOUT recording a landing (no
+ * attribution, no fee-waiver grant). Public agents only; non-public agents (or
+ * an unknown slug handled above) get a plain redirect with no card. A
+ * meta-refresh sends any human-ish client on to the agent page.
+ */
+async function handleReferralBotPreview(
+  request: Request,
+  slug: string,
+): Promise<Response> {
+  const link = await fetchActiveReferralLinkBySlug(slug);
+  if (!link) {
+    return new Response("Referral link not found", { status: 404 });
+  }
+  const appPath = `/app/${encodeURIComponent(link.app_id)}`;
+
+  const app = await createAppsService().findPublicServingById(link.app_id);
+  if (!app || app.visibility !== "public") {
+    return new Response(null, {
+      status: 302,
+      headers: { "Location": appPath, "Cache-Control": "no-store" },
+    });
+  }
+
+  const baseUrl = getBaseUrl(request);
+  const name = app.name || app.slug || "Agent";
+  const title = `${name}: Galactic Agent`;
+  const rawDesc = app.description || `${name} on Galactic`;
+  const desc = rawDesc.length > 200 ? rawDesc.slice(0, 199) + "…" : rawDesc;
+  const appUrl = `${baseUrl}${appPath}`;
+
+  const t = escapeHtml(title);
+  const d = escapeHtml(desc);
+  const img = escapeHtml(`${baseUrl}/og/${encodeURIComponent(link.app_id)}.png`);
+  const refUrl = escapeHtml(`${baseUrl}/r/${encodeURIComponent(slug)}`);
+  const goto = escapeHtml(appUrl);
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>${t}</title>
+<meta name="description" content="${d}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Galactic">
+<meta property="og:title" content="${t}">
+<meta property="og:description" content="${d}">
+<meta property="og:url" content="${refUrl}">
+<meta property="og:image" content="${img}">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="${t}">
+<meta name="twitter:description" content="${d}">
+<meta name="twitter:image" content="${img}">
+<meta http-equiv="refresh" content="0; url=${goto}">
+</head>
+<body>
+<p>Redirecting to <a href="${goto}">${t}</a> on Galactic…</p>
+</body>
+</html>`;
+
+  return new Response(html, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "public, max-age=300",
+    },
+  });
 }
 
 /**
@@ -5736,11 +5828,17 @@ ${html}
 </html>`;
 }
 
-function escapeHtml(str: string): string {
+// Escape for safe interpolation into HTML text AND double/single-quoted
+// attributes. Quotes MUST be escaped — agent name/description are arbitrary
+// user free text and are injected into content="..." OG/meta attributes, so
+// missing quote-escaping is an attribute-breakout (stored XSS) vector.
+export function escapeHtml(str: string): string {
   return str
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 // ============================================
