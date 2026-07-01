@@ -3838,11 +3838,27 @@ export function LibraryFoundationPage(
   const [view, setView] = useState<LibraryView>(libraryViewFromSearch());
   const [busy, setBusy] = useState(false);
   const [folderError, setFolderError] = useState<string | null>(null);
+  const [menuFor, setMenuFor] = useState<string | null>(null);
   const loading = live.status !== "ready" && live.status !== "error";
 
   useEffect(() => {
     setView(libraryViewFromSearch());
   }, [location.search]);
+
+  // Close the per-card folder menu on any outside click or Escape.
+  useEffect(() => {
+    if (!menuFor) return;
+    const close = () => setMenuFor(null);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuFor(null);
+    };
+    document.addEventListener("click", close);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("click", close);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuFor]);
 
   const scope: LibraryView = view;
   const library = live.data.library;
@@ -3874,9 +3890,14 @@ export function LibraryFoundationPage(
     }
   };
 
-  const handleNewFolder = () => {
+  const handleCreateFolderAndMove = (appId: string) => {
     const name = window.prompt("New folder name")?.trim();
-    if (name) void runFolderOp(() => launchApi.createFolder(scope, name));
+    if (!name) return;
+    void runFolderOp(async () => {
+      const created = await launchApi.createFolder(scope, name);
+      const newId = created?.folder?.id;
+      if (newId) await launchApi.setAgentFolder(scope, appId, newId);
+    });
   };
   const handleRenameFolder = (id: string, current: string) => {
     const name = window.prompt("Rename folder", current)?.trim();
@@ -3917,6 +3938,10 @@ export function LibraryFoundationPage(
 
   const renderCard = (agent: LaunchAgentSummary) => {
     const fixture = liveAgentFixture(agent);
+    const currentFolderId = agent.folderId && folderIds.has(agent.folderId)
+      ? agent.folderId
+      : null;
+    const menuOpen = menuFor === agent.id;
     return (
       <div className="library-card" key={agent.id}>
         {scope === "installed"
@@ -3930,23 +3955,97 @@ export function LibraryFoundationPage(
             </button>
           )
           : <OwnedAgentCard navigate={navigate} tool={fixture} />}
-        {folders.length > 0
+        {hasLaunchAuthToken()
           ? (
-            <select
-              aria-label="Move to folder"
-              className="folder-move-select"
-              disabled={busy}
-              onChange={(event) =>
-                handleMoveAgent(agent.id, event.target.value || null)}
-              value={agent.folderId && folderIds.has(agent.folderId)
-                ? agent.folderId
-                : ""}
+            <div
+              className="library-card-menu"
+              onClick={(event) => event.stopPropagation()}
             >
-              <option value="">Uncategorized</option>
-              {folders.map((folder) => (
-                <option key={folder.id} value={folder.id}>{folder.name}</option>
-              ))}
-            </select>
+              <button
+                aria-expanded={menuOpen}
+                aria-haspopup="menu"
+                aria-label="Folder options"
+                className="library-card-menu-trigger"
+                disabled={busy}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setMenuFor(menuOpen ? null : agent.id);
+                }}
+                type="button"
+              >
+                <svg
+                  aria-hidden="true"
+                  fill="currentColor"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  width="16"
+                >
+                  <circle cx="12" cy="5" r="1.8" />
+                  <circle cx="12" cy="12" r="1.8" />
+                  <circle cx="12" cy="19" r="1.8" />
+                </svg>
+              </button>
+              {menuOpen
+                ? (
+                  <div className="library-card-menu-popover" role="menu">
+                    {folders.length > 0
+                      ? (
+                        <p className="library-card-menu-label">
+                          Move to folder
+                        </p>
+                      )
+                      : null}
+                    {folders.map((folder) => (
+                      <button
+                        className={folder.id === currentFolderId
+                          ? "library-card-menu-item is-current"
+                          : "library-card-menu-item"}
+                        key={folder.id}
+                        onClick={() => {
+                          setMenuFor(null);
+                          if (folder.id !== currentFolderId) {
+                            handleMoveAgent(agent.id, folder.id);
+                          }
+                        }}
+                        role="menuitem"
+                        type="button"
+                      >
+                        {folder.name}
+                      </button>
+                    ))}
+                    {currentFolderId
+                      ? (
+                        <button
+                          className="library-card-menu-item"
+                          onClick={() => {
+                            setMenuFor(null);
+                            handleMoveAgent(agent.id, null);
+                          }}
+                          role="menuitem"
+                          type="button"
+                        >
+                          Remove from folder
+                        </button>
+                      )
+                      : null}
+                    {folders.length > 0
+                      ? <div className="library-card-menu-sep" />
+                      : null}
+                    <button
+                      className="library-card-menu-item library-card-menu-new"
+                      onClick={() => {
+                        setMenuFor(null);
+                        handleCreateFolderAndMove(agent.id);
+                      }}
+                      role="menuitem"
+                      type="button"
+                    >
+                      + New folder…
+                    </button>
+                  </div>
+                )
+                : null}
+            </div>
           )
           : null}
       </div>
@@ -4016,18 +4115,6 @@ export function LibraryFoundationPage(
             </button>
           ))}
         </div>
-        {hasLaunchAuthToken()
-          ? (
-            <button
-              className="link-button library-new-folder"
-              disabled={busy}
-              onClick={handleNewFolder}
-              type="button"
-            >
-              + New folder
-            </button>
-          )
-          : null}
       </div>
 
       {folderError
