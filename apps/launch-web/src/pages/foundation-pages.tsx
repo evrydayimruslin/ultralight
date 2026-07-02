@@ -5119,6 +5119,8 @@ export function AccountFoundationPage(
   const [showTopUp, setShowTopUp] = useState(
     () => queryParam("tab") === "topup",
   );
+  // Earnings tab: the "Transfer to balance" modal (earnings → spendable).
+  const [showTransfer, setShowTransfer] = useState(false);
 
   useEffect(() => {
     setTab(accountTabFromSearch());
@@ -5143,6 +5145,7 @@ export function AccountFoundationPage(
   const selectTab = (nextTab: AccountTabId) => {
     setTab(nextTab);
     setShowTopUp(false);
+    setShowTransfer(false);
     syncSearchParams({ tab: nextTab === "preferences" ? null : nextTab });
   };
 
@@ -5387,8 +5390,51 @@ export function AccountFoundationPage(
                 label="Earnings available"
                 value={wallet ? totals.earned : null}
               />
+              <div className="wallet-hero-actions">
+                <Button
+                  disabled={!wallet || totals.earned <= 0}
+                  onClick={() => setShowTransfer((open) => !open)}
+                  variant={showTransfer ? "secondary" : "primary"}
+                >
+                  {showTransfer ? "Close" : "⇄ Transfer to balance"}
+                </Button>
+              </div>
             </Card>
             <WalletEarningsPanel earnings={liveEarningRows(earnings)} />
+            {showTransfer
+              ? (
+                <div
+                  className="topup-modal-backdrop"
+                  onClick={(event) => {
+                    if (event.target === event.currentTarget) {
+                      setShowTransfer(false);
+                    }
+                  }}
+                  role="presentation"
+                >
+                  <div
+                    aria-label="Transfer earnings to balance"
+                    aria-modal="true"
+                    className="topup-modal"
+                    role="dialog"
+                  >
+                    <button
+                      aria-label="Close"
+                      className="topup-modal-close"
+                      onClick={() => setShowTransfer(false)}
+                      type="button"
+                    >
+                      ✕
+                    </button>
+                    <WalletTransferPanel
+                      earnedCredits={totals.earned}
+                      live={live}
+                      onClose={() => setShowTransfer(false)}
+                    />
+                  </div>
+                </div>
+              )
+              : null}
           </>
         )
         : null}
@@ -6153,6 +6199,219 @@ function WalletTopUpPanel(
               ? "Instant internal transfer"
               : "Secure checkout · Stripe"}
           </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Earnings → balance transfer. Reuses the top-up modal chrome (amount card +
+// summary card), but there's no Stripe leg — the server moves creator earnings
+// into the spendable balance atomically, so success is immediate and fee-free.
+function WalletTransferPanel(
+  { earnedCredits, live, onClose }: {
+    earnedCredits: number;
+    live: LaunchPageProps["live"];
+    onClose?: () => void;
+  },
+): ReactElement {
+  // Snapshot the transferable maximum at open; the server re-checks at
+  // confirm (and "all" transfers convert whatever is actually available).
+  const maxCredits = Math.max(0, Math.floor(earnedCredits));
+  const [creditsAmount, setCreditsAmount] = useState(maxCredits);
+  const [amountText, setAmountText] = useState(() => dollarsText(maxCredits));
+  const amountFocused = useRef(false);
+  useEffect(() => {
+    if (!amountFocused.current) setAmountText(dollarsText(creditsAmount));
+  }, [creditsAmount]);
+  const onAmountInput = (raw: string) => {
+    const cleaned = raw.replace(/[^0-9.]/g, "").replace(/(\..*?)\..*/g, "$1");
+    setAmountText(cleaned);
+    const dollars = parseFloat(cleaned);
+    if (Number.isFinite(dollars)) {
+      setCreditsAmount(Math.min(maxCredits, Math.round(dollars * 100)));
+    }
+  };
+  const onAmountBlur = () => {
+    amountFocused.current = false;
+    const dollars = parseFloat(amountText);
+    const light = Number.isFinite(dollars) ? Math.round(dollars * 100) : 0;
+    // 1-Light floor (a cent of earnings is still transferable), capped at
+    // what's available.
+    const clamped = Math.min(maxCredits, Math.max(1, light));
+    setCreditsAmount(clamped);
+    setAmountText(dollarsText(clamped));
+  };
+  const [phase, setPhase] = useState<"idle" | "confirming" | "succeeded">(
+    "idle",
+  );
+  const [message, setMessage] = useState("");
+  const [messageIsError, setMessageIsError] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [transferredCredits, setTransferredCredits] = useState(0);
+
+  const presets = [
+    ...[1000, 2500, 10000, 25000].filter((amount) => amount < maxCredits),
+    ...(maxCredits > 0 ? [maxCredits] : []),
+  ];
+
+  const confirmTransfer = async () => {
+    if (!termsAccepted) {
+      setMessageIsError(true);
+      setMessage("Accept the Galactic Terms to continue.");
+      return;
+    }
+    const amount = Math.min(maxCredits, creditsAmount);
+    if (amount <= 0) {
+      setMessageIsError(true);
+      setMessage("No earnings are available to transfer.");
+      return;
+    }
+    setPhase("confirming");
+    setMessageIsError(false);
+    setMessage("");
+    try {
+      const result = await launchApi.convertEarningsToBalance(
+        // "Everything" as all=true so the server converts what's actually
+        // available even if earnings moved since the page loaded.
+        amount >= maxCredits
+          ? { all: true, termsAccepted: true }
+          : { amountCredits: amount, termsAccepted: true },
+      );
+      setTransferredCredits(result.converted_light ?? amount);
+      setPhase("succeeded");
+      live.reload();
+    } catch (err) {
+      setPhase("idle");
+      setMessageIsError(true);
+      setMessage(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  if (phase === "succeeded") {
+    return (
+      <div className="topup-confirm">
+        <div className="topup-confirm-badge">
+          <Icon name="check" size={28} />
+        </div>
+        <h2 className="topup-confirm-title">Transfer complete</h2>
+        <p className="topup-confirm-amount">
+          {formatCreditFromLight(transferredCredits)}
+        </p>
+        <p className="topup-confirm-sub">
+          moved from earnings to your Galactic balance
+        </p>
+        <p className="topup-confirm-note">
+          The credits are spendable right away.
+        </p>
+        <div className="topup-confirm-actions">
+          <Button
+            onClick={() => {
+              live.reload();
+              onClose?.();
+            }}
+            size="lg"
+          >
+            Done
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const quote = quoteTopUp(creditsAmount, "earnings");
+  const inputsLocked = phase === "confirming";
+
+  return (
+    <div className="wallet-topup-grid">
+      <Card className="wallet-topup-card">
+        <p className="section-label">Amount</p>
+        <div className="light-input-shell">
+          <span className="amount-currency">$</span>
+          <input
+            aria-label="Transfer amount in dollars"
+            className="amount-field"
+            disabled={inputsLocked}
+            inputMode="decimal"
+            onBlur={onAmountBlur}
+            onChange={(event) => onAmountInput(event.target.value)}
+            onFocus={() => {
+              amountFocused.current = true;
+            }}
+            value={amountText}
+          />
+        </div>
+        <div className="amount-presets">
+          {presets.map((amount) => (
+            <button
+              className={creditsAmount === amount ? "active" : ""}
+              disabled={inputsLocked}
+              key={amount}
+              onClick={() => setCreditsAmount(amount)}
+              type="button"
+            >
+              {amount === maxCredits ? "Max" : formatPresetDollars(amount)}
+            </button>
+          ))}
+        </div>
+      </Card>
+
+      <div className="wallet-quote-col">
+        <Card className="wallet-quote-card">
+          <p className="section-label">Transfer summary</p>
+          <QuoteLine
+            label="From earnings"
+            value={formatCurrency(quote.baseDollars)}
+          />
+          <QuoteLine
+            label="Processing fee"
+            muted={quote.feeNote}
+            value={formatCurrency(quote.feeDollars)}
+          />
+          <div className="quote-total">
+            <span>To balance</span>
+            <strong>{formatCurrency(quote.totalDollars)}</strong>
+          </div>
+          <label className="topup-terms">
+            <input
+              checked={termsAccepted}
+              disabled={inputsLocked}
+              onChange={(event) => setTermsAccepted(event.target.checked)}
+              type="checkbox"
+            />
+            <span>
+              I agree to the Galactic{" "}
+              <a href="/terms" rel="noopener" target="_blank">
+                Terms of Service
+              </a>{" "}
+              and authorize this transfer.
+            </span>
+          </label>
+          <Button
+            disabled={!termsAccepted || creditsAmount <= 0 || inputsLocked}
+            onClick={() => void confirmTransfer()}
+            size="lg"
+          >
+            {inputsLocked
+              ? "Transferring…"
+              : `Transfer ${formatCurrency(quote.totalDollars)}`}
+          </Button>
+          {message
+            ? (
+              <p
+                className={messageIsError
+                  ? "settings-help error"
+                  : "settings-help"}
+                role={messageIsError ? "alert" : "status"}
+              >
+                {message}
+              </p>
+            )
+            : null}
+        </Card>
+        <div className="secure-note">
+          <Icon name="shield" size={12} />
+          <span>Instant internal transfer · no fee</span>
         </div>
       </div>
     </div>

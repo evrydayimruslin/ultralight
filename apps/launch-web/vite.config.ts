@@ -13,6 +13,13 @@ export default {
         changeOrigin: true,
         secure: true,
       },
+      // Stripe Connect status/onboarding + earnings→balance transfers live
+      // under /api/user on the same worker.
+      "/api/user": {
+        target: launchApiProxyTarget,
+        changeOrigin: true,
+        secure: true,
+      },
       "/auth": {
         target: launchApiProxyTarget,
         changeOrigin: true,

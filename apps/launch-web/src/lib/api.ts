@@ -204,6 +204,18 @@ export interface LaunchAgentSettingsUpdateResponse {
   errors?: string[];
 }
 
+/** Result of moving creator earnings into the spendable balance. */
+export interface LaunchEarningsConversionResponse {
+  success: boolean;
+  conversion_id: string;
+  converted_light: number;
+  balance_light: number;
+  spendable_balance_light: number;
+  deposit_balance_light: number;
+  earned_balance_light: number;
+  convertible_earnings_light: number;
+}
+
 export class LaunchApiClient {
   private readonly baseUrl: string;
   private readonly getAuthToken?: () => string | null;
@@ -547,6 +559,27 @@ export class LaunchApiClient {
     return this.fetchJson("/api/user/connect/onboard", {
       method: "POST",
       body: JSON.stringify({}),
+    });
+  }
+
+  /**
+   * Move creator earnings into the spendable balance — instant internal
+   * transfer, no Stripe leg. Pass all=true to convert whatever is currently
+   * available (avoids racing a balance that moved since the page loaded).
+   */
+  convertEarningsToBalance(request: {
+    amountCredits?: number;
+    all?: boolean;
+    termsAccepted: boolean;
+  }): Promise<LaunchEarningsConversionResponse> {
+    return this.fetchJson("/api/user/earnings/convert-to-balance", {
+      method: "POST",
+      body: JSON.stringify({
+        ...(request.all
+          ? { all: true }
+          : { amount_light: request.amountCredits }),
+        terms_accepted: request.termsAccepted,
+      }),
     });
   }
 
